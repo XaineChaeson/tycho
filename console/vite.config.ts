@@ -15,6 +15,7 @@ const version = bakedVersion(process.env, (JSON.parse(readFileSync(at('../packag
 const service = process.env.TYCHO_URL ?? 'http://127.0.0.1:8787';
 
 export default defineConfig({
+  base: process.env.TYCHO_CONSOLE_BASE ?? '/',
   plugins: [react(), tailwindcss()],
   define: { __TYCHO_VERSION__: JSON.stringify(version) },
   resolve: {

@@ -4,6 +4,7 @@
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildInteractiveDemo } from './gen-demo-bundle.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'docs-site');
@@ -476,11 +477,15 @@ function currentRenderedDark() {
 }
 function syncThemeBtn() {
   const btn = document.getElementById('theme-btn');
-  if (!btn) return;
   const dark = currentRenderedDark();
-  btn.textContent = dark ? '☀' : '☾';
-  btn.title = dark ? 'Switch to light mode' : 'Switch to dark mode';
+  if (btn) {
+    btn.textContent = dark ? '☀' : '☾';
+    btn.title = dark ? 'Switch to light mode' : 'Switch to dark mode';
+  }
+  const demoFrame = document.getElementById('demo-frame');
+  demoFrame?.contentWindow?.postMessage({ type: 'tycho-demo-theme', theme: dark ? 'dark' : 'light' }, '*');
 }
+document.getElementById('demo-frame')?.addEventListener('load', syncThemeBtn);
 document.getElementById('theme-btn')?.addEventListener('click', () => {
   const target = currentRenderedDark() ? 'light' : 'dark';
   const sys = osDarkMQ.matches ? 'dark' : 'light';
@@ -623,18 +628,51 @@ ${THEME_HEAD_SNIPPET}
 }
 .cmd-copy:hover { background: var(--accent-soft); }
 
-/* Grand Hero Stage — stacked GPU-composited layers for instant 0ms tab switching */
+/* Grand Hero Stage — LIVE Interactive Real Tycho Console Iframe */
 .stage-frame {
-  display: grid; aspect-ratio: 16 / 9.6;
-  border-radius: 22px; overflow: hidden;
-  background: #07080C; border: 1px solid var(--border-strong);
+  position: relative;
+  border-radius: 20px; overflow: hidden;
+  background: var(--surface-elev); border: 1px solid var(--border-strong);
   box-shadow: var(--shadow-frame);
+  display: flex; flex-direction: column;
 }
-.stage-frame img {
-  grid-area: 1 / 1; width: 100%; height: 100%; object-fit: contain; display: block;
-  opacity: 0; pointer-events: none; transition: opacity .18s ease;
+.stage-chrome {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 9px 16px; border-bottom: 1px solid var(--border);
+  background: var(--surface); font-size: 12px; color: var(--muted);
 }
-.stage-frame img.on { opacity: 1; pointer-events: auto; }
+.stage-chrome-l { display: flex; align-items: center; gap: 9px; }
+.stage-dots { display: inline-flex; gap: 6px; margin-right: 4px; }
+.stage-dots i { width: 10px; height: 10px; border-radius: 50%; display: block; background: var(--border-strong); }
+.stage-chrome-r { display: flex; align-items: center; gap: 12px; }
+.stage-chrome a { color: var(--accent); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.stage-chrome a:hover { text-decoration: underline; }
+.stage-frame iframe {
+  width: 100%; height: clamp(540px, 68vh, 760px); border: 0; display: block; background: #050811;
+}
+.live-dot { width: 7px; height: 7px; border-radius: 50%; background: #30D158; box-shadow: 0 0 8px #30D158; display: inline-block; flex-shrink: 0; }
+
+/* Deep Feature Cards Grid */
+.deep-grid { margin-top: 44px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.deep-card {
+  padding: 26px; border-radius: 18px; background: var(--surface); border: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.deep-card .dk { font-size: 11px; font-weight: 600; color: var(--accent); letter-spacing: 0.04em; }
+.deep-card h3 { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); }
+.deep-card p { font-size: 13.5px; color: var(--muted); line-height: 1.62; flex: 1; }
+.ev-flow {
+  margin-top: 28px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+}
+.ev-step {
+  padding: 18px; border-radius: 15px; background: var(--surface); border: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.ev-step span { font-size: 11px; font-weight: 700; color: var(--accent); }
+.ev-step strong { font-size: 14.5px; color: var(--ink); }
+.ev-step p { font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+@media (max-width: 960px) { .deep-grid, .ev-flow { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { .deep-grid, .ev-flow { grid-template-columns: 1fr; } }
 .stage-bar {
   display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
   margin-top: 20px; padding: 0 6px;
@@ -779,9 +817,11 @@ footer {
       <span>tycho</span>
     </a>
     <nav class="nav-mid">
+      <a href="demo/index.html" data-i18n="nav_demo">在线 Demo</a>
+      <a href="#evolution" data-i18n="nav_evo">知识进化与审阅</a>
       <a href="#accounts" data-i18n="nav_acc">调度与额度</a>
       <a href="#fleet" data-i18n="nav_flt">多机与部署</a>
-      <a href="#everywhere" data-i18n="nav_cli">客户端与 IM</a>
+      <a href="#deep-specs" data-i18n="nav_deep">12 项核心设计</a>
       <a href="docs/index.html" data-i18n="nav_docs">文档中心</a>
     </nav>
     <div class="nav-r">
@@ -800,6 +840,7 @@ footer {
 
   <div class="hero-actions">
     <a class="btn btn-lg btn-accent" href="docs/quickstart.html" data-i18n="cta_start">5 分钟开始使用</a>
+    <a class="btn btn-lg" href="demo/index.html" data-i18n="cta_demo">全屏体验真实工作台 ↗</a>
     <a class="link-arrow" href="docs/index.html" data-i18n="cta_docs">探索文档中心 ›</a>
   </div>
 
@@ -813,24 +854,68 @@ footer {
   </div>
 
   <div class="stage-frame" id="stage-frame">
-    <img class="on" data-slide="console" src="assets/preview-console.png" alt="Tycho Mission Control Console" fetchpriority="high" decoding="async" />
-    <img data-slide="accounts" src="assets/preview-accounts.png" alt="Tycho Unified Accounts and Quota Pool" decoding="async" />
-    <img data-slide="channels" src="assets/preview-channels.png" alt="Tycho IM Channels and Event Triggers" decoding="async" />
-    <img data-slide="clients" src="assets/preview-clients.png" alt="Tycho 3.6 MB Desktop and Mobile PWA" decoding="async" />
-    <img data-slide="arch" src="assets/diagram-architecture.png" alt="Tycho System Architecture" decoding="async" />
+    <div class="stage-chrome">
+      <div class="stage-chrome-l">
+        <span class="stage-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="live-dot"></span>
+        <span data-i18n="live_badge">真实前端实时运行 · 可直接点击派活、审批、切泳道</span>
+      </div>
+      <div class="stage-chrome-r">
+        <span class="mono" style="font-size:11px;color:var(--faint)">atlas-payments · 3 nodes online · 0 backend</span>
+        <a href="demo/index.html" target="_blank" rel="noreferrer" data-i18n="live_full">全屏体验 ↗</a>
+      </div>
+    </div>
+    <iframe id="demo-frame" src="demo/index.html" title="Interactive Tycho Console Live Demo" loading="eager"></iframe>
   </div>
   <div class="stage-bar">
     <div class="stage-caption">
       <strong id="cap-title"></strong><span id="cap-desc"></span>
       <a id="cap-link" href="docs/quickstart.html" style="margin-left:8px;white-space:nowrap"></a>
     </div>
-    <div class="seg" role="tablist" aria-label="Product showcase views">
-      <button class="on" data-view="console" type="button" data-i18n="v_con">指挥台</button>
-      <button data-view="accounts" type="button" data-i18n="v_acc">额度池</button>
-      <button data-view="channels" type="button" data-i18n="v_ch">IM 与触发</button>
-      <button data-view="clients" type="button" data-i18n="v_cl">多端</button>
-      <button data-view="arch" type="button" data-i18n="v_arch">架构</button>
+    <div class="seg" role="tablist" aria-label="Live Console views">
+      <button class="on" data-view="trace" type="button" data-i18n="v_tr">工作泳道图</button>
+      <button data-view="hud" type="button" data-i18n="v_hud">45° PCB 蓝图</button>
+      <button data-view="project" type="button" data-i18n="v_con">项目对话与派活</button>
+      <button data-view="knowledge" type="button" data-i18n="v_kn">知识自进化</button>
+      <button data-view="machines" type="button" data-i18n="v_mc">多机算力</button>
+      <button data-view="inbound" type="button" data-i18n="v_ch">入站与触发</button>
     </div>
+  </div>
+</section>
+
+<!-- ACT 2: KNOWLEDGE SELF-EVOLUTION & CROSS-MODEL REVIEW -->
+<section class="act reveal" id="evolution">
+  <div class="act-narrow">
+    <span class="act-kicker" data-i18n="ev_k">越用越聪明 · 独立把关闭环</span>
+    <h2 class="act-h" data-i18n="ev_h">知识自进化与跨模型独立审阅。</h2>
+    <p class="act-p" data-i18n="ev_p">普通 Agent 工具每次开新窗口都失忆，或者让同一个模型自说自话。Tycho 用“带证据的知识提案 + 独立把关闸门 + 不可变修订”让团队经验持续沉淀，并自动注入后续每一轮任务。</p>
+  </div>
+
+  <div class="ev-flow">
+    <div class="ev-step">
+      <span class="mono">01 / PROPOSE</span>
+      <strong data-i18n="ev1_t">实战提炼 · 附原始证据</strong>
+      <p data-i18n="ev1_p">执行器或项目总控在解决故障后提交结构化提案，强制关联来源任务、代码行与测试回执摘录。</p>
+    </div>
+    <div class="ev-step">
+      <span class="mono">02 / GATE</span>
+      <strong data-i18n="ev2_t">独立把关 · 绝不自审</strong>
+      <p data-i18n="ev2_p">系统自动派发独立闸门任务核查证据与影响面（绝不用写提案的同一个执行器自己把关）；全局常驻或改动主人条目必须等你点头。</p>
+    </div>
+    <div class="ev-step">
+      <span class="mono">03 / INJECT</span>
+      <strong data-i18n="ev3_t">预算感知 · 自动喂给下轮</strong>
+      <p data-i18n="ev3_p">生效后按项目/职能自动编排进下一轮上下文简报（严格控制字节预算），并支持外部 CLI 通过 <code>tycho knowledge-mcp --node</code> 受限读写。</p>
+    </div>
+    <div class="ev-step">
+      <span class="mono">04 / MIRROR</span>
+      <strong data-i18n="ev4_t">SKILL.md 全网自动镜像</strong>
+      <p data-i18n="ev4_p">主机维护一份标准技能目录，自动同步到所有在线的 Linux / macOS / Windows 算力机，零手工拷贝。</p>
+    </div>
+  </div>
+
+  <div style="text-align:center;margin-top:26px">
+    <a class="link-arrow" href="demo/index.html?go=knowledge" data-i18n="ev_try">在交互式工作台中体验「等你点头」知识提案审批 ›</a>
   </div>
 </section>
 
@@ -996,20 +1081,27 @@ footer {
   </div>
 </section>
 
-<!-- ACT 5: APPLE-STYLE ENGINEERING SPEC GRID + QUIET TECHNICAL APPENDIX -->
-<section class="act reveal" id="specs">
+<!-- ACT 5: COMPLETE 12-PILLAR ENGINEERING ARCHITECTURE DEPTH -->
+<section class="act reveal" id="deep-specs">
   <div class="act-narrow">
-    <span class="act-kicker" data-i18n="a5_k">工程底气</span>
-    <h2 class="act-h" data-i18n="a5_h">没有沉重全家桶，为长期托付而造。</h2>
+    <span class="act-kicker" data-i18n="a5_k">不止一句口号 · 12 项硬核工程设计</span>
+    <h2 class="act-h" data-i18n="a5_h">深入细节，每一处都经得起 24×7 托付。</h2>
+    <p class="act-p" data-i18n="a5_p">除了直观的工作台与泳道图，Tycho 在账本一致性、多职能编排、增量续跑、跨机升级与安全边界上做了完整的工程落地。</p>
   </div>
 
-  <div class="spec-grid">
-    <div class="spec-cell"><b class="mono">0</b><strong data-i18n="sp1_t">运行时外部依赖</strong><span data-i18n="sp1_d">纯 Node 24 + 内置 node:sqlite，无需 Docker、Redis 或外部数据库。</span></div>
-    <div class="spec-cell"><b class="mono">3.6 MB</b><strong data-i18n="sp2_t">轻量 Tauri v2 桌面端</strong><span data-i18n="sp2_d">Windows 绿色单文件与 macOS 通用包，拒绝 Electron 臃肿，支持手机 PWA。</span></div>
-    <div class="spec-cell"><b class="mono">4 CLIs</b><strong data-i18n="sp3_t">原生执行器与空闲自动升级</strong><span data-i18n="sp3_d">透传 Claude Code、Codex、Gemini (agy) 与 dsh，支持跨机空闲升级 CLI。</span></div>
-    <div class="spec-cell"><b class="mono">SKILL.md</b><strong data-i18n="sp4_t">跨机技能全网自动镜像</strong><span data-i18n="sp4_d">主机维护一份标准技能包，自动同步至每一台接入的执行机器。</span></div>
-    <div class="spec-cell"><b class="mono">MCP</b><strong data-i18n="sp5_t">受限 Knowledge MCP</strong><span data-i18n="sp5_d">外部独立 CLI 可通过节点令牌安全挂载项目知识库，不越界。</span></div>
-    <div class="spec-cell"><b class="mono">MIT</b><strong data-i18n="sp6_t">透明开源与热插拔主题</strong><span data-i18n="sp6_d">数据全归自己；把 JSON 放入 &lt;dataDir&gt;/themes/ 即可热重载控制台皮肤。</span></div>
+  <div class="deep-grid">
+    <div class="deep-card"><span class="dk mono">01 / SWIMLANE &amp; PCB DAG</span><h3 data-i18n="dc1_t">工作泳道图与 45° PCB 派发蓝图</h3><p data-i18n="dc1_p">基于 ELK 布局引擎实时渲染多任务依赖、执行脉搏与跨机状态波次，在列表、蓝图、泳道三种视图间无缝切换，点击任意节点即开分栏线程。</p></div>
+    <div class="deep-card"><span class="dk mono">02 / MULTI-ROLE ORCHESTRATION</span><h3 data-i18n="dc2_t">项目总控 × 自由职能编排</h3><p data-i18n="dc2_p">按项目指定独立总控模型；预置实现（implement）、验证（verify）、审阅（review）、协调（orchestrate）四大职能，并支持自定义提示词与默认档位。</p></div>
+    <div class="deep-card"><span class="dk mono">03 / DELTA RESUME &amp; INTERJECT</span><h3 data-i18n="dc3_t">原生线程增量续跑与插话</h3><p data-i18n="dc3_p">在分栏右侧随时向运行中的任务追加后续指令或插话，自动续接 Codex / Claude 原会话上下文执行，拒绝每次追问从头浪费 Token。</p></div>
+    <div class="deep-card"><span class="dk mono">04 / REPORT · DIFF · CLEANUP</span><h3 data-i18n="dc4_t">结构化交付报告、Diff 验收与自动清理</h3><p data-i18n="dc4_p">任务结束沉淀完整交付报告与 Git Diff；支持一键验收合并（Accept &amp; Land）或打回返工（Rework），并在归档/删除项目时经 work_cleanup 自动清理多机临时副本。</p></div>
+    <div class="deep-card"><span class="dk mono">05 / MULTI-SOURCE &amp; HANDOFF</span><h3 data-i18n="dc5_t">有序多代码源与零损便携移交</h3><p data-i18n="dc5_p">单项目支持配置多个有序代码来源（工作目录 + Git 仓库）；支持便携项目移交（Portable Handoff），连同知识、文件与待审提案整体带走。</p></div>
+    <div class="deep-card"><span class="dk mono">06 / DURABLE SQLITE + WATCHDOG</span><h3 data-i18n="dc6_t">零依赖单账本 + Watchdog 崩溃对账</h3><p data-i18n="dc6_p">纯 Node 24 + node:sqlite 零外部依赖；先记意图再派发，唯一约束锁死单活跃轮次；内置跨平台进程实查（procinfo）与重启对账回放。</p></div>
+    <div class="deep-card"><span class="dk mono">07 / REMOTE DEVICE LOGIN</span><h3 data-i18n="dc7_t">无头远程机网页设备码登录</h3><p data-i18n="dc7_p">给远端无桌面 Linux GPU 服务器登录 Codex / Claude，无需 SSH 转发浏览器 —— 在控制台直接发起设备码授权流程并实时同步各机登录态。</p></div>
+    <div class="deep-card"><span class="dk mono">08 / FLEET SELF-UPDATERS</span><h3 data-i18n="dc8_t">节点追随升级 + 多机 CLI 空闲自升级</h3><p data-i18n="dc8_p">主机升级后全部远程 Node 自动校验 SHA256 跟随升级；同时支持空闲时段自动检测并升级全网节点的 claude / codex / agy / dsh CLI。</p></div>
+    <div class="deep-card"><span class="dk mono">09 / IM GROUP RING BUFFER</span><h3 data-i18n="dc9_t">群上下文环形缓冲与播报群组</h3><p data-i18n="dc9_p">企微/微信/飞书群绑定内置最近消息环形缓冲与图片附件拉取，触发器与 Webhook 执行结果可自动播报回指定研发群，同时严禁泄露控制台会话。</p></div>
+    <div class="deep-card"><span class="dk mono">10 / USAGE LEDGER</span><h3 data-i18n="dc10_t">全局 Token 与轮次用量账本</h3><p data-i18n="dc10_p">精确统计每个账号、项目、机器在 5h / 24h / 7d / 累计维度的 Token 消耗与轮次，即使项目归档删除仍完整保留历史成本账目。</p></div>
+    <div class="deep-card"><span class="dk mono">11 / 9 SKINS + JSON THEMES</span><h3 data-i18n="dc11_t">9 套内置皮肤与热插拔 JSON 主题</h3><p data-i18n="dc11_p">内置测控星盘（HUD）、星仪暗夜（Linear）、信号橙工坊、极光玻璃、合成器、燕麦书房、琥珀暗房、苏黎世墨印、天仪经典 9 套精调皮肤（在上方 Demo 左下角即可实时切换），并支持 themes/ 目录 JSON 主题热加载。</p></div>
+    <div class="deep-card"><span class="dk mono">12 / SECURITY · BACKUP · DOCTOR</span><h3 data-i18n="dc12_t">属主 ACL 密钥、自动备份与一键体检</h3><p data-i18n="dc12_p">凭据落盘自动收紧 POSIX 0600 / Windows icacls；内置定时备份与保留策略、HTTP 500 脱敏追踪码与 tycho doctor 全链路自检。</p></div>
   </div>
 </section>
 
@@ -1060,18 +1152,20 @@ const INST = {
 };
 const VIEWS = {
   zh: {
-    console: { img: 'assets/preview-console.png', title: '项目指挥台', desc: '总控拆解任务并跨机派发给 Codex 执行与 Claude 审阅，SSE 实时流式呈现。', href: 'docs/quickstart.html' },
-    accounts: { img: 'assets/preview-accounts.png', title: '统一账号池', desc: '5h / 7d 实时配额遥测，三档优先级路由与私有计费探针插件。', href: 'docs/accounts-and-nodes.html' },
-    channels: { img: 'assets/preview-channels.png', title: 'IM 与事件触发器', desc: '企微 / 微信 / 飞书与开放签名协议，配合 Cron / 事务内事件 / Webhook。', href: 'docs/channels-and-triggers.html' },
-    clients: { img: 'assets/preview-clients.png', title: '多端客户端与主题', desc: '3.6 MB 桌面壳、iOS/Android 独立 PWA、热插拔 JSON 主题与 SKILL.md 镜像。', href: 'docs/clients.html' },
-    arch: { img: 'assets/diagram-architecture.png', title: '系统架构全景', desc: '一本零依赖 SQLite 账本统筹决策、出站算力、账号池与外部扩展。', href: 'docs/architecture.html' },
+    trace: { route: 'work', workMode: 'trace', title: 'TRACE // 执行脉搏泳道', desc: '真实 ELK 工作泳道图：实时呈现已完成、待验收、审阅中与待审批波次，点击任意任务节点即可查看报告与操作。', href: 'docs/architecture.html' },
+    hud: { route: 'work', workMode: 'hud', title: 'HUD // 45° PCB 派发蓝图', desc: '航天测控风 45° 走线蓝图视图，直观呈现父子任务依赖、角色分配与多机算力流向。', href: 'docs/architecture.html' },
+    project: { route: 'project', title: '项目对话与双栏工作台', desc: '现在就可以在底部输入框发一条真实指令 —— 观看总控拆活、派发执行、并自动生成一条新知识进化提案！', href: 'docs/quickstart.html' },
+    knowledge: { route: 'knowledge', title: '知识自进化中心', desc: '查看「等你点头」待审提案，点击进入核验原始证据与影响面，点「同意」立即晋升为全局/项目生效知识。', href: 'docs/knowledge-and-skills.html' },
+    machines: { route: 'machines', title: '零入站多机算力集群', desc: 'Master-Detail 视图集中查看全部在线节点、各执行器 CLI 版本与空闲自动升级策略。', href: 'docs/accounts-and-nodes.html' },
+    inbound: { route: 'inbound', title: '入站来源、IM 桥接与群播报', desc: '管理飞书 tycho-v1 双向签名桥接、GitHub Webhook、密钥轮换与研发群自动播报。', href: 'docs/channels-and-triggers.html' },
   },
   en: {
-    console: { img: 'assets/preview-console.png', title: 'Mission Control', desc: 'Project router dispatches work across machines (Codex execute + Claude review) over live SSE.', href: 'docs/quickstart.html' },
-    accounts: { img: 'assets/preview-accounts.png', title: 'Unified Accounts Pool', desc: '5h / 7d quota telemetry, 3-tier priority routing, and local billing probe plugins.', href: 'docs/accounts-and-nodes.html' },
-    channels: { img: 'assets/preview-channels.png', title: 'IM & Event Triggers', desc: 'WeCom, WeChat, Feishu & open HMAC protocol paired with Cron, ledger events & webhooks.', href: 'docs/channels-and-triggers.html' },
-    clients: { img: 'assets/preview-clients.png', title: 'Everywhere Clients & Themes', desc: '3.6 MB desktop shell, standalone mobile PWA, drop-in JSON themes & SKILL.md mirror.', href: 'docs/clients.html' },
-    arch: { img: 'assets/diagram-architecture.png', title: 'System Architecture', desc: 'One zero-dependency SQLite ledger orchestrating routing, outbound nodes, and open integrations.', href: 'docs/architecture.html' },
+    trace: { route: 'work', workMode: 'trace', title: 'TRACE // Execution Pulse Swimlane', desc: 'Live ELK swimlane DAG showing done, ready-to-accept, reviewing, and awaiting-owner tasks — click any node to inspect.', href: 'docs/architecture.html' },
+    hud: { route: 'work', workMode: 'hud', title: 'HUD // 45° PCB Dispatch Blueprint', desc: 'Mission-control 45° routed DAG blueprint visualizing parent/child dependencies, roles, and worker machines.', href: 'docs/architecture.html' },
+    project: { route: 'project', title: 'Project Router & Split Workspace', desc: 'Type any prompt in the bottom composer right now — watch the router dispatch a live task and propose a new Knowledge Lesson!', href: 'docs/quickstart.html' },
+    knowledge: { route: 'knowledge', title: 'Knowledge Self-Evolution Center', desc: 'Inspect evidence-backed proposals awaiting your approval; click Approve to promote live into active Knowledge & Skills.', href: 'docs/knowledge-and-skills.html' },
+    machines: { route: 'machines', title: 'Outbound Multi-Machine Fleet', desc: 'Master-Detail fleet inspector showing online nodes, installed CLI versions, and idle-safe fleet CLI upgrades.', href: 'docs/accounts-and-nodes.html' },
+    inbound: { route: 'inbound', title: 'Signed Inbound IMs & Webhooks', desc: 'Manage tycho-v1 bidirectional Feishu bridges, GitHub PR webhooks, rotating secrets, and group broadcast.', href: 'docs/channels-and-triggers.html' },
   },
 };
 const DEPS = {
@@ -1106,11 +1200,11 @@ const SIM_DATA = {
   ],
 };
 const TXT = {
-  zh: { nav_acc:'调度与额度', nav_flt:'多机与部署', nav_cli:'客户端与 IM', nav_docs:'文档中心', nav_search:'搜索', h1:'把你手头的原生 AI CLI，编排成一支工程团队。', lead:'直接调度你已订阅的 Claude Code、Codex、Gemini 与 dsh —— 一本零依赖 SQLite 账本，统筹每一台机器、每一份额度与每一端设备。', cta_start:'5 分钟开始使用', cta_docs:'探索文档中心 ›', v_con:'指挥台', v_acc:'额度池', v_ch:'IM 与触发', v_cl:'多端', v_arch:'架构', a2_k:'原生执行器 · 统一账号池', a2_h:'你的订阅，全功率释放。', a2_p:'无需改换按量 API Key，不丢原有的 MCP、钩子与 Git 凭据。把不同厂商与多份订阅统一编入三档路由，额度触限前自动优雅切号。', a2_l1:'原生 CLI 透传', a2_l2:'多窗口配额遥测', a2_r2:'5h / 7d 实时感知 · P1→P2 顺延', a2_l3:'私有计费探针插件', a2_more:'深入了解账号池与三档路由 ›', sim_dec:'决策档', sim_exe:'执行档', sim_ope:'操作档', a3_k:'零入站 SSH · 4 种部署拓扑', a3_h:'一台主机，调度每一台机器。', a3_p:'无论算力在公司内网工作站、家里 Windows 主机还是 MacBook，节点通过出站长连主动接入；主机可常驻公网云服务器 VPS，也可以留在内网经 WSS :443 隧道对外提供服务。', t_vps:'公网云服务器 VPS', t_loc:'本机 90 秒试用', t_mesh:'Tailscale / 局域网', t_tun:'NAT 反向隧道 WSS :443', d_more:'查看完整 4 种拓扑部署指南 ›', a4_k:'多端原生体验 · 开放协作生态', a4_h:'不在电脑前，依然尽在掌控。', a4_p:'3.6 MB 桌面壳与手机独立 PWA 让你随时一键审批交付；内置企微、微信、飞书与开放签名协议，让团队在熟悉的聊天群里直接驱动项目闭环。', im_h:'随意接入任何 IM 平台', im_p:'开箱内置企微长连接与个人微信 iLink，附飞书桥接参考实现；任何平台均可通过 tycho-v1 双向 HMAC 协议在 10 分钟内接入，支持群快慢分流且绝不泄露私有控制台。', im_a:'阅读开放 IM 双向协议 ›', tr_h:'3 类插件级事件触发器', tr_p:'不止被动响应指令：用显式 IANA 时区 Cron 定时巡检，用 SQLite 事务内生命周期事件自动串联审阅与发布，或接入 GitHub / 自定义签名 Webhook 并自动播报绑定群聊。', tr_a:'阅读 IM 与触发器指南 ›', a5_k:'工程底气', a5_h:'没有沉重全家桶，为长期托付而造。', sp1_t:'运行时外部依赖', sp1_d:'纯 Node 24 + 内置 node:sqlite，无需 Docker、Redis 或外部数据库。', sp2_t:'轻量 Tauri v2 桌面端', sp2_d:'Windows 绿色单文件与 macOS 通用包，拒绝 Electron 臃肿，支持手机 PWA。', sp3_t:'原生执行器与空闲自动升级', sp3_d:'透传 Claude Code、Codex、Gemini (agy) 与 dsh，支持跨机空闲升级 CLI。', sp4_t:'跨机技能全网自动镜像', sp4_d:'主机维护一份标准技能包，自动同步至每一台接入的执行机器。', sp5_t:'受限 Knowledge MCP', sp5_d:'外部独立 CLI 可通过节点令牌安全挂载项目知识库，不越界。', sp6_t:'透明开源与热插拔主题', sp6_d:'数据全归自己；把 JSON 放入 <dataDir>/themes/ 即可热重载控制台皮肤。', appx_t:'技术契约速览', q1_t:'为什么不做云端 SaaS，而是零依赖单账本自托管？', q1_p:'代码库、CLI 登录凭据与项目知识留在你自己的机器与 OS 用户隔离边界内。先记意图再派发，单活跃轮次由 SQLite 唯一索引约束，崩溃重启后如实核对机器现场。', q1_a:'阅读核心架构与安全边界 ›', q2_t:'如何把我们团队私有的计费网关或内部 IM 接进来？', q2_p:'无需 Fork 主仓库：私有计费把脚本放进 ~/.tycho/quota-probes/ 按 stdin/stdout JSON 契约输出额度；内部 IM 实现 2 个 HMAC-SHA256 接口即可双向闭环。', q2_a:'查看插件开发规范 ›', q3_t:'需要预装 Node.js 24、root 权限或 Docker 吗？', q3_p:'都不需要。一键安装脚本仅以日常普通用户运行；若本机缺少 Node >= 24.3.0，会自动隔离准备一份仅归 Tycho 使用的私有运行时。', q3_a:'查看 5 分钟快速上手 ›', cl_h:'带上你的原生 CLI，立即开始。', cl_p:'90 秒本机跑通，5 分钟部署公网 24×7 控制面。17 篇工程文档与全量 112 项配置参考已就绪。', cl_b1:'进入文档中心', cl_b2:'下载桌面端 (app-v0.2.0)', cl_b3:'全部 Releases ›' },
-  en: { nav_acc:'Accounts', nav_flt:'Fleet & Deploy', nav_cli:'Clients & IM', nav_docs:'Docs', nav_search:'Search', h1:'Turn your native AI CLIs into one engineering team.', lead:'Orchestrate your existing Claude Code, Codex, Gemini, and dsh subscriptions across every machine, account, and device — backed by one zero-dependency SQLite ledger.', cta_start:'Get Started in 5 Min', cta_docs:'Explore Docs Portal ›', v_con:'Console', v_acc:'Quotas', v_ch:'IM & Triggers', v_cl:'Clients', v_arch:'Architecture', a2_k:'BYOS NATIVE CLIS · UNIFIED ACCOUNTS', a2_h:'Every subscription, at full power.', a2_p:'No forced API-key migration, no lost MCPs or Git hooks. Pool every provider and login across three routing tiers with automatic quota failover.', a2_l1:'100% Native CLI Passthrough', a2_l2:'Multi-Window Telemetry', a2_r2:'5h / 7d live tracking · P1→P2 failover', a2_l3:'Private Billing Plugins', a2_more:'Read Accounts & 3-Tier Guide ›', sim_dec:'Decide', sim_exe:'Execute', sim_ope:'Operate', a3_k:'ZERO INBOUND SSH · 4 TOPOLOGIES', a3_h:'One control plane, every machine.', a3_p:'Keep workstations behind corporate or home NAT with zero open ports. Nodes dial out over HTTPS or proxy-safe WSS :443 to your public VPS or private Host.', t_vps:'Public Cloud VPS', t_loc:'Localhost (90s)', t_mesh:'Tailscale / LAN', t_tun:'NAT Tunnel WSS :443', d_more:'Read Full 4-Topology Guide ›', a4_k:'EVERYWHERE CLIENTS · OPEN INTEGRATIONS', a4_h:'Stay in command, away from your desk.', a4_p:'Approve work from a 3.6 MB desktop shell or standalone mobile PWA — or drive projects straight from WeCom, WeChat, Feishu, or any custom IM.', im_h:'Plug in any IM platform', im_p:'Built-in WeCom WS, Personal WeChat iLink, and Feishu bridge; connect Slack, Discord, or internal chat in 10 minutes via signed tycho-v1 HMAC with zero console leaks.', im_a:'Read Open IM Protocol ›', tr_h:'Three plugin-grade trigger families', tr_p:'Schedule IANA-timezone Cron jobs, chain atomic SQLite lifecycle events (ready / accepted / merged), or verify GitHub & custom webhooks with group broadcast.', tr_a:'Read Channels & Triggers Guide ›', a5_k:'BUILT FOR LONGEVITY', a5_h:'Zero bloat. Crafted to trust 24×7.', sp1_t:'Runtime Dependencies', sp1_d:'Pure Node 24 + built-in node:sqlite. No Docker, Redis, or external DB required.', sp2_t:'Native Tauri v2 Desktop', sp2_d:'Portable Windows exe & universal macOS DMG without Electron overhead, plus mobile PWA.', sp3_t:'Native CLIs + Fleet Updater', sp3_d:'Drives real Claude Code, Codex, Gemini (agy) & dsh with idle-safe fleet CLI upgrades.', sp4_t:'Auto-Mirrored SKILL.md Fleet', sp4_d:'Keep one skill catalog on Host and mirror automatically to every worker node.', sp5_t:'Scoped Knowledge MCP', sp5_d:'Attach project knowledge to external CLIs via node tokens with strict boundaries.', sp6_t:'MIT Open Source & JSON Themes', sp6_d:'Own your ledger and data; drop JSON packs into <dataDir>/themes/ for hot reload.', appx_t:'ENGINEERING FAQ', q1_t:'Why a self-hosted SQLite ledger instead of a cloud wrapper?', q1_p:'Your repos, CLI logins, and project knowledge stay inside your own OS user boundary. Intent is persisted first, one active round per task is enforced by SQLite uniqueness, and restarts reconcile reality.', q1_a:'Read Architecture & Security ›', q2_t:'How do I plug in our private billing gateway or custom IM?', q2_p:'No fork needed: drop a script into ~/.tycho/quota-probes/ emitting standard JSON windows, or implement two HMAC-SHA256 endpoints for any chat platform.', q2_a:'Read Plugin Contracts ›', q3_t:'Do I need Node.js 24, root access, or Docker?', q3_p:'None of them. The installer runs as your normal user and provisions an isolated Node 24 runtime for Tycho automatically if needed.', q3_a:'Read 5-Minute Quickstart ›', cl_h:'Bring your CLIs. Own your control plane.', cl_p:'90 seconds locally, 5 minutes on your public VPS. 17 engineering guides and 112 auto-generated settings await.', cl_b1:'Open Docs Portal', cl_b2:'Download Desktop (app-v0.2.0)', cl_b3:'All Releases ›' },
+  zh: { nav_demo:'在线 Demo', nav_evo:'知识进化与审阅', nav_acc:'调度与额度', nav_flt:'多机与部署', nav_deep:'12 项核心设计', nav_docs:'文档中心', nav_search:'搜索', h1:'把你手头的原生 AI CLI，编排成一支工程团队。', lead:'直接调度你已订阅的 Claude Code、Codex、Gemini 与 dsh —— 一本零依赖 SQLite 账本，统筹每一台机器、每一份额度、知识自进化与每一端设备。', cta_start:'5 分钟开始使用', cta_demo:'全屏体验真实工作台 ↗', cta_docs:'探索文档中心 ›', live_badge:'真实前端实时运行 · 可直接点击派活、审批、切泳道', live_full:'全屏 ↗', v_tr:'工作泳道图', v_hud:'45° PCB 蓝图', v_con:'项目对话与派活', v_kn:'知识自进化', v_mc:'多机算力', v_ch:'入站与触发', ev_k:'越用越聪明 · 独立把关闭环', ev_h:'知识自进化与跨模型独立审阅。', ev_p:'普通 Agent 工具每次开新窗口都失忆，或者让同一个模型自说自话。Tycho 用“带证据的知识提案 + 独立把关闸门 + 不可变修订”让团队经验持续沉淀，并自动注入后续每一轮任务。', ev1_t:'实战提炼 · 附原始证据', ev1_p:'执行器或项目总控在解决故障后提交结构化提案，强制关联来源任务、代码行与测试回执摘录。', ev2_t:'独立把关 · 绝不自审', ev2_p:'系统自动派发独立闸门任务核查证据与影响面（绝不用写提案的同一个执行器自己把关）；全局常驻或改动主人条目必须等你点头。', ev3_t:'预算感知 · 自动喂给下轮', ev3_p:'生效后按项目/职能自动编排进下一轮上下文简报（严格控制字节预算），并支持外部 CLI 通过 tycho knowledge-mcp --node 受限读写。', ev4_t:'SKILL.md 全网自动镜像', ev4_p:'主机维护一份标准技能目录，自动同步到所有在线的 Linux / macOS / Windows 算力机，零手工拷贝。', ev_try:'在交互式工作台中体验「等你点头」知识提案审批 ›', a2_k:'原生执行器 · 统一账号池', a2_h:'你的订阅，全功率释放。', a2_p:'无需改换按量 API Key，不丢原有的 MCP、钩子与 Git 凭据。把不同厂商与多份订阅统一编入三档路由，额度触限前自动优雅切号。', a2_l1:'原生 CLI 透传', a2_l2:'多窗口配额遥测', a2_r2:'5h / 7d 实时感知 · P1→P2 顺延', a2_l3:'私有计费探针插件', a2_more:'深入了解账号池与三档路由 ›', sim_dec:'决策档', sim_exe:'执行档', sim_ope:'操作档', a3_k:'零入站 SSH · 4 种部署拓扑', a3_h:'一台主机，调度每一台机器。', a3_p:'无论算力在公司内网工作站、家里 Windows 主机还是 MacBook，节点通过出站长连主动接入；主机可常驻公网云服务器 VPS，也可以留在内网经 WSS :443 隧道对外提供服务。', t_vps:'公网云服务器 VPS', t_loc:'本机 90 秒试用', t_mesh:'Tailscale / 局域网', t_tun:'NAT 反向隧道 WSS :443', d_more:'查看完整 4 种拓扑部署指南 ›', a4_k:'多端原生体验 · 开放协作生态', a4_h:'不在电脑前，依然尽在掌控。', a4_p:'3.6 MB 桌面壳与手机独立 PWA 让你随时一键审批交付；内置企微、微信、飞书与开放签名协议，让团队在熟悉的聊天群里直接驱动项目闭环。', im_h:'随意接入任何 IM 平台', im_p:'开箱内置企微长连接与个人微信 iLink，附飞书桥接参考实现；任何平台均可通过 tycho-v1 双向 HMAC 协议在 10 分钟内接入，支持群快慢分流且绝不泄露私有控制台。', im_a:'阅读开放 IM 双向协议 ›', tr_h:'3 类插件级事件触发器', tr_p:'不止被动响应指令：用显式 IANA 时区 Cron 定时巡检，用 SQLite 事务内生命周期事件自动串联审阅与发布，或接入 GitHub / 自定义签名 Webhook 并自动播报绑定群聊。', tr_a:'阅读 IM 与触发器指南 ›', a5_k:'不止一句口号 · 12 项硬核工程设计', a5_h:'深入细节，每一处都经得起 24×7 托付。', a5_p:'除了直观的工作台与泳道图，Tycho 在账本一致性、多职能编排、增量续跑、跨机升级与安全边界上做了完整的工程落地。', dc1_t:'工作泳道图与 45° PCB 派发蓝图', dc1_p:'基于 ELK 布局引擎实时渲染多任务依赖、执行脉搏与跨机状态波次，在列表、蓝图、泳道三种视图间无缝切换，点击任意节点即开分栏线程。', dc2_t:'项目总控 × 自由职能编排', dc2_p:'按项目指定独立总控模型；预置实现（implement）、验证（verify）、审阅（review）、协调（orchestrate）四大职能，并支持自定义提示词与默认档位。', dc3_t:'原生线程增量续跑与插话', dc3_p:'在分栏右侧随时向运行中的任务追加后续指令或插话，自动续接 Codex / Claude 原会话上下文执行，拒绝每次追问从头浪费 Token。', dc4_t:'结构化交付报告、Diff 验收与自动清理', dc4_p:'任务结束沉淀完整交付报告与 Git Diff；支持一键验收合并（Accept & Land）或打回返工（Rework），并在归档/删除项目时经 work_cleanup 自动清理多机临时副本。', dc5_t:'有序多代码源与零损便携移交', dc5_p:'单项目支持配置多个有序代码来源（工作目录 + Git 仓库）；支持便携项目移交（Portable Handoff），连同知识、文件与待审提案整体带走。', dc6_t:'零依赖单账本 + Watchdog 崩溃对账', dc6_p:'纯 Node 24 + node:sqlite 零外部依赖；先记意图再派发，唯一约束锁死单活跃轮次；内置跨平台进程实查（procinfo）与重启对账回放。', dc7_t:'无头远程机网页设备码登录', dc7_p:'给远端无桌面 Linux GPU 服务器登录 Codex / Claude，无需 SSH 转发浏览器 —— 在控制台直接发起设备码授权流程并实时同步各机登录态。', dc8_t:'节点追随升级 + 多机 CLI 空闲自升级', dc8_p:'主机升级后全部远程 Node 自动校验 SHA256 跟随升级；同时支持空闲时段自动检测并升级全网节点的 claude / codex / agy / dsh CLI。', dc9_t:'群上下文环形缓冲与播报群组', dc9_p:'企微/微信/飞书群绑定内置最近消息环形缓冲与图片附件拉取，触发器与 Webhook 执行结果可自动播报回指定研发群，同时严禁泄露控制台会话。', dc10_t:'全局 Token 与轮次用量账本', dc10_p:'精确统计每个账号、项目、机器在 5h / 24h / 7d / 累计维度的 Token 消耗与轮次，即使项目归档删除仍完整保留历史成本账目。', dc11_t:'9 套内置皮肤与热插拔 JSON 主题', dc11_p:'内置测控星盘（HUD）、星仪暗夜（Linear）、信号橙工坊、极光玻璃、合成器、燕麦书房、琥珀暗房、苏黎世墨印、天仪经典 9 套精调皮肤（在上方 Demo 左下角即可实时切换），并支持 themes/ 目录 JSON 主题热加载。', dc12_t:'属主 ACL 密钥、自动备份与一键体检', dc12_p:'凭据落盘自动收紧 POSIX 0600 / Windows icacls；内置定时备份与保留策略、HTTP 500 脱敏追踪码与 tycho doctor 全链路自检。', appx_t:'技术契约速览', q1_t:'为什么不做云端 SaaS，而是零依赖单账本自托管？', q1_p:'代码库、CLI 登录凭据与项目知识留在你自己的机器与 OS 用户隔离边界内。先记意图再派发，单活跃轮次由 SQLite 唯一索引约束，崩溃重启后如实核对机器现场。', q1_a:'阅读核心架构与安全边界 ›', q2_t:'如何把我们团队私有的计费网关或内部 IM 接进来？', q2_p:'无需 Fork 主仓库：私有计费把脚本放进 ~/.tycho/quota-probes/ 按 stdin/stdout JSON 契约输出额度；内部 IM 实现 2 个 HMAC-SHA256 接口即可双向闭环。', q2_a:'查看插件开发规范 ›', q3_t:'需要预装 Node.js 24、root 权限或 Docker 吗？', q3_p:'都不需要。一键安装脚本仅以日常普通用户运行；若本机缺少 Node >= 24.3.0，会自动隔离准备一份仅归 Tycho 使用的私有运行时。', q3_a:'查看 5 分钟快速上手 ›', cl_h:'带上你的原生 CLI，立即开始。', cl_p:'90 秒本机跑通，5 分钟部署公网 24×7 控制面。17 篇工程文档与全量 112 项配置参考已就绪。', cl_b1:'进入文档中心', cl_b2:'下载桌面端 (app-v0.2.0)', cl_b3:'全部 Releases ›' },
+  en: { nav_demo:'Live Demo', nav_evo:'Knowledge & Review', nav_acc:'Accounts', nav_flt:'Fleet & Deploy', nav_deep:'12 Engineering Designs', nav_docs:'Docs', nav_search:'Search', h1:'Turn your native AI CLIs into one engineering team.', lead:'Orchestrate your existing Claude Code, Codex, Gemini, and dsh subscriptions across every machine, account, self-evolving knowledge base, and device.', cta_start:'Get Started in 5 Min', cta_demo:'Open Full-Screen Live Demo ↗', cta_docs:'Explore Docs Portal ›', live_badge:'Real Console Live in Browser · Click, Dispatch, Approve & Switch Views', live_full:'Fullscreen ↗', v_tr:'Swimlane DAG', v_hud:'45° PCB Blueprint', v_con:'Project Router', v_kn:'Knowledge Evolution', v_mc:'Machines Fleet', v_ch:'Inbound & Triggers', ev_k:'SELF-EVOLVING BRAIN · INDEPENDENT GATES', ev_h:'Knowledge self-evolution & cross-model review.', ev_p:'Most coding agents start every window with amnesia or grade their own homework. Tycho evolves institutional memory via evidence-backed proposals, independent review gates, and immutable revisions.', ev1_t:'Evidence-Backed Proposals', ev1_p:'Workers and routers submit structured lessons citing exact task runs, file lines, diffs, and verified test receipts.', ev2_t:'Independent Gate, Never Self-Graded', ev2_p:'A separate gate task verifies evidence using a different executor; global resident rules or edits to owner entries wait for your approval.', ev3_t:'Budgeted Auto-Injection + MCP', ev3_p:'Active entries compile dynamically into future round briefs within strict KB budgets, and attach to external CLIs via tycho knowledge-mcp --node.', ev4_t:'SKILL.md Fleet Mirror', ev4_p:'Maintain one standard skill catalog on Host and mirror automatically across every online Linux, macOS, and Windows worker.', ev_try:'Approve a live Knowledge Proposal inside the interactive Demo ›', a2_k:'BYOS NATIVE CLIS · UNIFIED ACCOUNTS', a2_h:'Every subscription, at full power.', a2_p:'No forced API-key migration, no lost MCPs or Git hooks. Pool every provider and login across three routing tiers with automatic quota failover.', a2_l1:'100% Native CLI Passthrough', a2_l2:'Multi-Window Telemetry', a2_r2:'5h / 7d live tracking · P1→P2 failover', a2_l3:'Private Billing Plugins', a2_more:'Read Accounts & 3-Tier Guide ›', sim_dec:'Decide', sim_exe:'Execute', sim_ope:'Operate', a3_k:'ZERO INBOUND SSH · 4 TOPOLOGIES', a3_h:'One control plane, every machine.', a3_p:'Keep workstations behind corporate or home NAT with zero open ports. Nodes dial out over HTTPS or proxy-safe WSS :443 to your public VPS or private Host.', t_vps:'Public Cloud VPS', t_loc:'Localhost (90s)', t_mesh:'Tailscale / LAN', t_tun:'NAT Tunnel WSS :443', d_more:'Read Full 4-Topology Guide ›', a4_k:'EVERYWHERE CLIENTS · OPEN INTEGRATIONS', a4_h:'Stay in command, away from your desk.', a4_p:'Approve work from a 3.6 MB desktop shell or standalone mobile PWA — or drive projects straight from WeCom, WeChat, Feishu, or any custom IM.', im_h:'Plug in any IM platform', im_p:'Built-in WeCom WS, Personal WeChat iLink, and Feishu bridge; connect Slack, Discord, or internal chat in 10 minutes via signed tycho-v1 HMAC with zero console leaks.', im_a:'Read Open IM Protocol ›', tr_h:'Three plugin-grade trigger families', tr_p:'Schedule IANA-timezone Cron jobs, chain atomic SQLite lifecycle events (ready / accepted / merged), or verify GitHub & custom webhooks with group broadcast.', tr_a:'Read Channels & Triggers Guide ›', a5_k:'BEYOND THE PUNCHLINE · 12 ENGINEERING DESIGNS', a5_h:'Built with depth you can trust 24×7.', a5_p:'Beneath the clean interface sits a complete engineering architecture for durability, multi-role orchestration, resumable threads, fleet upgrades, and strict boundaries.', dc1_t:'Swimlane DAG & 45° PCB Blueprint', dc1_p:'ELK-powered live task graphs visualize parallel execution waves, dependencies, and worker routing across List, Blueprint, and Swimlane views.', dc2_t:'Project Routers × Custom Roles', dc2_p:'Assign per-project router models; ships with implement, verify, review, and orchestrate roles plus custom prompts and tier bindings.', dc3_t:'Native Thread Delta Resume & Interject', dc3_p:'Queue follow-up instructions directly onto active Codex / Claude threads to resume native sessions without re-sending entire repo context.', dc4_t:'Structured Reports, Diff Landing & Cleanup', dc4_p:'Every run settles with structured reports and Git diffs; accept/land or request rework in one click with automatic multi-machine work_cleanup.', dc5_t:'Ordered Code Sources & Portable Handoff', dc5_p:'Bind multiple ordered repo/directory sources per project; transfer projects portably with all knowledge, registered files, and pending gates intact.', dc6_t:'Zero-Dep SQLite Ledger + Watchdog', dc6_p:'Pure Node 24 + node:sqlite; persist intent first, lock one active round per task, and reconcile real OS processes (procinfo) after restarts.', dc7_t:'Headless Remote Device-Code Login', dc7_p:'Sign in Codex or Claude on headless remote GPU servers directly from the web console using device-code OAuth — zero SSH port forwarding.', dc8_t:'Auto-Following Nodes & Idle CLI Upgrades', dc8_p:'Workers auto-follow Host upgrades with SHA256 verification, and safely upgrade installed claude / codex / agy / dsh CLIs during idle windows.', dc9_t:'IM Group Context Ring Buffer & Broadcast', dc9_p:'Bound WeCom/WeChat/Feishu groups retain recent context and media attachments, broadcast trigger outcomes, and keep private console sessions isolated.', dc10_t:'Global Token & Run Usage Ledger', dc10_p:'Track exact token and round consumption by account, project, and machine across 5h/24h/7d/total windows — preserved even after archiving projects.', dc11_t:'9 Built-In Skins + Hot-Reload JSON Themes', dc11_p:'Switch live among 9 finely tuned skins (HUD, Linear, Tactile, Aurora Glass, Field, Paper, Quant, Swiss, Classic) right in the Demo footer, or drop custom JSON themes into <dataDir>/themes/.', dc12_t:'Owner-Only ACLs, Backups & Doctor', dc12_p:'Strict POSIX 0600 / Windows icacls secret files, scheduled ledger backups & retention policies, masked HTTP 500 IDs, and tycho doctor diagnostics.', appx_t:'ENGINEERING FAQ', q1_t:'Why a self-hosted SQLite ledger instead of a cloud wrapper?', q1_p:'Your repos, CLI logins, and project knowledge stay inside your own OS user boundary. Intent is persisted first, one active round per task is enforced by SQLite uniqueness, and restarts reconcile reality.', q1_a:'Read Architecture & Security ›', q2_t:'How do I plug in our private billing gateway or custom IM?', q2_p:'No fork needed: drop a script into ~/.tycho/quota-probes/ emitting standard JSON windows, or implement two HMAC-SHA256 endpoints for any chat platform.', q2_a:'Read Plugin Contracts ›', q3_t:'Do I need Node.js 24, root access, or Docker?', q3_p:'None of them. The installer runs as your normal user and provisions an isolated Node 24 runtime for Tycho automatically if needed.', q3_a:'Read 5-Minute Quickstart ›', cl_h:'Bring your CLIs. Own your control plane.', cl_p:'90 seconds locally, 5 minutes on your public VPS. 17 engineering guides and 112 auto-generated settings await.', cl_b1:'Open Docs Portal', cl_b2:'Download Desktop (app-v0.2.0)', cl_b3:'All Releases ›' },
 };
 
-let lang = 'zh', mode = 'vps', view = 'console', simTier = 'decide', capHit = false;
+let lang = 'zh', mode = 'vps', view = 'trace', simTier = 'decide', capHit = false;
 
 function renderSim() {
   const rows = SIM_DATA[simTier];
@@ -1138,11 +1232,12 @@ function renderSim() {
     : (lang === 'zh' ? 'P1 额度健康，按优先级优先调度' : 'P1 healthy — routed by tier priority');
 }
 
-function syncView() {
+function syncView(pushFrame = false) {
   const v = VIEWS[lang][view];
-  document.querySelectorAll('#stage-frame img[data-slide]').forEach(img => {
-    img.classList.toggle('on', img.dataset.slide === view);
-  });
+  if (pushFrame) {
+    const frame = document.getElementById('demo-frame');
+    frame?.contentWindow?.postMessage({ type: 'tycho-demo-nav', route: v.route, workMode: v.workMode }, '*');
+  }
   document.getElementById('cap-title').textContent = v.title;
   document.getElementById('cap-desc').textContent = v.desc;
   const link = document.getElementById('cap-link');
@@ -1174,7 +1269,7 @@ document.querySelectorAll('.os-btn').forEach(b => b.addEventListener('click', ()
 document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => {
   view = b.dataset.view;
   document.querySelectorAll('[data-view]').forEach(x => x.classList.toggle('on', x === b));
-  syncView();
+  syncView(true);
 }));
 document.getElementById('sim-tiers').addEventListener('click', e => {
   const b = e.target.closest('[data-tier]'); if (!b) return;
@@ -1293,6 +1388,7 @@ ${THEME_HEAD_SNIPPET}
     </a>
     <nav class="nav-mid">
       <a href="../index.html">产品首页</a>
+      <a href="../demo/index.html">在线 Demo</a>
       <a class="active" href="index.html">文档门户</a>
       <a href="quickstart.html">快速上手</a>
       <a href="cli.html">CLI 参考</a>
@@ -1516,6 +1612,7 @@ ${THEME_HEAD_SNIPPET}
     </a>
     <nav class="nav-mid">
       <a href="../index.html">产品首页</a>
+      <a href="../demo/index.html">在线 Demo</a>
       <a href="index.html">文档门户</a>
       <a href="quickstart.html">快速上手</a>
       <a href="cli.html">CLI 参考</a>
@@ -1623,4 +1720,6 @@ for (let i = 0; i < DOC_PAGES.length; i++) {
 writeFileSync(join(OUT, 'search-index.json'), JSON.stringify(searchIndex), 'utf8');
 writeFileSync(join(OUT, '.nojekyll'), '', 'utf8');
 
-console.log(`Built Apple/Linear website + Stripe Docs Home in ${OUT}: index.html + docs/index.html + ${DOC_PAGES.length} doc pages`);
+await buildInteractiveDemo(join(OUT, 'demo'));
+
+console.log(`Built Apple/Linear website + Interactive Real Console Demo + Stripe Docs Home in ${OUT}: index.html + demo/ + docs/index.html + ${DOC_PAGES.length} doc pages`);
