@@ -2,6 +2,10 @@
 
 Tycho 采用 **「服务端统一承载 UI + 3.6 MB 原生薄壳 / 手机全屏 PWA」** 架构：所有界面、工作流与功能升级均由 Tycho 服务端实时下发，客户端只需极少更新。
 
+<p align="center">
+  <img src="./assets/preview-clients.png" alt="Tycho 3.6 MB Desktop, Mobile PWA, JSON Themes and SKILL.md Mirror" width="100%" />
+</p>
+
 ## 平台支持矩阵
 
 | 平台 | 推荐形态 | 获取方式 | 特点 |

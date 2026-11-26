@@ -2,6 +2,10 @@
 
 Tycho 不把你绑死在浏览器里：你可以用**企业微信、个人微信、飞书或任何自定义 IM** 像指挥同事一样向项目派活、审批、收汇报，也能用**定时规则、内部生命周期事件与签名 Webhook** 让项目自动运转。
 
+<p align="center">
+  <img src="../assets/preview-channels.png" alt="Tycho IM Channels and Event Triggers Pipeline" width="100%" />
+</p>
+
 ---
 
 ## 一、开箱即用的 IM 通道
