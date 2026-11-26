@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import {
   DEFAULT_EXECUTOR_AUTO_UPDATE_POLICY,
   highestSemver,
+  isLikelyManualUpdate,
   isVersionBehind,
   jobKey,
   versionOf,
@@ -50,6 +51,8 @@ function stateBadge(job: ExecutorUpdateJobView) {
           {job.updated ? `已升 ${shortVer(job.after_version)}` : '已是最新'}
         </Badge>
       );
+    case 'unsupported':
+      return <Badge tone="plain" className="text-[11px] text-muted-foreground">{job.method === 'disabled' ? '已禁用' : '需手动更新'}</Badge>;
     case 'failed':
       return <Badge tone="failed" className="text-[11px]"><TriangleAlert className="mr-1 size-3" />失败</Badge>;
   }
@@ -327,18 +330,24 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                   {executors.map((exec) => {
                     const info = refByExecutor[exec];
                     const upstream = fleet?.upstream[exec];
-                    const onlineInstalledCount = machines.filter(
-                      (m) => m.node.connected && m.node.executors?.executors.some((e) => e.executor === exec && e.installed),
-                    ).length;
+                    const onlineUpdatableCount = machines.filter((m) => {
+                      if (!m.node.connected) return false;
+                      const st = m.node.executors?.executors.find((e) => e.executor === exec);
+                      if (!st?.installed) return false;
+                      const activeJob = fleet?.active_by_key[jobKey(m.id, exec)];
+                      if (activeJob?.state === 'unsupported') return false;
+                      if (!activeJob && isLikelyManualUpdate(exec, st.path)) return false;
+                      return true;
+                    }).length;
                     const busyAll = triggeringKey === `all/${exec}`;
                     return (
-                      <th key={exec} className="min-w-[175px] px-3 py-2 align-top">
+                      <th key={exec} className="min-w-[190px] px-3 py-2 align-top">
                         <div className="flex items-center justify-between gap-2">
-                          <div>
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-mono text-xs font-semibold text-foreground">{exec}</span>
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="whitespace-nowrap font-mono text-xs font-semibold text-foreground">{exec}</span>
                               {info?.ref ? (
-                                <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] font-normal text-muted-foreground">
+                                <span className="whitespace-nowrap rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] font-normal text-muted-foreground">
                                   {info.source === 'upstream' ? `最新 ${info.ref}` : `机群最高 ${info.ref}`}
                                 </span>
                               ) : null}
@@ -350,9 +359,9 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                           <Button
                             size="sm"
                             variant="ghost"
-                            className="h-6 px-2 text-[11px]"
-                            disabled={onlineInstalledCount === 0 || busyAll}
-                            title={`更新所有在线机器上的 ${exec}`}
+                            className="h-6 flex-none whitespace-nowrap px-2 text-[11px]"
+                            disabled={onlineUpdatableCount === 0 || busyAll}
+                            title={onlineUpdatableCount === 0 ? `${exec} 当前没有支持自动批量更新的在线机器` : `更新所有在线机器上的 ${exec}`}
                             onClick={() => void handleRunUpdate(exec)}
                           >
                             <ArrowUpCircle className="size-3" />
@@ -406,6 +415,9 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                                 </span>
                                 {behind && !job ? (
                                   <Badge tone="waiting" className="text-[10px]">落后</Badge>
+                                ) : null}
+                                {!job && isLikelyManualUpdate(exec, status.path) ? (
+                                  <Badge tone="plain" className="text-[10px] text-faint" title="该执行器由桌面安装包管理，需通过对应桌面端或本机配置更新">需手动更新</Badge>
                                 ) : null}
                                 {job ? (
                                   <button
@@ -483,11 +495,11 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                     </div>
                   </div>
                   {job.error && !open ? (
-                    <p className="text-[11px] text-danger wrap-anywhere">{job.error}</p>
+                    <p className={cn('text-[11px] wrap-anywhere', job.state === 'unsupported' ? 'text-muted-foreground' : 'text-danger')}>{job.error}</p>
                   ) : null}
                   {open ? (
                     <div className="mt-1 grid gap-1.5 rounded-md border border-border/70 bg-surface p-2.5">
-                      {job.error ? <Callout tone="failed" className="text-xs">{job.error}</Callout> : null}
+                      {job.error ? <Callout tone={job.state === 'unsupported' ? 'plain' : 'failed'} className="text-xs">{job.error}</Callout> : null}
                       {job.output ? (
                         <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-muted-foreground">
                           {job.output}

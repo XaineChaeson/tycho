@@ -126,9 +126,9 @@ test('messages of one day stand together; another day is told apart by a line', 
   expect(withReply.map(({ kind }) => kind)).toEqual(['date', 'mine', 'reply']);
 });
 
-test('a reply that comes after midnight is dated where it stands, and no two lines carry one key', () => {
-  // Two questions asked before midnight, each answered just after it: the day turns back
-  // and forth between them, so a line's key belongs to where it stands, not to its day.
+test('replies after midnight stay under their question and date dividers never jump backward', () => {
+  // Two questions asked before midnight, each answered just after it, followed by a message today:
+  // paired replies keep their own timestamp without splitting the Q&A block or jumping back to "昨天".
   const at = (dayOffset: number, hours: number, minutes: number): string => {
     const when = new Date();
     when.setDate(when.getDate() + dayOffset);
@@ -140,9 +140,13 @@ test('a reply that comes after midnight is dated where it stands, and no two lin
     inbound('02', '接着又问', { created_at: at(-1, 23, 59) }),
     { ...reply('03', '01', '过了午夜才答'), created_at: at(0, 0, 1) },
     { ...reply('04', '02', '这条也是'), created_at: at(0, 0, 2) },
+    inbound('05', '今天再问', { created_at: at(0, 0, 5) }),
   ]);
-  expect(list.map(({ kind }) => kind)).toEqual(['date', 'mine', 'date', 'reply', 'date', 'mine', 'date', 'reply']);
-  expect(list.map((item) => ('text' in item ? item.text : ''))).toEqual(['昨天', '睡前问的', '今天', '过了午夜才答', '昨天', '接着又问', '今天', '这条也是']);
+  expect(list.map(({ kind }) => kind)).toEqual(['date', 'mine', 'reply', 'mine', 'reply', 'date', 'mine']);
+  expect(list.map((item) => ('text' in item ? item.text : ''))).toEqual(['昨天', '睡前问的', '过了午夜才答', '接着又问', '这条也是', '今天', '今天再问']);
+  // Replies still keep their own midnight timestamps for display.
+  expect(list[2]).toHaveProperty('at', at(0, 0, 1));
+  expect(list[4]).toHaveProperty('at', at(0, 0, 2));
   // Every day line stands before something dated, and each carries a key of its own.
   const keys = list.map(({ key }) => key);
   expect(new Set(keys).size).toBe(keys.length);

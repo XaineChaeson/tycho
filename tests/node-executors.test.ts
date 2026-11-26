@@ -88,7 +88,7 @@ test('实录：已登录的两份都按退出码答，版本读的是它自己�
   const report = await probeExecutors({ questions: TWO, run, now: () => AT });
   assert.equal(report.at, '2026-11-06T10:00:00.000Z', '报告带着这台机器读到的时刻');
   assert.deepEqual(report.executors, [
-    { executor: 'claude', installed: true, version: '2.1.303 (Claude Code)', logged_in: true, read_only: { available: true, layer: 'contract', checks_code: true }, identity: { organizationId: null, accountLabel: null } },
+    { executor: 'claude', installed: true, version: '2.1.303 (Claude Code)', logged_in: true, read_only: { available: true, layer: 'contract', checks_code: true }, identity: { organizationId: null, accountLabel: null, planLabel: 'Max' } },
     { executor: 'codex', installed: true, version: 'codex-cli 0.162.0', logged_in: true, read_only: { available: true, layer: 'contract', checks_code: true } },
   ]);
   // The two executors are asked side by side, so what is fixed is the set of questions, not

@@ -38,15 +38,36 @@ jobs:
       - name: Build web console
         run: npm run build:console
 
-      - name: Generate third-party notices
-        run: node scripts/gen-third-party-notices.ts
+      - name: Run web console tests
+        run: npm run test:console
+
+      - name: Run server & CLI tests
+        run: npm test
+
+      - name: Verify OSS hygiene, docs & third-party notices
+        run: |
+          npm run check:hygiene
+          npm run docs:check
+          node scripts/gen-third-party-notices.ts --check
 
       - name: Pack release archive
         id: pack
         shell: bash
         run: |
-          archive=$(node scripts/pack.ts --strict-licenses)
+          build_args=()
+          if [[ "${GITHUB_REF_NAME:-}" =~ ^v[0-9]+\.[0-9]+\.([0-9]+)$ ]]; then
+            build_args=(--build "${BASH_REMATCH[1]}")
+          fi
+          archive=$(node scripts/pack.ts --strict-licenses "${build_args[@]}")
           echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF_NAME:-}" == v* ]]; then
+            expected_ver="${GITHUB_REF_NAME#v}"
+            actual_ver=$(tar -xOf "$archive" release.json | node -e "console.log(JSON.parse(require('node:fs').readFileSync(0,'utf8')).version)")
+            if [ "$actual_ver" != "$expected_ver" ]; then
+              echo "Version mismatch: tag=${expected_ver}, archive=${actual_ver}" >&2
+              exit 1
+            fi
+          fi
           mkdir -p release-artifacts
           cp "$archive" release-artifacts/tycho.tar.gz
           cp install/install.sh release-artifacts/install.sh

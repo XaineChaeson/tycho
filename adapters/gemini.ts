@@ -15,9 +15,18 @@ const PERMISSION_MODES = ['dangerously-skip-permissions', 'accept-edits', 'auto'
 const TIER_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 const INSTALL_PLACES: readonly InstallPlace[] = [
+  { kind: 'under', platforms: ['win32'], variable: 'LOCALAPPDATA', path: ['agy', 'bin', 'agy.exe'] },
+  { kind: 'under', platforms: ['win32'], variable: 'LOCALAPPDATA', path: ['agy', 'bin', 'agy.cmd'] },
   { kind: 'under', platforms: ['win32'], variable: 'USERPROFILE', path: ['.gemini', 'bin', 'agy.exe'] },
+  { kind: 'under', platforms: ['win32'], variable: 'USERPROFILE', path: ['.gemini', 'bin', 'agy.cmd'] },
+  { kind: 'under', platforms: ['win32'], variable: 'USERPROFILE', path: ['.agy', 'bin', 'agy.exe'] },
   { kind: 'under', platforms: ['win32'], variable: 'USERPROFILE', path: ['.local', 'bin', 'agy.exe'] },
+  { kind: 'under', platforms: ['win32'], variable: 'LOCALAPPDATA', path: ['antigravity', 'bin', 'agy.exe'] },
+  { kind: 'under', platforms: ['win32'], variable: 'LOCALAPPDATA', path: ['Programs', 'Antigravity', 'bin', 'agy.exe'] },
+  { kind: 'under', platforms: ['win32'], variable: 'LOCALAPPDATA', path: ['Programs', 'Antigravity', 'bin', 'agy.cmd'] },
+  { kind: 'under', platforms: ['win32'], variable: 'APPDATA', path: ['npm', 'agy.cmd'] },
   { kind: 'under', platforms: ['darwin', 'linux'], variable: 'HOME', path: ['.gemini', 'bin', 'agy'] },
+  { kind: 'under', platforms: ['darwin', 'linux'], variable: 'HOME', path: ['.agy', 'bin', 'agy'] },
   { kind: 'under', platforms: ['darwin', 'linux'], variable: 'HOME', path: ['.local', 'bin', 'agy'] },
 ];
 
@@ -148,8 +157,24 @@ function checkTier(tier: Tier): string | undefined {
   return undefined;
 }
 
+// Parse `--effort` choices dynamically from `agy --help` (e.g. `(low|medium|high|xhigh|max)`).
+function parseHelpEfforts(help: string | undefined): string[] {
+  if (!help) return [];
+  const line = help.split(/\r?\n/).find((each) => /^\s*--effort\b/.test(each));
+  if (!line) return [];
+  const inside = /\(([^)]+)\)/.exec(line)?.[1];
+  if (!inside) return [];
+  return [...new Set(
+    inside
+      .split(/[|,]/)
+      .map((item) => item.trim())
+      .filter((item) => /^[\w.-]+$/.test(item)),
+  )];
+}
+
 // `agy models` prints `<id>\t<display name>` one model per line on stdout.
-function parseModels(stdout: string): ModelInfo[] {
+function parseModels(stdout: string, helpStdout?: string): ModelInfo[] {
+  const efforts = parseHelpEfforts(helpStdout);
   const models: ModelInfo[] = [];
   for (const raw of stdout.split(/\r?\n/)) {
     if (raw.trim() === '') continue;
@@ -157,7 +182,11 @@ function parseModels(stdout: string): ModelInfo[] {
     const id = (tab < 0 ? raw : raw.slice(0, tab)).trim();
     if (!id) continue;
     const name = tab < 0 ? undefined : str(raw.slice(tab + 1).trim());
-    models.push({ id, ...(name && name !== id ? { name } : {}) });
+    models.push({
+      id,
+      ...(name && name !== id ? { name } : {}),
+      ...(efforts.length > 0 ? { efforts: [...efforts] } : {}),
+    });
   }
   return models;
 }
@@ -541,7 +570,7 @@ export const geminiAdapter: Adapter = {
         headers: { 'x-goog-api-key': token },
         parse: parseGeminiModelsListing,
       }
-    : { kind: 'command', argv: ['agy', 'models'], parse: parseModels },
+    : { kind: 'command', argv: ['agy', 'models'], extraArgv: ['agy', '--help'], parse: parseModels },
   machineQuota: {
     kind: 'command',
     argv: ['agy', '-p', '/usage', '--output-format', 'json'],

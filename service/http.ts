@@ -2,6 +2,7 @@ import {outputReport,releasesFor,policyOf} from './node-output.ts';
 import { deviceLoginMissingText, joinMissingText, modelText, NEEDS_LOGIN_TEXT, RECENT_ENDED, WORK_GROUPS, workGroup } from '../shared/labels.ts';
 import { grantsOf } from '../shared/grants.ts';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createReadStream, existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
@@ -32,7 +33,7 @@ import type { Logins } from './logins.ts';
 import type { LoginSettingsInput } from './accounts.ts';
 import { accountNameProblem, loginName, organizationIdOf, takesTypedLogin, typedLoginRefusal, type AccountLoginOffer } from '../shared/logins.ts';
 import { isTierId, TIER_IDS, tierValueFrom, type TierId } from '../shared/tiers.ts';
-import { normalizeTierSlots } from '../shared/dispatch-slots.ts';
+import { effectiveRouteOfLogin, normalizeDispatchSlotsConfig, normalizeTierSlots, slotForLogin, type DispatchSlotsConfig } from '../shared/dispatch-slots.ts';
 import { dispatchOrderKey } from './settings.ts';
 import { ROUTER_RECEIPT, type RouterCallTrace } from '../shared/trajectory.ts';
 import { repoUrlsOf } from '../shared/sources.ts';
@@ -70,7 +71,7 @@ import { candidateLogins, needsRoleToPlace } from './pick.ts';
 import { createLoginLimit } from './login-limit.ts';
 import type { LoginLimitPolicy } from './login-limit.ts';
 import type { ReleaseIntent, ReleaseResult } from './releases.ts';
-import { releasesOf } from './releases.ts';
+import { nameIsSafe, releasesOf } from './releases.ts';
 import type { NodeReleases } from './node-release.ts';
 import type { Acceptor } from './accept.ts';
 import type { SessionHost } from './session-host.ts';
@@ -730,6 +731,7 @@ export function createHttp(options: HttpOptions) {
     tier?: string | null;
     tier_source?: string | null;
     login_id?: string | null;
+    machine_id?: string | null;
   }): TaskAssignment {
     const roleId = task.role_id ?? null;
     const roleName = roleId === null ? null : roles.get(roleId)?.name ?? null;
@@ -757,10 +759,14 @@ export function createHttp(options: HttpOptions) {
       const machine = latestRun.machine_id ? options.machines.get(latestRun.machine_id) : undefined;
       machineName = machine?.id ?? latestRun.machine_id ?? (latestRun.host || null);
       placedBy = ledger.placementOf(latestRun.id) ?? null;
-    } else if (pinnedLoginId !== null) {
-      const pinnedLogin = options.logins.get(pinnedLoginId);
-      loginName = pinnedLogin?.name ?? null;
-      executor = pinnedLogin?.executor ?? null;
+    } else {
+      if (pinnedLoginId !== null) {
+        const pinnedLogin = options.logins.get(pinnedLoginId);
+        loginName = pinnedLogin?.name ?? null;
+        executor = pinnedLogin?.executor ?? null;
+        machineName = pinnedLogin?.machine ?? null;
+      }
+      if (task.machine_id) machineName = task.machine_id;
     }
 
     return {
@@ -784,7 +790,7 @@ export function createHttp(options: HttpOptions) {
   // way. That moment is when the Task may go on, never a promise that it will by then.
   // `prefer` is left out of listings that only need a Task's place in the queue: the
   // side column's works and their children never show it.
-  function present<T extends { id: string; state: string; source_json?: string | null; role_id?: string | null; tier?: string | null; tier_source?: string | null; login_id?: string | null }>(task: T, { prefer: withPrefer = true }: { prefer?: boolean } = {}) {
+  function present<T extends { id: string; state: string; source_json?: string | null; role_id?: string | null; tier?: string | null; tier_source?: string | null; login_id?: string | null; machine_id?: string | null }>(task: T, { prefer: withPrefer = true }: { prefer?: boolean } = {}) {
     const loginId = (task as { login_id?: string | null }).login_id;
     const parsed = parseTaskPrefer((task as { prefer_json?: string | null }).prefer_json);
     const prefer = parsed === null
@@ -1905,6 +1911,15 @@ export function createHttp(options: HttpOptions) {
     if (typeof body.tier !== 'string' || !isTierId(body.tier)) {
       throw new InputError('请指定有效的档位（operate / execute / decide）');
     }
+    const isStringArray = (value: unknown): value is string[] =>
+      Array.isArray(value) && value.every((item) => typeof item === 'string');
+    if (
+      (body.p1 !== undefined && !isStringArray(body.p1))
+      || (body.p2 !== undefined && !isStringArray(body.p2))
+      || (body.off !== undefined && !isStringArray(body.off))
+    ) {
+      throw new InputError('派发槽位 p1 / p2 / off 必须是字符串数组');
+    }
     const normalized = normalizeTierSlots({ p1: body.p1, p2: body.p2, off: body.off });
     if (!normalized) throw new InputError('派发槽位格式不正确');
     const saved = ledger.setTierDispatchSlots(body.tier, normalized);
@@ -1925,11 +1940,23 @@ export function createHttp(options: HttpOptions) {
   }
 
   // The queued Tasks a login may be given: those pinned to it and those that name no
-  // login and could run as it.
+  // login and could run as it (respecting project overrides and disabled priority slots).
   function queuedFor(loginId: string): number {
+    const globalSlots = ledger.dispatchSlots();
     return ledger.listTasks({ states: ['queued'] }).filter((task) => {
       if (task.login_id !== null && ledger.loginRefusal(task, task.login_id) !== undefined) return false;
-      return candidateLogins(task, ledger.loginPool(task).ids, options.logins, undefined, ledger.loginOrder(task.tier)).some(({ id }) => id === loginId);
+      const candidates = candidateLogins(task, ledger.loginPool(task).ids, options.logins, undefined, ledger.loginOrder(task.tier, task.project_id));
+      const matched = candidates.find(({ id }) => id === loginId);
+      if (!matched) return false;
+      if (task.login_id !== null || task.tier === null || !isTierId(task.tier)) return true;
+      const projSlots = task.project_id !== null ? ledger.projectDispatchSlots(task.project_id) : null;
+      const projOrder = task.project_id !== null ? ledger.projectDispatchOrder(task.project_id) : null;
+      const tierSlots = projSlots?.[task.tier]
+        ?? (projOrder?.[task.tier] && projOrder[task.tier]!.length > 0 ? undefined : globalSlots?.[task.tier]);
+      if (!tierSlots) return true;
+      const routeLabel = matched.machine ? (ledger.loginState(matched.id)?.identity?.routeLabel ?? null) : null;
+      const route = matched.machine ? effectiveRouteOfLogin({ routeLabel, tiers: matched.tiers }, task.tier) : null;
+      return slotForLogin({ id: matched.id, executor: matched.executor, machine: matched.machine, route }, tierSlots, [], task.tier) !== 'off';
     }).length;
   }
 
@@ -2254,6 +2281,7 @@ export function createHttp(options: HttpOptions) {
       // The logins it runs as now: the ledger's one derivation (project-sessions §5).
       pool: ledger.loginPool({ project_id: id }).ids,
       dispatch_order: projectDispatchOrderOf(id),
+      dispatch_slots: projectDispatchSlotsOf(id),
       effective_dispatch_order: effectiveProjectDispatchOrderOf(id),
       // The machines it names, and how many it names that were deleted since: those match
       // nothing, so a list of only them allows no machine (service/ledger.ts machineRange).
@@ -2268,6 +2296,10 @@ export function createHttp(options: HttpOptions) {
 
   function projectDispatchOrderOf(projectId: string): ProjectDispatchOrder | null {
     return typeof ledger.projectDispatchOrder === 'function' ? ledger.projectDispatchOrder(projectId) : null;
+  }
+
+  function projectDispatchSlotsOf(projectId: string): DispatchSlotsConfig | null {
+    return typeof ledger.projectDispatchSlots === 'function' ? ledger.projectDispatchSlots(projectId) : null;
   }
 
   function effectiveProjectDispatchOrderOf(projectId: string): EffectiveProjectDispatchOrder {
@@ -2328,6 +2360,7 @@ export function createHttp(options: HttpOptions) {
         paused_at: project.paused_at,
         archived_at: project.archived_at,
         dispatch_order: projectDispatchOrderOf(project.id),
+        dispatch_slots: projectDispatchSlotsOf(project.id),
         effective_dispatch_order: effectiveProjectDispatchOrderOf(project.id),
       },
       segments: segments.map(({ id, seq, state, created_at, closed_at }) => ({ id, seq, state, created_at, closed_at })),
@@ -2669,12 +2702,34 @@ export function createHttp(options: HttpOptions) {
         dispatchOrder = parsed;
       }
     }
+    let dispatchSlots: DispatchSlotsConfig | null | undefined;
+    if (Object.hasOwn(body, 'dispatch_slots') && body.dispatch_slots !== undefined) {
+      const raw = body.dispatch_slots;
+      if (raw === null) {
+        dispatchSlots = null;
+      } else {
+        if (typeof raw !== 'object' || Array.isArray(raw)) {
+          throw new InputError('派发槽位应为 null 或按档位给出的槽位配置对象');
+        }
+        for (const key of Object.keys(raw as Record<string, unknown>)) {
+          if (!isTierId(key)) {
+            throw new InputError(`派发槽位包含无效档位：${key}`);
+          }
+        }
+        const normalized = normalizeDispatchSlotsConfig(raw);
+        if (!normalized) {
+          throw new InputError('派发槽位格式不正确');
+        }
+        dispatchSlots = normalized;
+      }
+    }
     // The ledger's own checks decide what a project may be pointed at and what it may be
     // called, so the tool and the console cannot come to different conclusions about it.
     ledger.transaction(() => {
       if (typeof body.name === 'string') ledger.setProjectName(id, body.name, { actor: CONSOLE_ACTOR });
       if (logins || loginMode) ledger.setProjectLogins(id, logins, { actor: CONSOLE_ACTOR }, loginMode);
-      if (dispatchOrder !== undefined) ledger.setProjectDispatchOrder(id, dispatchOrder, { actor: CONSOLE_ACTOR });
+      if (dispatchSlots !== undefined) ledger.setProjectDispatchSlots(id, dispatchSlots, { actor: CONSOLE_ACTOR });
+      else if (dispatchOrder !== undefined) ledger.setProjectDispatchOrder(id, dispatchOrder, { actor: CONSOLE_ACTOR });
       if (machines) ledger.setProjectMachines(id, machines, { actor: CONSOLE_ACTOR });
       if (sources !== undefined) ledger.setProjectSources(id, sources, { actor: CONSOLE_ACTOR });
       if (typeof body.spawn_machines === 'boolean') ledger.setProjectSpawnMachines(id, body.spawn_machines, { actor: CONSOLE_ACTOR });
@@ -3899,6 +3954,135 @@ export function createHttp(options: HttpOptions) {
     sendJson(response, 200, extractTaskFacts({ task, runs, changes, eventsByRun, coverageByRun }));
   }
 
+  function desktopReleasesDir(): string | null {
+    const base = options.dataDir ?? options.releases?.dataDir;
+    return base ? join(base, 'desktop-releases') : null;
+  }
+
+  function desktopLatest({ response, url }: Asked): void {
+    const dir = desktopReleasesDir();
+    if (!dir) {
+      sendJson(response, 200, { version: null });
+      return;
+    }
+    const manifestPath = join(dir, 'latest.json');
+    if (!existsSync(manifestPath)) {
+      sendJson(response, 200, { version: null });
+      return;
+    }
+    try {
+      const raw = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+        version?: unknown;
+        published_at?: unknown;
+        notes?: unknown;
+        platforms?: Record<string, { filename?: unknown; sha256?: unknown; size?: unknown; installer_filename?: unknown; installer_sha256?: unknown }>;
+      };
+      const version = typeof raw.version === 'string' && raw.version.trim() ? raw.version.trim() : null;
+      if (!version || !raw.platforms || typeof raw.platforms !== 'object') {
+        sendJson(response, 200, { version: null });
+        return;
+      }
+      const platform = url.searchParams.get('platform')?.trim() || '';
+      const arch = url.searchParams.get('arch')?.trim() || '';
+      const key = platform && arch ? `${platform}-${arch}` : platform;
+      const picked = key ? raw.platforms[key] : undefined;
+      const safeArtifact = (entry: { filename?: unknown; sha256?: unknown; size?: unknown; installer_filename?: unknown; installer_sha256?: unknown } | undefined) => {
+        if (!entry || typeof entry.filename !== 'string' || !nameIsSafe(entry.filename)) return null;
+        const sha256 = typeof entry.sha256 === 'string' && /^[0-9a-fA-F]{64}$/.test(entry.sha256) ? entry.sha256.toLowerCase() : null;
+        if (!sha256 || !existsSync(join(dir, entry.filename))) return null;
+        const installerFilename = typeof entry.installer_filename === 'string' && nameIsSafe(entry.installer_filename) && existsSync(join(dir, entry.installer_filename))
+          ? entry.installer_filename
+          : null;
+        const installerSha256 = installerFilename && typeof entry.installer_sha256 === 'string' && /^[0-9a-fA-F]{64}$/.test(entry.installer_sha256)
+          ? entry.installer_sha256.toLowerCase()
+          : null;
+        return {
+          filename: entry.filename,
+          sha256,
+          size: typeof entry.size === 'number' && Number.isFinite(entry.size) ? entry.size : statSync(join(dir, entry.filename)).size,
+          url: `/api/desktop/download/${encodeURIComponent(entry.filename)}`,
+          ...(installerFilename && installerSha256 ? {
+            installer_filename: installerFilename,
+            installer_sha256: installerSha256,
+            installer_url: `/api/desktop/download/${encodeURIComponent(installerFilename)}`,
+          } : {}),
+        };
+      };
+      const artifact = key ? safeArtifact(picked) : null;
+      const platforms = Object.fromEntries(
+        Object.entries(raw.platforms)
+          .map(([k, v]) => [k, safeArtifact(v)] as const)
+          .filter(([, v]) => v !== null),
+      );
+      sendJson(response, 200, {
+        version,
+        published_at: typeof raw.published_at === 'string' ? raw.published_at : null,
+        notes: typeof raw.notes === 'string' ? raw.notes : null,
+        ...(key ? { artifact } : {}),
+        platforms,
+      });
+    } catch {
+      sendJson(response, 200, { version: null });
+    }
+  }
+
+  function desktopDownload({ response, params }: Asked): void {
+    const dir = desktopReleasesDir();
+    const rawName = params[0] ?? '';
+    let name: string;
+    try { name = decodeURIComponent(rawName); } catch { throw new HttpError(400, '无效的文件名'); }
+    if (!dir || !nameIsSafe(name) || !/\.(exe|dmg|AppImage|deb)$/i.test(name)) {
+      throw new HttpError(404, '未找到桌面端安装包');
+    }
+    // Allowlist strictly against artifacts registered in latest.json so stray files in the
+    // release directory are never exposed anonymously.
+    const manifestPath = join(dir, 'latest.json');
+    if (!existsSync(manifestPath)) throw new HttpError(404, '未找到桌面端安装包');
+    const registered = new Set<string>();
+    try {
+      const raw = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+        platforms?: Record<string, { filename?: unknown; installer_filename?: unknown }>;
+      };
+      for (const entry of Object.values(raw.platforms ?? {})) {
+        if (typeof entry?.filename === 'string' && nameIsSafe(entry.filename)) registered.add(entry.filename);
+        if (typeof entry?.installer_filename === 'string' && nameIsSafe(entry.installer_filename)) registered.add(entry.installer_filename);
+      }
+    } catch {
+      throw new HttpError(404, '未找到桌面端安装包');
+    }
+    if (!registered.has(name)) throw new HttpError(404, '未找到桌面端安装包');
+    const filePath = join(dir, name);
+    let st: ReturnType<typeof lstatSync>;
+    try {
+      st = lstatSync(filePath);
+    } catch {
+      throw new HttpError(404, '未找到桌面端安装包');
+    }
+    if (!st.isFile() || st.isSymbolicLink()) throw new HttpError(404, '未找到桌面端安装包');
+    const stream = createReadStream(filePath);
+    let headersSent = false;
+    stream.on('open', () => {
+      headersSent = true;
+      response.writeHead(200, {
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': String(st.size),
+        'Content-Disposition': `attachment; filename="${name}"`,
+        'Cache-Control': 'public, max-age=3600',
+      });
+      stream.pipe(response);
+    });
+    stream.on('error', () => {
+      if (!headersSent && !response.headersSent) {
+        sendJson(response, 404, { error: '未找到桌面端安装包' });
+      } else {
+        response.destroy();
+      }
+    });
+    response.on('close', () => {
+      if (!stream.destroyed) stream.destroy();
+    });
+  }
+
   const selfCheck = async ({ response }: Asked): Promise<void> => sendJson(response, 200, { checks: await options.doctor() });
 
   // Every route there is. The first match from the top answers.
@@ -3916,6 +4100,9 @@ export function createHttp(options: HttpOptions) {
     // The command on this machine asks with the token from service.json; a browser asks
     // with its cookie, further down.
     { method: 'GET', path: '/api/doctor', token: () => shutdownToken, ifShown: true, handle: selfCheck },
+
+    { method: 'GET', path: '/api/desktop/latest', anonymous: true, outside: true, handle: desktopLatest },
+    { method: 'GET', path: '/api/desktop/download/:name', anonymous: true, outside: true, handle: desktopDownload },
 
     // Signing in.
     { method: 'GET', path: '/login', anonymous: true, outside: true, handle: ({ response }) => sendPage(response, 200, enterPage(imLoginChannels(), { hasPassphrase: auth.hasPassphrase() })) },

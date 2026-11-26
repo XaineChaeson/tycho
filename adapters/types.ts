@@ -326,8 +326,10 @@ export interface ModelInfo {
 export type ModelQuery =
   // A request the caller makes itself. The token is in `headers` and belongs nowhere else.
   | { kind: 'http'; url: string; headers: Record<string, string>; parse(body: string): ModelInfo[]; identity?: (headers: Headers) => ExecutorIdentity }
-  // A command run on a machine, as that machine's own login would run it.
-  | { kind: 'command'; argv: string[]; parse(stdout: string): ModelInfo[]; identity?: (stdout: string) => ExecutorIdentity };
+  // A command run on a machine, as that machine's own login would run it. Optional `extraArgv`
+  // supplies a second read-only local probe (e.g. `--dump-config-schema` or `--help`) whose
+  // stdout is passed into `parse` so supported models and reasoning efforts come straight from the CLI.
+  | { kind: 'command'; argv: string[]; extraArgv?: string[]; parse(stdout: string, extraStdout?: string): ModelInfo[]; identity?: (stdout: string) => ExecutorIdentity };
 
 // How a login tycho keeps reaches the process of a round (docs/design/native-login.md): as the
 // value of the variable named here, which is where every executor here reads its key. What the

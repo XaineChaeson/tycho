@@ -320,6 +320,20 @@ test('what the internet can reach is this list: a route joins it by a decision, 
     'GET /api/node/skills/:slug',
     // What the owner sees of them from the console.
     'GET /api/node/joins',
+    // Desktop thin-shell release metadata & allowlisted binary downloads (anonymous, same-origin verified).
+    'GET /api/desktop/latest',
+    'GET /api/desktop/download/:name',
+    // Logical-account priority slots, aliases, batch login updates, themes, and fleet CLI updaters.
+    'PUT /api/dispatch/slots',
+    'PUT /api/logins/alias',
+    'PUT /api/logins/batch',
+    'GET /api/themes',
+    'POST /api/themes',
+    'DELETE /api/themes/:id',
+    'GET /api/executors/updates',
+    'POST /api/executors/updates/check',
+    'POST /api/executors/updates/run',
+    'PUT /api/executors/updates/policy',
   ].sort());
 });
 

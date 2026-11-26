@@ -36,7 +36,7 @@ import { createKnowledge, DEFAULT_KNOWLEDGE_LIMITS, parseKnowledgeTask, type Cha
 import { ENTRY_MACHINES_SETTING_KEY, isDirectorySkillId, SKILL_REGISTRY_SETTING_KEY, TASK_TIMEOUTS_SETTING_KEY, type EffectiveContextReport, type EntryMachinesMap, type SkillDirectoryScan, type SkillRegistryBinding, type SkillRegistryMap } from '../shared/skill-catalog.ts';
 import { applicableDirectorySkills, buildEffectiveContext, isUnsafeSlug, parseEntryMachines, parseSkillRegistry, revisionForDirectorySkill, scanSkillDirectory, syncManagedSkills, validateMachineIds, validateSkillBinding } from './skill-catalog.ts';
 import { generatedSize, type HostVersionState } from './knowledge-brief.ts';
-import { DISPATCH_SLOTS_SETTING_KEY, executorOfSlotKey, normalizeTierSlots, parseDispatchSlots, type DispatchSlotsConfig, type TierDispatchSlots } from '../shared/dispatch-slots.ts';
+import { DISPATCH_SLOTS_SETTING_KEY, effectiveRouteOfLogin, normalizeDispatchSlotsConfig, normalizeRouteKey, normalizeTierSlots, parseDispatchSlots, parseExecutorSlotKey, parseProjectDispatchConfig, type DispatchSlotsConfig, type TierDispatchSlots } from '../shared/dispatch-slots.ts';
 import { EXECUTOR_AUTO_UPDATE_SETTING_KEY, normalizeExecutorAutoUpdatePolicy, parseExecutorAutoUpdatePolicy, type ExecutorAutoUpdatePolicy } from '../shared/executor-updates.ts';
 import { knowledgeRoleRefusal } from './roles.ts';
 import { createMessages } from './messages.ts';
@@ -282,8 +282,10 @@ export interface TaskRow {
   // The merge round a Task was made as (service/land.ts), as JSON; null for every other Task.
   landing_json: string | null;
   // The project source it is pinned to (shared/sources.ts TaskSource), as it stood when it was
-  // pinned; null when its project names none, and then its rounds work in an empty directory.
+  // pinned; null when its project names none or the Task uses the default empty task directory.
   source_json: string | null;
+  // Optional target machine pinned on the Task (machine.id); null lets the dispatcher pick.
+  machine_id: string | null;
   // The logins the Router asked to try first, in its order, with why (roles-and-tiers.md §11):
   // a TaskPrefer as JSON; null when it asked for none. A preference, never a pin.
   prefer_json: string | null;
@@ -1030,21 +1032,7 @@ function inferPlainProseSummary(finalReply: string): string {
 }
 
 function parseProjectDispatchOrder(raw: string | null | undefined): Partial<Record<TierId, string[]>> | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const out: Partial<Record<TierId, string[]>> = {};
-    for (const tier of TIER_IDS) {
-      const list = (parsed as Record<string, unknown>)[tier];
-      if (!Array.isArray(list)) continue;
-      const unique = [...new Set(list.filter((id): id is string => typeof id === 'string' && id.trim() !== '').map((id) => id.trim()))];
-      if (unique.length > 0) out[tier] = unique;
-    }
-    return Object.keys(out).length > 0 ? out : null;
-  } catch {
-    return null;
-  }
+  return parseProjectDispatchConfig(raw).order;
 }
 
 function settlement(exitCode: number | null, receipt: Receipt | null, stopIntent: boolean, opts: SettleOptions): Settlement {
@@ -1890,16 +1878,54 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
   // project it was in says so in the timeline.
   function scrubDispatchOrders(removedIds: ReadonlySet<string>): void {
     if (removedIds.size === 0) return;
+    // Also scrub deleted login IDs from global dispatch_slots_v1 so stale IDs never accumulate.
+    const globalRow = db.get<{ value_json: string }>('SELECT value_json FROM setting WHERE key = ?', DISPATCH_SLOTS_SETTING_KEY);
+    if (globalRow) {
+      const globalSlots = parseDispatchSlots(globalRow.value_json);
+      if (globalSlots) {
+        let globalChanged = false;
+        const nextGlobal: DispatchSlotsConfig = {};
+        for (const tier of TIER_IDS) {
+          const tierSlots = globalSlots[tier];
+          if (!tierSlots) continue;
+          const p1 = tierSlots.p1.filter((id) => !removedIds.has(id));
+          const p2 = tierSlots.p2.filter((id) => !removedIds.has(id));
+          const off = tierSlots.off.filter((id) => !removedIds.has(id));
+          if (p1.length !== tierSlots.p1.length || p2.length !== tierSlots.p2.length || off.length !== tierSlots.off.length) globalChanged = true;
+          nextGlobal[tier] = { p1, p2, off };
+        }
+        if (globalChanged) {
+          db.run('UPDATE setting SET value_json = ? WHERE key = ?', JSON.stringify(nextGlobal), DISPATCH_SLOTS_SETTING_KEY);
+        }
+      }
+    }
     for (const project of db.all<{ id: string; dispatch_order_json: string | null }>('SELECT id, dispatch_order_json FROM project WHERE dispatch_order_json IS NOT NULL ORDER BY rowid')) {
-      const parsed = parseProjectDispatchOrder(project.dispatch_order_json);
-      if (!parsed) {
+      const { slots, order } = parseProjectDispatchConfig(project.dispatch_order_json);
+      if (!slots && !order) {
         db.run('UPDATE project SET dispatch_order_json = NULL WHERE id = ?', project.id);
+        continue;
+      }
+      if (slots) {
+        let changed = false;
+        const next: DispatchSlotsConfig = {};
+        for (const tier of TIER_IDS) {
+          const tierSlots = slots[tier];
+          if (!tierSlots) continue;
+          const p1 = tierSlots.p1.filter((id) => !removedIds.has(id));
+          const p2 = tierSlots.p2.filter((id) => !removedIds.has(id));
+          const off = tierSlots.off.filter((id) => !removedIds.has(id));
+          if (p1.length !== tierSlots.p1.length || p2.length !== tierSlots.p2.length || off.length !== tierSlots.off.length) changed = true;
+          next[tier] = { p1, p2, off };
+        }
+        if (!changed) continue;
+        const nextJson = Object.keys(next).length > 0 ? JSON.stringify(next) : null;
+        db.run('UPDATE project SET dispatch_order_json = ? WHERE id = ?', nextJson, project.id);
         continue;
       }
       let changed = false;
       const next: Partial<Record<TierId, string[]>> = {};
       for (const tier of TIER_IDS) {
-        const list = parsed[tier];
+        const list = order?.[tier];
         if (!list) continue;
         const kept = list.filter((id) => !removedIds.has(id));
         if (kept.length !== list.length) changed = true;
@@ -1996,6 +2022,9 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
     writeChange(db, action, ctx ?? SERVICE, {}, { machine_id: id, at });
   }
   function requireMachine(task: TaskRow, held: Pick<LoginConfig, 'executor' | 'machine'>, id: string): void {
+    if (task.machine_id !== null && task.machine_id !== id) {
+      throw new InputError(`任务指定了目标机器 ${task.machine_id}，不能派发到 ${id}`);
+    }
     const login = { executor: held.executor, ...(held.machine === null ? {} : { machine: held.machine }) };
     const machine = currentMachine(id);
     // A folder source names its machine outright: the project's allowed machines do not narrow
@@ -2027,6 +2056,47 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
   // listed for that tier, in that order, then every other login in the order it was added.
   // A login deleted since is dropped. This is the only place the order is worked out; the
   // pools below still say which logins a Task may use, never which comes first.
+  function expandTierSlotsToLoginIds(tierSlots: TierDispatchSlots): string[] {
+    const accounts = db.all<{ id: string }>('SELECT id FROM account ORDER BY rowid').map((r) => r.id);
+    const machineRows = db.all<{ id: string; executor: string; tiers_json: string | null }>('SELECT id, executor, tiers_json FROM machine_login ORDER BY rowid');
+    const routeByLoginId = new Map<string, string | null>();
+    const identityRows = db.all<{ id: string; identity_json: string | null }>('SELECT id, identity_json FROM login_state WHERE identity_json IS NOT NULL');
+    const reportedRouteById = new Map<string, string | null>();
+    for (const row of identityRows) {
+      try {
+        const parsed = JSON.parse(row.identity_json!) as { routeLabel?: unknown } | null;
+        if (parsed && typeof parsed.routeLabel === 'string' && parsed.routeLabel.trim()) {
+          reportedRouteById.set(row.id, parsed.routeLabel.trim());
+        }
+      } catch { /* ignore malformed identity_json */ }
+    }
+    for (const m of machineRows) {
+      let tiers: Record<string, { text?: string } | undefined> | null = null;
+      if (m.tiers_json) {
+        try { tiers = JSON.parse(m.tiers_json) as Record<string, { text?: string } | undefined>; } catch { tiers = null; }
+      }
+      routeByLoginId.set(m.id, normalizeRouteKey(effectiveRouteOfLogin({ routeLabel: reportedRouteById.get(m.id) ?? null, tiers })));
+    }
+    const expandKey = (key: string): string[] => {
+      const parsed = parseExecutorSlotKey(key);
+      if (parsed !== null) {
+        return machineRows
+          .filter((m) => m.executor === parsed.executor && (parsed.route === null || routeByLoginId.get(m.id) === parsed.route))
+          .map((m) => m.id);
+      }
+      return accounts.includes(key) || machineRows.some((m) => m.id === key) ? [key] : [];
+    };
+    const orderedLogins: string[] = [];
+    const seen = new Set<string>();
+    for (const key of [...tierSlots.p1, ...tierSlots.p2]) {
+      for (const id of expandKey(key)) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        orderedLogins.push(id);
+      }
+    }
+    return orderedLogins;
+  }
   function loginOrder(tier: string | null, projectId?: string | null): string[] {
     const all = everyLogin();
     if (tier === null || !isTierId(tier)) return all;
@@ -2034,10 +2104,15 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
     let projectListed: string[] = [];
     if (projectId !== undefined && projectId !== null) {
       const row = db.get<{ dispatch_order_json: string | null }>('SELECT dispatch_order_json FROM project WHERE id = ?', projectId);
-      const parsed = parseProjectDispatchOrder(row?.dispatch_order_json);
-      const tierList = parsed?.[tier];
-      if (tierList && tierList.length > 0) {
-        projectListed = tierList.filter(loginExists);
+      const { slots, order } = parseProjectDispatchConfig(row?.dispatch_order_json);
+      const tierSlots = slots?.[tier];
+      if (tierSlots) {
+        projectListed = expandTierSlotsToLoginIds(tierSlots).filter(loginExists);
+      } else {
+        const tierList = order?.[tier];
+        if (tierList && tierList.length > 0) {
+          projectListed = tierList.filter(loginExists);
+        }
       }
     }
     const seen = new Set<string>();
@@ -2060,6 +2135,11 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
       if (filtered.length > 0) out[tier] = filtered;
     }
     return Object.keys(out).length > 0 ? out : null;
+  }
+  function projectDispatchSlots(projectId: string): DispatchSlotsConfig | null {
+    const row = db.get<{ dispatch_order_json: string | null }>('SELECT dispatch_order_json FROM project WHERE id = ?', projectId);
+    if (!row) throw new InputError(`项目不存在：${projectId}`);
+    return parseProjectDispatchConfig(row.dispatch_order_json).slots;
   }
   function effectiveProjectDispatchOrder(projectId: string): Record<TierId, string[]> {
     if (!db.get('SELECT 1 FROM project WHERE id = ?', projectId)) {
@@ -2192,21 +2272,73 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
     return sources;
   }
 
-  // What a Task is pinned to when it is made or moved: the source it names, or the project's
-  // first. Null for a Task of a project with no source, whose rounds work in an empty directory.
-  function pinSource(projectId: string | null, sourceId: string | undefined): TaskSource | null {
+  // What a Task is pinned to when it is made or moved: the source it names, null when the caller
+  // explicitly asks for Tycho's default empty task directory, or the project's first source. When
+  // sourceId is omitted and the Task targets a specific machine (via machine_id or a machine-local
+  // login) while the project's default source is a folder on another machine, it falls back to
+  // null (default empty task directory on the target machine) instead of conflicting.
+  function pinSource(projectId: string | null, sourceId: string | null | undefined, targetMachineId?: string | null): TaskSource | null {
     if (projectId === null) {
-      if (sourceId !== undefined) throw new InputError('这个任务不属于任何项目，没有代码来源');
+      if (sourceId !== undefined && sourceId !== null) throw new InputError('这个任务不属于任何项目，没有代码来源');
       return null;
     }
+    if (sourceId === null) return null;
     const sources = projectSourcesOf(projectId);
     if (sourceId === undefined) {
       const first = defaultSource(sources);
-      return first === null ? null : { source_id: first.id, pinned: first };
+      if (first === null) return null;
+      if (targetMachineId && first.kind === 'folder' && first.machine_uid !== PENDING_MACHINE_UID) {
+        const target = currentMachine(targetMachineId);
+        if (target !== undefined && first.machine_uid !== target.uid) return null;
+      }
+      return { source_id: first.id, pinned: first };
     }
     const chosen = sources.find((source) => source.id === sourceId);
     if (chosen === undefined) throw new InputError(`项目里没有这个代码来源：${sourceId}（用 get_project 看现在的清单）`);
     return { source_id: chosen.id, pinned: chosen };
+  }
+
+  function normalizeMachineId(machineId: string | null | undefined): string | null | undefined {
+    if (machineId === undefined || machineId === null) return machineId;
+    const trimmed = machineId.trim();
+    if (trimmed === '') throw new InputError('目标机器不能为空字符串；取消固定请传 null');
+    return trimmed;
+  }
+
+  function validatePlacement(
+    taskScope: Pick<TaskRow, 'project_id' | 'knowledge_json'>,
+    loginId: string | null,
+    machineId: string | null,
+    source: TaskSource | null,
+  ): void {
+    const login = currentLogin(loginId);
+    const loginMachine = login?.machine ?? null;
+    const folderMachine = source?.pinned.kind === 'folder' && source.pinned.machine_uid !== PENDING_MACHINE_UID
+      ? db.get<{ id: string; uid: string }>('SELECT id, uid FROM machine WHERE uid = ?', source.pinned.machine_uid)
+      : undefined;
+    if (machineId !== null) {
+      if (taskScope.project_id === null) throw new InputError('知识任务不能指定目标机器');
+      const target = currentMachine(machineId);
+      if (!target || target.leftAt !== undefined) {
+        throw new InputError(`机器不存在或已注销：${machineId}（用 list_machines 看现在的清单）`);
+      }
+      if (folderMachine !== undefined && folderMachine.uid !== target.uid) {
+        throw new InputError(`目标机器 ${target.id} 与代码来源 ${sourceLabelFor(source!.pinned)} 所在机器 ${folderMachine.id} 冲突；可传 source: null 使用目标机器默认任务目录，或取消指定机器`);
+      }
+      if (loginMachine !== null && loginMachine !== target.id) {
+        throw new InputError(`登录 ${loginName(loginId)} 只能在机器 ${loginMachine} 上跑，与目标机器 ${target.id} 冲突；请取消指定登录或改用托管账号 / ${target.id} 上的登录`);
+      }
+      if (!(source?.pinned.kind === 'folder' && folderMachine?.uid === target.uid)) {
+        const range = machineRange(taskScope);
+        if ('conflict' in range) throw new InputError(range.conflict);
+        if (!inRange(range.allowed, target.id) || (target.scope !== undefined && target.scope.project_id !== range.projectId)) {
+          throw new InputError(`机器 ${target.id} 不在项目允许的机器范围内`);
+        }
+      }
+    }
+    if (folderMachine !== undefined && loginMachine !== null && folderMachine.id !== loginMachine) {
+      throw new InputError(`登录 ${loginName(loginId)} 只能在机器 ${loginMachine} 上跑，与代码来源 ${sourceLabelFor(source!.pinned)} 所在机器 ${folderMachine.id} 冲突；可传 source: null 使用默认任务目录，或改用托管账号 / ${folderMachine.id} 上的登录`);
+    }
   }
 
   function taskSourceOf(taskId: string): TaskSource | null {
@@ -3493,6 +3625,7 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
     loginPool,
     loginOrder,
     projectDispatchOrder,
+    projectDispatchSlots,
     effectiveProjectDispatchOrder,
     loginRefusal,
     spreadExecutorsOf,
@@ -3626,9 +3759,11 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
         // The skills its rounds are to follow, given to them in full.
         skillIds?: readonly string[];
         // The project source its rounds work on (docs/design/code-sources.md §1). Absent: the
-        // project's default (the first). The item is pinned as it stands now. A review names
-        // none: it works where the Task it reviews does (see below).
-        sourceId?: string;
+        // project's default (the first), or null when targeting a machine whose default folder
+        // lives elsewhere. Null: explicitly use Tycho's default empty task directory.
+        sourceId?: string | null;
+        // Optional target machine (machine.id) to pin this Task to.
+        machineId?: string | null;
         // For a merge round: the Task it lands, the pull request and the reviewed commit. Only
         // integrate_task passes it, and nothing after creation changes it.
         landing?: Landing;
@@ -3653,17 +3788,25 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
         if (fields.reviewOf !== undefined && fields.sourceId !== undefined) throw new InputError('审阅任务的代码来源跟着被审的任务，不能另选');
         const binding = fields.reviewOf === undefined ? null : bindReview(loadTask(fields.reviewOf.taskId), fields.reviewOf);
         if (binding !== null && loadTask(binding.task_id).project_id !== fields.projectId) throw new InputError('审阅任务要和被审的任务在同一个项目');
-        requireLoginAllowed({ project_id: fields.projectId }, fields.loginId);
-        // A review bound to a reviewed task inherits that task's source pin.
-        const source = fields.reviewOf === undefined ? pinSource(fields.projectId, fields.sourceId) : taskSourceOf(fields.reviewOf.taskId);
-        if (fields.knowledge !== undefined) requireKnowledgeRole(roleId);
-        requireReadOnlyWay(roleId, fields.loginId);
         if ((fields.knowledge === undefined) !== (fields.projectId !== null)) {
           throw new InputError(fields.knowledge === undefined ? '任务要属于一个项目' : '知识任务不属于任何项目');
         }
         if (fields.projectId !== null && !db.get('SELECT 1 FROM project WHERE id = ?', fields.projectId)) {
           throw new InputError(`项目不存在：${fields.projectId}`);
         }
+        requireLoginAllowed({ project_id: fields.projectId }, fields.loginId);
+        const machineId = normalizeMachineId(fields.machineId) ?? null;
+        const effectiveTargetMachine = machineId ?? currentLogin(fields.loginId ?? null)?.machine ?? null;
+        // A review bound to a reviewed task inherits that task's source pin.
+        const source = fields.reviewOf === undefined ? pinSource(fields.projectId, fields.sourceId, effectiveTargetMachine) : taskSourceOf(fields.reviewOf.taskId);
+        if (fields.knowledge !== undefined) requireKnowledgeRole(roleId);
+        requireReadOnlyWay(roleId, fields.loginId);
+        validatePlacement(
+          { project_id: fields.projectId, knowledge_json: fields.knowledge === undefined ? null : JSON.stringify(fields.knowledge) },
+          fields.loginId ?? null,
+          machineId,
+          source,
+        );
         if (fields.parentId && loadTask(fields.parentId).project_id !== fields.projectId) {
           throw new InputError('父任务必须在同一项目');
         }
@@ -3674,8 +3817,8 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
         const id = ulid();
         const origin = originOf(ctx, fields.parentId ? loadTask(fields.parentId).trigger_fire_id : null);
         db.run(
-          `INSERT INTO task (id, created_at, project_id, parent_id, title, goal, scope, acceptance, login_id, role_id, tier_override, tier_reason, priority, state, created_by, review_of_json, knowledge_json, trigger_fire_id, skills_json, landing_json, prefer_json, source_json)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO task (id, created_at, project_id, parent_id, title, goal, scope, acceptance, login_id, role_id, tier_override, tier_reason, priority, state, created_by, review_of_json, knowledge_json, trigger_fire_id, skills_json, landing_json, prefer_json, source_json, machine_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           id,
           nowIso(),
           fields.projectId,
@@ -3697,6 +3840,7 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
           fields.landing === undefined ? null : landingJson(fields.landing),
           prefer === null ? null : JSON.stringify(prefer),
           source === null ? null : JSON.stringify(source),
+          machineId,
         );
         if (timeoutOverride !== null) {
           const tt = readTaskTimeouts();
@@ -3708,6 +3852,7 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
           ...(timeoutOverride === null ? {} : { timeout_ms: timeoutOverride }),
           role_id: roleId, ...(override ? { tier_override: override } : {}), ...(skills.length === 0 ? {} : { skills }),
           ...(source === null ? {} : { source: source.source_id }),
+          ...(machineId === null ? {} : { machine_id: machineId }),
           ...(fields.knowledge ? { knowledge: fields.knowledge.kind } : {}),
           ...(prefer === null ? {} : { prefer }),
           ...(binding ? { review_of: { task_id: binding.task_id, run_id: binding.run_id, revision: binding.revision, writers: binding.writers } } : {}),
@@ -3735,10 +3880,11 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
         // The skills its rounds follow, in full; an empty list names none. Part of what the
         // Task asks, like its goal: changing it is a new revision.
         skillIds?: readonly string[];
-        // The project source it works on, moved to another item of the project's list
-        // (docs/design/code-sources.md §1, §8.7): this unpins the machine the Task was fixed to
-        // (B keeps that) and the next round works on the new item as it stands now.
-        sourceId?: string;
+        // The project source it works on, moved to another item of the project's list or null
+        // for Tycho's default empty task directory.
+        sourceId?: string | null;
+        // Optional target machine (machine.id); null clears the machine pin.
+        machineId?: string | null;
         // Optional per-task run timeout override (1 min .. 7 days); null clears override back to default.
         timeoutMs?: number | null;
         // When true and task is in `ready`, immediately re-queue after applying the update.
@@ -3760,11 +3906,14 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
           throw new InputError(REVIEW_ROLE_LOCK_TEXT);
         }
         requireLoginAllowed(task, patch.loginId);
-        requireReadOnlyWay(patch.roleId ?? task.role_id, patch.loginId === undefined ? task.login_id : patch.loginId);
+        const nextLoginId = patch.loginId === undefined ? task.login_id : patch.loginId;
+        requireReadOnlyWay(patch.roleId ?? task.role_id, nextLoginId);
+        const normalizedMachineId = normalizeMachineId(patch.machineId);
+        const nextMachineId = normalizedMachineId === undefined ? task.machine_id : normalizedMachineId;
         // Moving the pin checks the project's list as it stands now; a source removed since is
         // refused here, which is how the Router moves a stopped Task to one that is still there.
-        const source = patch.sourceId === undefined ? undefined : pinSource(task.project_id, patch.sourceId);
-        const { roleId: _role, tierOverride: _override, skillIds: _skills, prefer: _prefer, sourceId: _source, timeoutMs: _timeoutMs, requeue: _requeue, ...rest } = patch;
+        const source = patch.sourceId === undefined ? undefined : pinSource(task.project_id, patch.sourceId, nextMachineId);
+        const { roleId: _role, tierOverride: _override, skillIds: _skills, prefer: _prefer, sourceId: _source, machineId: _machineId, timeoutMs: _timeoutMs, requeue: _requeue, ...rest } = patch;
         const timeoutOverride = patch.timeoutMs === undefined ? undefined : parseTaskTimeoutOverride(patch.timeoutMs);
         const next = { ...task, ...rest };
         const skills = patch.skillIds === undefined
@@ -3772,14 +3921,18 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
           : namedSkills(patch.skillIds, task.project_id);
         const skillsJson = skills.length === 0 ? null : JSON.stringify(skills);
         const sourceJson = source === undefined ? task.source_json : source === null ? null : JSON.stringify(source);
+        const nextSource = sourceJson === null ? null : (JSON.parse(sourceJson) as TaskSource);
         if (source !== undefined && task.review_of_json !== null && sourceJson !== task.source_json) {
           throw new InputError('审阅用的来源随被审的那一轮定下，不能改；要换就重新建审阅：这条审阅绑的是被审的那个提交，回执要对得上现场');
         }
+        validatePlacement(task, nextLoginId, nextMachineId, nextSource);
         // Moving the pin is a new revision of what the Task asks for, and it waits for any round
         // in flight to end (§8.7): the round running would otherwise work somewhere other than
         // the one being recorded for the next one.
         const sourceMoved = sourceJson !== task.source_json;
+        const machineMoved = nextMachineId !== task.machine_id;
         if (sourceMoved) requireNoActiveRun(task, '改派代码来源');
+        if (machineMoved) requireNoActiveRun(task, '改派目标机器');
         if (isBlank(next.title) || isBlank(next.goal)) throw new InputError('标题和目标不能为空');
         const revised =
           next.goal !== task.goal || next.scope !== task.scope || next.acceptance !== task.acceptance
@@ -3794,12 +3947,12 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
         const preferJson = prefer === undefined ? task.prefer_json : prefer === null ? null : JSON.stringify(prefer);
         const preferChanged = prefer !== undefined && JSON.stringify(prefer) !== JSON.stringify(preferBefore);
         db.run(
-          'UPDATE task SET title = ?, goal = ?, scope = ?, acceptance = ?, login_id = ?, role_id = ?, tier_override = ?, tier_reason = ?, tier_escalated = ?, priority = ?, revision = ?, skills_json = ?, prefer_json = ?, source_json = ? WHERE id = ?',
+          'UPDATE task SET title = ?, goal = ?, scope = ?, acceptance = ?, login_id = ?, role_id = ?, tier_override = ?, tier_reason = ?, tier_escalated = ?, priority = ?, revision = ?, skills_json = ?, prefer_json = ?, source_json = ?, machine_id = ? WHERE id = ?',
           next.title,
           next.goal,
           next.scope,
           next.acceptance,
-          patch.loginId === undefined ? task.login_id : patch.loginId,
+          nextLoginId,
           patch.roleId ?? task.role_id,
           override === undefined ? task.tier_override : override?.tier ?? null,
           override === undefined ? task.tier_reason : override?.reason ?? null,
@@ -3809,6 +3962,7 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
           skillsJson,
           preferJson,
           sourceJson,
+          nextMachineId,
           taskId,
         );
         // Pending questions and finished work both answer the old revision.
@@ -3837,6 +3991,7 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
           fields: Object.keys(patch), revision,
           ...(roleChanged ? { role: { from: task.role_id, to: patch.roleId } } : {}),
           ...(sourceMoved ? { source: { from: task.source_json === null ? null : JSON.parse(task.source_json), to: source } } : {}),
+          ...(machineMoved ? { machine_id: { from: task.machine_id, to: nextMachineId } } : {}),
           ...(overrideChanged ? { tier_override: { from: before, to: override } } : {}),
           ...(preferChanged ? { prefer: { from: preferBefore, to: prefer } } : {}),
           ...(timeoutOverride !== undefined && timeoutBefore !== timeoutOverride ? { timeout_ms: { from: timeoutBefore, to: timeoutOverride } } : {}),
@@ -5128,23 +5283,7 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
           DISPATCH_SLOTS_SETTING_KEY,
           JSON.stringify(next),
         );
-        const accounts = db.all<{ id: string }>('SELECT id FROM account ORDER BY rowid').map((r) => r.id);
-        const machineLogins = db.all<{ id: string; executor: string }>('SELECT id, executor FROM machine_login ORDER BY rowid');
-        const expandKey = (key: string): string[] => {
-          const exec = executorOfSlotKey(key);
-          if (exec !== null) return machineLogins.filter((m) => m.executor === exec).map((m) => m.id);
-          return accounts.includes(key) || machineLogins.some((m) => m.id === key) ? [key] : [];
-        };
-        const orderedLogins: string[] = [];
-        const seen = new Set<string>();
-        for (const key of [...normalized.p1, ...normalized.p2]) {
-          for (const id of expandKey(key)) {
-            if (seen.has(id)) continue;
-            seen.add(id);
-            orderedLogins.push(id);
-          }
-        }
-        return { slots: next, order: orderedLogins };
+        return { slots: next, order: expandTierSlotsToLoginIds(normalized) };
       });
     },
 
@@ -5673,11 +5812,14 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
             return false;
           }
         });
+        const failureReasonText = opts.reason ?? opts.workerNotStarted ?? '';
+        const deterministicConfigFailure = /does not support reasoning effort|unknown model|invalid model|model\b[^.\n]*\bnot found|unsupported (?:model|parameter|effort|provider)/i.test(failureReasonText);
         const resumeAutoFallback = failedWithoutWork
+          && !deterministicConfigFailure
           && usedSessionRef !== null
           && !priorResumeFallbackForRef
           && (exitCode !== 0 || opts.workerNotStarted !== undefined || effectiveReceipt === null);
-        const networkReasonText = opts.reason ?? opts.workerNotStarted ?? '';
+        const networkReasonText = failureReasonText;
         const priorStartupNetworkRetries = priorRunsOnTask.filter((other) => {
           if (other.task_revision !== task.revision) return false;
           try {
@@ -6365,12 +6507,43 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
     // can take work at once. Nothing is written when the login is already set up, when the
     // owner removed it in this registration (a refusal), or when the machine is gone. Checked
     // and written in one transaction: the same report arriving twice makes one login.
-    adoptMachineLogin(machineId: string, executor: string, tiers: Record<string, Tier>, ctx: Ctx): { created: boolean } {
+    adoptMachineLogin(
+      machineId: string,
+      executor: string,
+      tiers: Record<string, Tier>,
+      ctx: Ctx,
+      identity?: ExecutorIdentity,
+    ): { created: boolean } {
       return write(() => {
         const machine = currentMachine(machineId);
         if (!machine) return { created: false };
         if (db.get('SELECT 1 FROM machine_login WHERE machine_id = ? AND executor = ?', machineId, executor)) return { created: false };
         if (db.get('SELECT 1 FROM machine_login_refusal WHERE machine_uid = ? AND executor = ?', machine.uid, executor)) return { created: false };
+        // Do not auto-adopt a redundant machine-local login when a centralized account for the
+        // same executor already covers the exact same subscription identity (prevents duplicate
+        // Codex/Claude rows whenever a new machine joins with the owner's same CLI sign-in).
+        if (identity) {
+          const reportedOrg = identity.organizationId?.trim() || null;
+          const reportedOwner = identity.quotaOwner?.trim() || null;
+          const reportedLabel = identity.accountLabel?.trim().toLowerCase() || null;
+          if (reportedOrg || reportedOwner || reportedLabel) {
+            const acctRows = db.all<{ id: string; identity_json: string | null }>(
+              `SELECT a.id, s.identity_json FROM account a LEFT JOIN login_state s ON s.id = a.id WHERE a.executor = ?`,
+              executor,
+            );
+            for (const row of acctRows) {
+              if (!row.identity_json) continue;
+              try {
+                const parsed = JSON.parse(row.identity_json) as ExecutorIdentity | null;
+                if (!parsed) continue;
+                const sameOrg = Boolean(reportedOrg && parsed.organizationId?.trim() === reportedOrg);
+                const sameOwner = Boolean(reportedOwner && parsed.quotaOwner?.trim() === reportedOwner);
+                const sameLabel = Boolean(reportedLabel && parsed.accountLabel?.trim().toLowerCase() === reportedLabel);
+                if (sameOrg || sameOwner || sameLabel) return { created: false };
+              } catch { /* ignore malformed identity_json */ }
+            }
+          }
+        }
         const at = nowIso();
         const id = ulid();
         const name = machineLoginName(machineId, executor);
@@ -7197,6 +7370,34 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
       });
     },
 
+    setProjectDispatchSlots(projectId: string, slots: DispatchSlotsConfig | null, ctx: Ctx): void {
+      write(() => {
+        const row = db.get<{ dispatch_order_json: string | null }>('SELECT dispatch_order_json FROM project WHERE id = ?', projectId);
+        if (!row) throw new InputError(`项目不存在：${projectId}`);
+        let next: DispatchSlotsConfig | null = null;
+        if (slots !== null) {
+          if (typeof slots !== 'object' || Array.isArray(slots)) {
+            throw new InputError('项目派发槽位必须是对象或 null');
+          }
+          for (const key of Object.keys(slots)) {
+            if (!isTierId(key)) {
+              throw new InputError(`未知档位：${key}（只接受 operate、execute、decide）`);
+            }
+          }
+          next = normalizeDispatchSlotsConfig(slots);
+        }
+        const nextJson = next === null ? null : JSON.stringify(next);
+        const prev = parseProjectDispatchConfig(row.dispatch_order_json).slots;
+        const prevJson = prev === null ? null : JSON.stringify(prev);
+        if (prevJson === nextJson && row.dispatch_order_json === nextJson) return;
+        db.run('UPDATE project SET dispatch_order_json = ? WHERE id = ?', nextJson, projectId);
+        writeChange(db, 'project.update', ctx, {}, {
+          project_id: projectId,
+          dispatch_slots: { from: prev, to: next },
+        });
+      });
+    },
+
     setProjectDispatchOrder(projectId: string, order: Partial<Record<TierId, string[]>> | null, ctx: Ctx): void {
       write(() => {
         const row = db.get<{ dispatch_order_json: string | null }>('SELECT dispatch_order_json FROM project WHERE id = ?', projectId);
@@ -7223,7 +7424,7 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
         const nextJson = next === null ? null : JSON.stringify(next);
         const prev = parseProjectDispatchOrder(row.dispatch_order_json);
         const prevJson = prev === null ? null : JSON.stringify(prev);
-        if (prevJson === nextJson) return;
+        if (prevJson === nextJson && row.dispatch_order_json === nextJson) return;
         db.run('UPDATE project SET dispatch_order_json = ? WHERE id = ?', nextJson, projectId);
         writeChange(db, 'project.update', ctx, {}, {
           project_id: projectId,

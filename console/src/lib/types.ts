@@ -192,6 +192,8 @@ export interface Task extends TaskSourceView {
   // The login the Task is pinned to; null lets the service pick one of its project's.
   login_id?: string | null;
   login_name?: string | null;
+  // Optional target machine pinned on the Task; null lets the service choose.
+  machine_id?: string | null;
   // `source`, `source_state` and `source_label` (shared/sources.ts TaskSourceView) come from the
   // service's one projection of a Task's source: what it is pinned to, how the pin stands against
   // the project's list now, and how the owner reads it. Declared there so that the service and
@@ -799,6 +801,7 @@ export interface Project {
   grants?: string[];
   router?: { account: string | null; tier: string | null };
   dispatch_order?: Partial<Record<TierId, string[]>> | null;
+  dispatch_slots?: DispatchSlotsConfig | null;
   effective_dispatch_order?: Record<TierId, string[]>;
   moving: number;
   waiting: number;

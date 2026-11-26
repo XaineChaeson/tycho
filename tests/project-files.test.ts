@@ -176,7 +176,7 @@ test('schema migration v44 -> v45 adds message.attachments_json, project_file, a
   const migrated = openLedger(dbPath, { log: () => {} });
   t.after(() => migrated.close());
 
-  assert.equal(SCHEMA_VERSION, 47);
+  assert.equal(SCHEMA_VERSION, 48);
   const restoredMsg = migrated.getMessage(oldMsg.id);
   assert.equal(restoredMsg.text, '旧消息');
   assert.equal(restoredMsg.attachments_json, null);

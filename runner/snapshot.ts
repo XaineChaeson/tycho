@@ -760,17 +760,6 @@ export function withoutSettingsKeys(text: string, keys: readonly string[]): stri
   return `${JSON.stringify(object, null, 2)}\n`;
 }
 
-// Kept exported temporarily for downstream compatibility until session-host removes its call.
-export function withSettings(text: string, settings: Readonly<Record<string, readonly string[]>>): string {
-  const merged = settingsObject(text);
-  if (merged === undefined) return text;
-  for (const [key, values] of Object.entries(settings)) {
-    const held = Array.isArray(merged[key]) ? merged[key] as unknown[] : [];
-    merged[key] = [...held, ...values.filter((value) => !held.includes(value))];
-  }
-  return `${JSON.stringify(merged, null, 2)}\n`;
-}
-
 function geminiTierFileText(text: string, managedAccount: boolean): string {
   const withoutEffort = withoutSettingsKeys(text, ['effort']);
   if (!managedAccount) return withoutEffort;

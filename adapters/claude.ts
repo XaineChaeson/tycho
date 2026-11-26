@@ -175,6 +175,7 @@ function effortsOf(model: Json): string[] | undefined {
   const effort: unknown = model.capabilities?.effort;
   if (effort === null || typeof effort !== 'object' || Array.isArray(effort)) return undefined;
   const listed: unknown = (effort as Json).supported;
+  if (listed === false) return [];
   const names = Array.isArray(listed)
     ? listed.filter((each): each is string => typeof each === 'string')
     : Object.entries(effort as Record<string, unknown>)

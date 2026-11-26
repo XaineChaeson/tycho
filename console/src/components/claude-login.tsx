@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { accountBody, newAccountForm, tierEditorOf, tierRefusal, type AccountForm, type TierProblem } from '@/lib/accounts';
 import { api, messageOf, post } from '@/lib/api';
 import { accountsQuery, PAGE } from '@/lib/queries';
+import { isTychoDesktop, openExternalUrl } from '@/lib/utils';
 import type { AccountLoginOffer } from '@shared/logins.ts';
 import type { AccountsAndMachines } from '@/lib/types';
 
@@ -84,6 +85,13 @@ export function ClaudeLoginSteps({ target, page, seen, onDone, onBack }: {
   });
   const login = id === null ? undefined : data?.login;
   useEffect(() => { seen.current = login; }, [login, seen]);
+  const autoOpenedUrl = useRef<string | null>(null);
+  useEffect(() => {
+    if ((login?.state !== 'preparing' && login?.state !== 'waiting_code') || !login.url || !isTychoDesktop()) return;
+    if (autoOpenedUrl.current === login.url) return;
+    autoOpenedUrl.current = login.url;
+    openExternalUrl(login.url);
+  }, [login?.state, login?.url]);
   // A new account's tiers are asked for as soon as there is something to pick them from:
   // the login is in, it is nobody's duplicate, and its models have been read or given up on.
   const ready = login?.state === 'signed_in' && login.mode === 'new' && !login.saved && login.duplicate === null && !login.models.refreshing;

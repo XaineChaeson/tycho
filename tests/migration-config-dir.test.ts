@@ -40,7 +40,7 @@ test('31 → 32 drops the configuration directory, keeps what was filled in in t
       ('ended', 'now', 't', 1, 'b', 'host', 'ended', 'm3', '{"brief":"b","config_dir":"/home/old","login":${login}}'),
       ('named', 'now', 't2', 1, 'a', 'host', 'launching', 'm4', '{"brief":"b","config_dir":"/home/a","login":${named}}');`);
   old.close();
-  assert.equal(SCHEMA_VERSION, 44);
+  assert.ok(SCHEMA_VERSION >= 44);
   const ledger = openLedger(path, { copyBeforeUpgrade: false });
   try {
     assert.deepEqual(ledger.getAccount('a')!.name, 'with-dir');

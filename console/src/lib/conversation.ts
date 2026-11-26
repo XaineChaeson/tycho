@@ -53,19 +53,18 @@ function replyItem(row: Message, inbound?: Message): Item {
   return { key: `out:${row.id}`, kind: 'reply', id: row.id, text: row.text, ...attachmentsOf(row.attachments), incomplete: row.final === 0 && inbound?.state !== 'processing', ...at(row.created_at) };
 }
 
-// A line wherever the day changes: a conversation read months later must not look like
-// one long afternoon. The question and the reply under it are one block, so a reply that
-// comes the next day — or two questions of one evening answered after midnight — carries
-// the day back and forth between them: the line's key belongs to where it stands, not to
-// the day it names, which can be named more than once in one list.
-function withDays(items: Item[]): Item[] {
+// A line whenever the conversation advances to a new day: a conversation read months later
+// must not look like one long afternoon. A paired reply stays under the message it answers so
+// answering a 23:59 message at 00:00 neither splits the Q&A block nor sends a later 23:59
+// event back to "昨天"; date dividers are strictly monotonic.
+function withDays(items: Item[], paired: ReadonlySet<string>): Item[] {
   const out: Item[] = [];
   let day: string | null = null;
   for (const item of items) {
-    const when = 'at' in item ? item.at : undefined;
+    const when = paired.has(item.key) ? undefined : 'at' in item ? item.at : undefined;
     if (when) {
       const key = dayKey(when);
-      if (key !== day) {
+      if (day === null || key > day) {
         out.push({ key: `date:${item.key}`, kind: 'date', text: dateLabel(when) });
         day = key;
       }
@@ -95,6 +94,7 @@ export function conversationItems({ messages, changes, approvals, sending, sendi
     ...approvals.filter((card) => card.state === 'open' || card.id >= oldest).map((card) => ({ id: card.id, card })),
   ].sort((a, b) => (a.id < b.id ? -1 : 1));
 
+  const paired = new Set<string>();
   const items = entries.flatMap((entry): Item[] => {
     if ('card' in entry) return [{ key: `card:${entry.card.id}`, kind: 'card', card: entry.card, ...at(entry.card.created_at) }];
     const { row } = entry;
@@ -109,7 +109,11 @@ export function conversationItems({ messages, changes, approvals, sending, sendi
       ? { key: `in:${row.id}`, kind: 'note', text: eventHeadline(row.text), ...trajectory, ...at(row.created_at) }
       : { key: `in:${row.id}`, kind: 'mine', text: row.text, ...attachmentsOf(row.attachments), ...trajectory, ...at(row.created_at) }];
     const reply = replies.get(row.id);
-    if (reply) drawn.push(replyItem(reply, row));
+    if (reply) {
+      const rendered = replyItem(reply, row);
+      paired.add(rendered.key);
+      drawn.push(rendered);
+    }
     const turn = changes.get(row.id);
     if (row.state === 'unverified') drawn.push({ key: `unverified:${row.id}`, kind: 'unverified', changes: turn ? turn.changes : null, ...at(row.created_at) });
     if (turn?.tasks.length) drawn.push({ key: `tasks:${row.id}`, kind: 'capsules', tasks: turn.tasks });
@@ -117,7 +121,7 @@ export function conversationItems({ messages, changes, approvals, sending, sendi
   });
   if (sending !== null) items.push({ key: 'sending', kind: 'mine', text: sending, ...attachmentsOf(sendingAttachments) });
   if (items.length === 0) items.push({ key: 'empty', kind: 'empty' });
-  return withDays(items);
+  return withDays(items, paired);
 }
 
 export function summaryLine({ delivered, running, waiting }: { delivered: number; running: number; waiting: number }): string {

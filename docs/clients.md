@@ -7,19 +7,19 @@ Tycho 采用 **「服务端统一承载 UI + 3.6 MB 原生薄壳 / 手机全屏 
 </p>
 
 > [!TIP]
-> **找不到 `.exe` / `.dmg` 安装包？** GitHub 仓库右侧默认的 **Latest (`v*`)** 仅包含服务端包（`tycho.tar.gz`，供一键安装脚本自动拉取）；**桌面客户端独立发布在 [`app-v0.2.0`](https://github.com/XaineChaeson/tycho/releases/tag/app-v0.2.0)**（或查看 [全部 Releases 列表](https://github.com/XaineChaeson/tycho/releases)）。
+> **找不到 `.exe` / `.dmg` 安装包？** GitHub 仓库右侧默认的 **Latest (`v*`)** 仅包含服务端包（`tycho.tar.gz`，供一键安装脚本自动拉取）；**桌面客户端独立发布在 [`app-v0.2.2`](https://github.com/XaineChaeson/tycho/releases/tag/app-v0.2.2)**（或查看 [全部 Releases 列表](https://github.com/XaineChaeson/tycho/releases)）。桌面端内置自更新器，后续版本可在托盘菜单或顶部更新提示栏一键热更新。
 
 ## 平台支持矩阵与直接下载
 
-| 平台 | 推荐形态 | 直接下载（[`app-v0.2.0`](https://github.com/XaineChaeson/tycho/releases/tag/app-v0.2.0)） | 特点 |
+| 平台 | 推荐形态 | 直接下载（[`app-v0.2.2`](https://github.com/XaineChaeson/tycho/releases/tag/app-v0.2.2)） | 特点 |
 | --- | --- | --- | --- |
-| **Windows 10/11** | **Portable 单文件 `.exe`**（3.67 MB）或 **NSIS 安装包**（1.32 MB） | [Portable `.exe`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.0/Tycho-0.2.0-windows-x64-portable.exe) · [Setup `.exe`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.0/Tycho-0.2.0-windows-x64-setup.exe) | Tauri v2 薄壳，复用系统 WebView2，支持系统托盘、单实例、`Alt+Shift+T` 全局呼出与后台告警通知 |
-| **macOS (M 系列 / Intel)** | **Universal `.dmg`**（3.60 MB） | [macOS Universal `.dmg`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.0/Tycho-0.2.0-macos-universal.dmg) | 通用二进制，复用系统 WKWebView |
-| **Linux (x64)** | **`.deb`**（2.41 MB）或 **`.AppImage`** | [Ubuntu/Debian `.deb`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.0/Tycho-0.2.0-linux-amd64.deb) · [`.AppImage`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.0/Tycho-0.2.0-linux-x86_64.AppImage) | 复用系统 WebKitGTK；AppImage 免安装即点即用 |
+| **Windows 10/11** | **Portable 单文件 `.exe`** 或 **NSIS 安装包** | [Portable `.exe`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.2/Tycho-0.2.2-windows-x64-portable.exe) · [Setup `.exe`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.2/Tycho-0.2.2-windows-x64-setup.exe) | Tauri v2 薄壳，复用系统 WebView2，支持系统托盘、单实例、`Alt+Shift+T` 全局呼出、一键自更新与后台告警通知 |
+| **macOS (M 系列 / Intel)** | **Universal `.dmg`** | [macOS Universal `.dmg`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.2/Tycho-0.2.2-macos-universal.dmg) | 通用二进制，复用系统 WKWebView |
+| **Linux (x64)** | **`.deb`** 或 **`.AppImage`** | [Ubuntu/Debian `.deb`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.2/Tycho-0.2.2-linux-amd64.deb) · [`.AppImage`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.2/Tycho-0.2.2-linux-x86_64.AppImage) | 复用系统 WebKitGTK；AppImage 免安装且支持一键替换更新 |
 | **iOS / iPadOS** | **PWA（添加到主屏幕）** | Safari 打开你的 Tycho 控制台 | 全屏独立窗口、适配刘海/灵动岛安全区、免 App Store 审核、随服务端实时更新 |
 | **Android** | **PWA（安装应用）** | Chrome / Edge 打开你的 Tycho 控制台 | 独立图标与全屏窗口、零安装包维护、随服务端实时更新 |
 
-校验文件：[SHA256SUMS.txt](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.0/SHA256SUMS.txt)
+校验文件：[SHA256SUMS.txt](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.2/SHA256SUMS.txt)
 
 ## 桌面端安装说明
 
@@ -65,7 +65,7 @@ Tycho 采用 **「服务端统一承载 UI + 3.6 MB 原生薄壳 / 手机全屏 
 
 ## 维护者：发布新版桌面客户端
 
-桌面客户端版本号（`app-v*`）与 Tycho 服务端版本（`v0.1.xxx`）完全解耦，仅在 `desktop/` 原生薄壳有改动时才需要发版。
+桌面客户端版本号（`app-v*`）与 Tycho 服务端版本（`v0.2.x`）完全解耦，仅在 `desktop/` 原生薄壳有改动时才需要发版。
 
 1. 确认 `main` 分支包含最新 `desktop/` 代码并已推送：
    ```bash
@@ -73,7 +73,7 @@ Tycho 采用 **「服务端统一承载 UI + 3.6 MB 原生薄壳 / 手机全屏 
    ```
 2. 打 `app-v*` 标签并推送，GitHub Actions（`.github/workflows/desktop-release.yml`）会自动并行构建 Windows / macOS / Linux 全平台产物、生成 `SHA256SUMS.txt` 并发布到 GitHub Releases：
    ```bash
-   git tag app-v0.1.0
-   git push origin app-v0.1.0
+   git tag app-v0.2.2
+   git push origin app-v0.2.2
    ```
 3. 如需先试跑构建而不创建 Release，可在 GitHub 仓库的 **Actions → Desktop Release → Run workflow** 中手动触发。

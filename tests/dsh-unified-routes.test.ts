@@ -7,8 +7,46 @@ import {
   discoverLocalDshRoutesAndModels,
   dshTierOverlayText,
   extractDesktopProvidersPatch,
+  parseDshConfigSchema,
 } from '../adapters/dsh-routes.ts';
 import { PATCH_LIST } from '../shared/tier-form.ts';
+
+const SAMPLE_DSH_SCHEMA = JSON.stringify({
+  'x-cordis': {
+    entries: [
+      { id: 'llm-deepseek', configRef: '#/$defs/config68' },
+      { id: 'llm-deepseek-account', configRef: '#/$defs/config69' },
+    ],
+  },
+  $defs: {
+    config68: {
+      anyOf: [{
+        type: ['object', 'null'],
+        properties: {
+          reasoningEffort: {
+            anyOf: [{ anyOf: [{ anyOf: [{ const: 'off' }, { const: 'low' }, { const: 'high' }, { const: 'max' }] }, { type: 'null' }] }],
+          },
+          models: {
+            default: [
+              { id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash' },
+              { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro' },
+            ],
+          },
+        },
+      }],
+    },
+    config69: {
+      anyOf: [{
+        type: ['object', 'null'],
+        properties: {
+          reasoningEffort: {
+            anyOf: [{ anyOf: [{ anyOf: [{ const: 'off' }, { const: 'low' }, { const: 'high' }, { const: 'max' }] }, { type: 'null' }] }],
+          },
+        },
+      }],
+    },
+  },
+});
 
 test('PATCH_LIST unquotes YAML scalar provider/model/effort and cleans redundant quotes on render', () => {
   const quoted = [
@@ -89,7 +127,7 @@ test('discoverLocalDshRoutesAndModels unifies headless dump, desktop providers/m
       '          - id: deepseek-v4.1-flash',
     ].join('\n');
 
-    const discovered = discoverLocalDshRoutesAndModels(headlessDump, { env: {}, homeDir: fakeHome });
+    const discovered = discoverLocalDshRoutesAndModels(headlessDump, { env: {}, homeDir: fakeHome, schemaJson: SAMPLE_DSH_SCHEMA });
     assert.equal(discovered.defaultRoute, 'customgw');
     assert.deepEqual(
       discovered.routes.map((r) => ({ id: r.id, label: r.label, source: r.source })),
@@ -100,9 +138,19 @@ test('discoverLocalDshRoutesAndModels unifies headless dump, desktop providers/m
       ],
     );
     const modelIds = discovered.models.map((m) => m.id);
-    assert.ok(modelIds.includes('deepseek-v4.1-flash'));
+    assert.ok(modelIds.includes('deepseek-flash'));
     assert.ok(modelIds.includes('deepseek-v4-pro'));
+    assert.ok(modelIds.includes('deepseek-v4.1-flash'));
     assert.ok(modelIds.includes('qwen3.8-27b-gguf'));
+    const flash = discovered.models.find((m) => m.id === 'deepseek-flash');
+    assert.equal(flash?.name, 'DeepSeek-V4.1-Flash');
+    assert.deepEqual(flash?.efforts, ['off', 'low', 'high', 'max']);
+    assert.ok(!flash?.efforts?.includes('medium'));
+
+    // Without schemaJson, official models are NEVER hardcoded or invented
+    const withoutSchema = discoverLocalDshRoutesAndModels(headlessDump, { env: {}, homeDir: fakeHome });
+    assert.ok(!withoutSchema.models.some((m) => m.id === 'deepseek-v4-pro'));
+    assert.deepEqual(parseDshConfigSchema(SAMPLE_DSH_SCHEMA).accountEfforts, ['off', 'low', 'high', 'max']);
     // Ensure zero secrets ever appear in discovery output
     const serialized = JSON.stringify(discovered);
     assert.ok(!serialized.includes('test-token-never-returned'));
@@ -127,7 +175,7 @@ test('dshTierOverlayText activates selected provider in headless for machine-loc
   assert.ok(augmentedAccount.includes('- id: deepseek-account\n  disabled: false'));
   assert.ok(augmentedAccount.includes('- id: llm-deepseek-account\n  disabled: false'));
 
-  const officialTier = '- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: deepseek-v4.1-flash\n';
+  const officialTier = '- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: deepseek-flash\n';
   const augmentedOfficial = dshTierOverlayText(officialTier, false);
   assert.ok(augmentedOfficial.includes('- id: credentials\n  disabled: false'));
   assert.ok(augmentedOfficial.includes('- id: llm-deepseek\n  disabled: false'));

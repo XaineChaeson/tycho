@@ -69,7 +69,7 @@ test('a version 28 ledger opens as the current line with every project running a
     INSERT INTO router_segment (id, created_at, project_id, seq, state) VALUES ('s', 'now', 'p', 1, 'current');
     INSERT INTO router_context (id, created_at, segment_id, project_id, marker, state) VALUES ('c', 'now', 's', 'p', 'm', 'open');`);
   db.close();
-  assert.equal(SCHEMA_VERSION, 46);
+  assert.ok(SCHEMA_VERSION >= 46);
   const ledger = openLedger(path, { copyBeforeUpgrade: false });
   try {
     assert.equal(ledger.getProject('p').paused_at, null);

@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { describe, test, type TestContext } from 'node:test';
 import { gzipSync } from 'node:zlib';
 import type { EntryMachinesMap, SkillRegistryMap } from '../shared/skill-catalog.ts';
+import type { NodeSkillsManifest } from '../shared/node-protocol.ts';
 import {
   buildMachineSkillsManifest,
   collectSkillBundleFiles,
@@ -759,4 +760,25 @@ test('scanLocalNonMirrorSkills reports only non-mirror local skills metadata wit
   assert.equal(serialized.includes('SECRET_INTRANET_BODY_DO_NOT_LEAK'), false);
   assert.equal(serialized.includes('INTERNAL_CLUSTER_SECRET_URL'), false);
   assert.equal(serialized.includes('SECRET_SCRIPT'), false);
+});
+
+test('syncNodeSkills reports explicit empty local_skills array when linkDirs are scanned and none found', async (t) => {
+  const root = makeTempDir(t);
+  const mirrorDir = join(root, 'mirror');
+  const execDir = join(root, 'exec-skills');
+  mkdirSync(execDir, { recursive: true });
+  const manifest: NodeSkillsManifest = { digest: computeManifestDigest([]), items: [] };
+  const scannedReport = await syncNodeSkills({
+    mirrorDir,
+    manifest,
+    fetchBundle: async () => { throw new Error('unexpected fetch'); },
+    linkDirs: [execDir],
+  });
+  assert.deepEqual(scannedReport.local_skills, []);
+  const unscannedReport = await syncNodeSkills({
+    mirrorDir,
+    manifest,
+    fetchBundle: async () => { throw new Error('unexpected fetch'); },
+  });
+  assert.equal('local_skills' in unscannedReport, false);
 });

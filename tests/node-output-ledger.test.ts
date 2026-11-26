@@ -17,7 +17,7 @@ test('schema42 real-generated history migrates to43 with no capture authority in
  old.prepare("INSERT INTO work_cleanup(id,created_at,project_id,project_name,run_id,task_id,releases_json) VALUES('cleanup42','2026-11-15','p','old','r','t','[]')").run();
  old.close();const db=new Db(path,false,{}, {log:()=>{}});
  try {
- assert.equal(SCHEMA_VERSION,47);assert.equal(db.get<{value_json:string}>("SELECT value_json FROM setting WHERE key='schema_version'")!.value_json,'47');
+ assert.equal(SCHEMA_VERSION,48);assert.equal(db.get<{value_json:string}>("SELECT value_json FROM setting WHERE key='schema_version'")!.value_json,'48');
  const row=db.get<{capture_result_json:string|null;snapshot_json:string}>("SELECT * FROM run WHERE id='r'")!;
  assert.equal(row.capture_result_json,null);assert.equal(row.snapshot_json,'{}');assert.equal(db.get<{output_release_json:string|null}>("SELECT output_release_json FROM work_cleanup WHERE id='cleanup42'")!.output_release_json,null);
  } finally { db.close(); }

@@ -76,7 +76,7 @@ interface RouterTool {
 // A adds it to both schemas and their runs, checks the id against the project's list, and pins
 // the Task to that item as it stands then; an update may move the pin.
 export interface TaskSourceArgument {
-  source?: string;
+  source?: string | null;
 }
 
 // The part of get_project's answer that tells the Router where the project's code can come from
@@ -115,7 +115,7 @@ interface ToolOptions {
   // list_machines (docs/design/nodes.md §1.4). Absent in a test that does not ask about it.
   nodeRelease?: { host: string; reported: (machineId: string) => NodeReleaseHeld | null };
   serviceManager?: (machineId: string) => import('../shared/service-manager.ts').ServiceManagerReport | null;
-  localSkills?: (machineId: string) => import('../shared/node-protocol.ts').NodeLocalSkillSummary[];
+  localSkills?: (machineId: string) => import('../shared/node-protocol.ts').NodeLocalSkillSummary[] | null | undefined;
   // What the owner's settings allow a quota for spawned machines to be (nodes.md §1.3),
   // read at each call: the most machines one may register, its default span and its longest,
   // and how long a material lasts.
@@ -317,10 +317,11 @@ export function createTools({ ledger, dataDir, github, runner, readReport, login
     return login.id;
   };
   const taskLine = (task: TaskRow) => {
-    const { id, project_id, title, state, reason, priority, login_id, revision } = task;
+    const { id, project_id, title, state, reason, priority, login_id, machine_id, revision } = task;
     return {
       id, project_id, title, state, reason, priority,
       login_id: nameOf(login_id),
+      ...(machine_id === null ? {} : { machine_id }),
       prefer: preferView(task),
       ...roleFields(ledger, task),
       ...sourceFields(task),
@@ -418,9 +419,23 @@ export function createTools({ ledger, dataDir, github, runner, readReport, login
     return undefined;
   }
 
-  function candidateWarning(scope: Scope, tier: string): string | undefined {
+  const allowedMachinesOf = (scope: Scope) => {
+    const range = ledger.projectMachines(scope.projectId);
+    const names = range.machines.map(({ name }) => name);
+    const allows = (id: string): boolean => (names.length === 0 && range.gone > 0 ? false : inRange(names, id));
+    return machines.list().filter((machine) => (machine.scope === undefined ? allows(machine.id) : machine.scope.project_id === scope.projectId));
+  };
+
+  function candidateWarning(scope: Scope, tier: string, fixedMachine?: string | null): string | undefined {
     const allowed = poolOf(scope);
-    if (candidateLogins({ login_id: null, tier }, allowed, logins, undefined, ledger.loginOrder(tier, scope.projectId)).length > 0) return undefined;
+    const matching = candidateLogins({ login_id: null, tier }, allowed, logins, undefined, ledger.loginOrder(tier, scope.projectId));
+    if (fixedMachine) {
+      if (matching.some((login) => login.machine === undefined || login.machine === fixedMachine)) return undefined;
+      if (matching.length > 0) {
+        return `项目 ${ledger.getProject(scope.projectId).name} 允许的登录里没有能在机器 ${fixedMachine} 上跑的 ${tier} 档位登录（需托管账号或 ${fixedMachine} 本机登录）`;
+      }
+    }
+    if (matching.length > 0) return undefined;
     const project = ledger.getProject(scope.projectId);
     if (allowed.length === 0) return `项目 ${project.name} 暂无可用登录（请主人在${projectPage(scope)}配置）`;
     const offered = allowed.map((id) => `${nameOf(id)}（${Object.keys(logins.get(id)?.tiers ?? {}).join('、') || '已不存在'}）`).join('，');
@@ -432,7 +447,13 @@ export function createTools({ ledger, dataDir, github, runner, readReport, login
     const source = ledger.sourceRefusal(task);
     if (source !== undefined) return source;
     if (task.tier === null) return undefined;
-    return task.login_id !== null ? tierWarning(task.login_id, task.tier) : candidateWarning(scope, task.tier);
+    const pinned = task.source_json === null ? null : (JSON.parse(task.source_json) as TaskSource);
+    const folderUid = pinned?.pinned.kind === 'folder' ? pinned.pinned.machine_uid : undefined;
+    const folderMachine = folderUid === undefined
+      ? undefined
+      : machines.list().find((each) => each.uid === folderUid)?.id;
+    const fixedMachine = task.machine_id ?? folderMachine ?? null;
+    return task.login_id !== null ? tierWarning(task.login_id, task.tier) : candidateWarning(scope, task.tier, fixedMachine);
   }
 
   // The values a login argument takes for this project, read when the tools are listed or a
@@ -452,10 +473,23 @@ export function createTools({ ledger, dataDir, github, runner, readReport, login
     nullable: true,
   });
 
-  const SOURCE_TEXT = '代码来源 id（见 get_project.sources），不填用默认项';
+  const MACHINE_ID_DESC = '可选：指定任务在某台机器上执行（见 list_machines），不填则自动分配；无需绑定本机目录或额外登录，托管账号或该机自有登录均可直接跑';
+  const machineId = (scope: Scope): Schema => {
+    const ids = allowedMachinesOf(scope).map((machine) => machine.id);
+    return ids.length > 0 ? { ...described(MACHINE_ID_DESC), enum: ids } : described(MACHINE_ID_DESC);
+  };
+  const machineIdOrNone = (scope: Scope): Schema => ({
+    ...machineId(scope),
+    description: `${MACHINE_ID_DESC}；填 null 取消固定机器`,
+    nullable: true,
+  });
+
+  const SOURCE_TEXT = '代码来源 id（见 get_project.sources）；不填默认取项目首个来源（若指定了 machine_id 且首个来源是另一台机器的本机目录，则自动改用目标机器默认空任务目录）；填 null 显式使用目标机器默认空任务目录，无需绑定代码文件夹';
   const sourceId = (scope: Scope): Schema => {
     const ids = ledger.projectSources(scope.projectId).map((source) => source.id);
-    return ids.length === 0 ? described(`${SOURCE_TEXT}（当前项目无代码来源）`) : { ...described(SOURCE_TEXT), enum: ids };
+    return ids.length === 0
+      ? { ...described(`${SOURCE_TEXT}（当前项目无代码来源）`), nullable: true }
+      : { ...described(SOURCE_TEXT), enum: ids, nullable: true };
   };
 
   const TIER = {
@@ -568,10 +602,10 @@ export function createTools({ ledger, dataDir, github, runner, readReport, login
     },
     {
       name: 'create_task',
-      description: '在当前项目创建任务并排队派发。只需 title 与 goal（acceptance、role_id 均可选，role_id 默认 implement）；绑定独立审阅时传 role_id="review" 与 review_of。',
+      description: '在当前项目创建任务并排队派发。只需 title 与 goal（acceptance、role_id 均可选，role_id 默认 implement）；定向派到某台机器直接传 machine_id（可用 source: null 在目标机器默认空任务目录运行，无需给项目绑定目录或登录）；绑定独立审阅时传 role_id="review" 与 review_of。',
       inputSchema: (here) => object(
         {
-          title: STRING, goal: STRING, acceptance: STRING, scope: STRING, operation_key: described('可选：幂等操作编号'), parent_id: described('可选：本项目父任务 id'), login_id: loginId(here), source: sourceId(here), role_id: ROLE_ID, tier_override: TIER_OVERRIDE, skill_ids: SKILL_IDS,
+          title: STRING, goal: STRING, acceptance: STRING, scope: STRING, operation_key: described('可选：幂等操作编号'), parent_id: described('可选：本项目父任务 id'), login_id: loginId(here), machine_id: machineId(here), source: sourceId(here), role_id: ROLE_ID, tier_override: TIER_OVERRIDE, skill_ids: SKILL_IDS,
           file_ids: { type: 'array', items: STRING, description: `可选：附带本项目文件（含文本、图片、PDF、数据集，最多 ${TASK_PROJECT_FILES_LIMIT} 个、总计 ${Math.floor(TASK_PROJECT_FILES_BYTES_LIMIT / (1024 * 1024))} MiB）写入快照 project-files/ 目录` },
           on_ready: { type: 'string', enum: ['notify_owner'], description: '可选：notify_owner 表示任务就绪时直接通知主人' },
           review_of: described('可选：审阅任务绑定的被审任务 id（本项目已结束过轮次的任务）'),
@@ -584,7 +618,7 @@ export function createTools({ ledger, dataDir, github, runner, readReport, login
       },
       async run(args, ctx, here) {
         const operation = taskOperation(args, ctx);
-        const { title, goal, acceptance, scope, parent_id, source, role_id, tier_override, review_of, skill_ids, file_ids, on_ready } = args;
+        const { title, goal, acceptance, scope, parent_id, machine_id, source, role_id, tier_override, review_of, skill_ids, file_ids, on_ready } = args;
         let { login_id } = args;
         if (login_id !== undefined) login_id = idOf(login_id);
         const override = overrideOf(tier_override);
@@ -651,6 +685,7 @@ export function createTools({ ledger, dataDir, github, runner, readReport, login
             {
               projectId: here.projectId, title, goal, acceptance, scope: effectiveScope, loginId: login_id, roleId: resolvedRoleId, tierOverride: override,
               ...(parent_id === undefined ? {} : { parentId: parent_id }),
+              ...(machine_id === undefined ? {} : { machineId: machine_id }),
               ...(source === undefined ? {} : { sourceId: source }),
               ...(skill_ids === undefined ? {} : { skillIds: skill_ids }),
               ...(on_ready === 'notify_owner' ? { onReady: on_ready } : {}),
@@ -670,14 +705,15 @@ export function createTools({ ledger, dataDir, github, runner, readReport, login
     {
       name: 'update_task',
       description:
-        '更新本项目任务的目标、范围、验收标准、代码来源、登录、职能或档位覆盖；改内容字段递增修订，传 requeue=true 可将 ready 任务立即重新排队。任务有在跑轮次时不要改目标/范围/验收标准，请改用 continue_task。',
+        '更新本项目任务的目标、范围、验收标准、目标机器、代码来源、登录、职能或档位覆盖；改内容字段递增修订，传 requeue=true 可将 ready 任务立即重新排队。任务有在跑轮次时不要改目标/范围/验收标准，请改用 continue_task。',
       inputSchema: (here) => object(
-        { task_id: STRING, goal: STRING, acceptance: STRING, scope: STRING, login_id: loginIdOrNone(here), source: sourceId(here), role_id: ROLE_ID, tier_override: { ...TIER_OVERRIDE, nullable: true }, skill_ids: SKILL_IDS, requeue: { type: 'boolean', description: '可选：true 时若任务在 ready 状态则立即重新排队' } },
+        { task_id: STRING, goal: STRING, acceptance: STRING, scope: STRING, login_id: loginIdOrNone(here), machine_id: machineIdOrNone(here), source: sourceId(here), role_id: ROLE_ID, tier_override: { ...TIER_OVERRIDE, nullable: true }, skill_ids: SKILL_IDS, requeue: { type: 'boolean', description: '可选：true 时若任务在 ready 状态则立即重新排队' } },
         ['task_id'],
       ),
-      run({ task_id, goal, acceptance, scope, login_id, source, role_id, tier_override, skill_ids, requeue }, ctx, here) {
+      run({ task_id, goal, acceptance, scope, login_id, machine_id, source, role_id, tier_override, skill_ids, requeue }, ctx, here) {
         const clearingLogin = login_id === null || login_id === '';
         if (login_id !== undefined && !clearingLogin) login_id = idOf(login_id);
+        const clearingMachine = machine_id === null || machine_id === '';
         ownTask(here, task_id);
         if (
           (goal !== undefined || acceptance !== undefined || scope !== undefined)
@@ -689,14 +725,14 @@ export function createTools({ ledger, dataDir, github, runner, readReport, login
         if (role_id !== undefined) requireRole(role_id);
         if (login_id && !clearingLogin) requireAllowed(here, login_id);
         const patch = Object.fromEntries(
-          Object.entries({ goal, acceptance, scope, loginId: clearingLogin ? null : login_id, sourceId: source, roleId: role_id, tierOverride: override, skillIds: skill_ids, requeue }).filter(
+          Object.entries({ goal, acceptance, scope, loginId: clearingLogin ? null : login_id, machineId: clearingMachine ? null : machine_id, sourceId: source, roleId: role_id, tierOverride: override, skillIds: skill_ids, requeue }).filter(
             ([, value]) => value !== undefined,
           ),
         );
         if (Object.keys(patch).length === 0) throw new InputError('没有要改的字段');
         const { updated, warning } = ledger.transaction(() => {
           const next = ledger.updateTask(task_id, patch, ctx);
-          const warn = next.login_id !== null || clearingLogin || role_id !== undefined || override !== undefined ? placeWarning(here, next) : undefined;
+          const warn = next.login_id !== null || clearingLogin || machine_id !== undefined || source !== undefined || role_id !== undefined || override !== undefined ? placeWarning(here, next) : undefined;
           return { updated: next, warning: warn };
         });
         const base = `任务已更新：${updated.id}，修订 ${updated.revision}，状态 ${updated.state}`;
@@ -759,20 +795,16 @@ export function createTools({ ledger, dataDir, github, runner, readReport, login
         '列出本项目可用的机器，含在线状态、主机名、环境备注、节点本地技能摘要及临时机器状态。',
       inputSchema: object({}),
       run: (_args, _ctx, here) => {
-        const range = ledger.projectMachines(here.projectId);
-        const names = range.machines.map(({ name }) => name);
-        // A list of only deleted machines allows none (service/ledger.ts machineRange).
-        const allows = (id: string): boolean => (names.length === 0 && range.gone > 0 ? false : inRange(names, id));
-        return json(machines.list().filter((machine) => (machine.scope === undefined ? allows(machine.id) : machine.scope.project_id === here.projectId)).map((machine) => {
+        return json(allowedMachinesOf(here).map((machine) => {
           const ends = machine.ephemeral === true ? machineEnds(machine, machine.inviteId === undefined ? undefined : ledger.getInvite(machine.inviteId), ledger.roundsOn(machine.id).unread) : undefined;
-          const nodeLocalSkills = localSkills?.(machine.id) ?? [];
+          const nodeLocalSkills = localSkills?.(machine.id);
           return {
             id: machine.id, host: machine.host,
             ...(machine.note ? { note: machine.note } : {}),
             connected: nodes?.connected(machine.id) ?? null,
             service_manager: serviceManager?.(machine.id) ?? null,
             ...(nodeRelease === undefined ? {} : { tycho: nodeReleaseText(nodeRelease.reported(machine.id), nodeRelease.host) }),
-            ...(nodeLocalSkills.length > 0 ? { local_skills: nodeLocalSkills } : {}),
+            ...(nodeLocalSkills != null ? { local_skills: nodeLocalSkills } : {}),
             source: machineSourceText(machine.source),
             ephemeral: machine.ephemeral === true,
             ...(ends === undefined ? {} : {

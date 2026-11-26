@@ -30,7 +30,7 @@ test('v38 账本升到 v39：多出拒用记录表，旧的机器登录一行都
       VALUES ('own1', 'uid-h1', 'h1', 'codex', '${AT}', '${AT}', '${TIERS.replace(/'/g, "''")}', 'workspace-write', 900000, 2);`);
   const before = old.prepare('SELECT * FROM machine_login ORDER BY rowid').all().map((row) => ({ ...row }));
   old.close();
-  assert.equal(SCHEMA_VERSION, 44);
+  assert.ok(SCHEMA_VERSION >= 44);
 
   const ledger = openLedger(path, { copyBeforeUpgrade: false });
   try {

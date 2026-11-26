@@ -1,12 +1,14 @@
-// Tab 2 of AccountsPage: Compact Logical-Account Routing Matrix (P1 primary load-balanced,
-// P2 fallback, off excluded) with built-in live topology footer & collapsible Dispatch Simulator.
+// Logical-account Routing Matrix (P1 primary load-balanced, P2 fallback, off excluded) shared by
+// AccountsPage (global defaults + Dispatch Simulator) and ProjectSettings (per-project overrides).
 import { ChevronDown, Layers, SlidersHorizontal } from 'lucide-react';
-import { useMemo, useState } from 'react';
-import { TIERS, type TierId } from '@shared/tiers.ts';
+import { useMemo, useState, type ReactNode } from 'react';
+import { TIERS, tierValueFrom, type TierId } from '@shared/tiers.ts';
 import {
   deriveEffectiveTierSlots,
+  effectiveRouteOfLogin,
   logicalAccountKey,
   type DispatchSlotName,
+  type DispatchSlotsConfig,
   type TierDispatchSlots,
 } from '@shared/dispatch-slots.ts';
 import { latestQuota } from '@shared/usage.ts';
@@ -20,6 +22,7 @@ export interface LogicalAccountEntry {
   name: string;
   identityHint: string | null;
   executor: string;
+  route: string | null;
   scopeShort: string;
   quotaLabel: string;
   /** Remaining share 0..100 for simulator tie-break (higher is fresher; 100 for unlimited/unknown). */
@@ -29,6 +32,8 @@ export interface LogicalAccountEntry {
   allMachines: boolean;
   /** Underlying login IDs belonging to this logical account (for legacy dispatch_order derivation). */
   loginIds: string[];
+  /** Per-tier support map derived from underlying logins' configured tiers (true for all if none declared). */
+  supportedTiers: Record<TierId, boolean>;
 }
 
 function usageSummaryOf(usage: NonNullable<Account['status']>['usage']): { label: string; remain: number } {
@@ -46,22 +51,74 @@ function usageSummaryOf(usage: NonNullable<Account['status']>['usage']): { label
   return { label: `${prefix} 剩 ${remain}%`, remain };
 }
 
+function supportedTiersOf(tiersList: readonly (Record<string, { kind: string; text: string } | undefined> | undefined)[]): Record<TierId, boolean> {
+  const hasAny = tiersList.some((raw) => raw && Object.keys(raw).length > 0);
+  if (!hasAny) return { operate: true, execute: true, decide: true };
+  const supports = (tierId: TierId): boolean =>
+    tiersList.some((raw) => {
+      if (!raw) return false;
+      return tierValueFrom(raw, tierId) !== undefined || Boolean(raw[tierId]);
+    });
+  return {
+    operate: supports('operate'),
+    execute: supports('execute'),
+    decide: supports('decide'),
+  };
+}
+
+// Map machine-local login IDs that are provably the exact same subscription account as a
+// centralized `全机分发` account (via confirmed `login_groups` or identical non-empty
+// `(executor, account_label)` without a distinct route) -> that centralized account's id.
+export function coveredMachineLoginsByAccount(page: AccountsAndMachines): Map<string, string> {
+  const map = new Map<string, string>();
+  const accountById = new Map(page.accounts.map((a) => [a.id, a]));
+  for (const group of page.login_groups ?? []) {
+    const central = group.find((id) => accountById.has(id));
+    if (!central) continue;
+    for (const id of group) {
+      if (id !== central && !accountById.has(id)) map.set(id, central);
+    }
+  }
+  for (const machine of page.machines) {
+    for (const login of machine.logins ?? []) {
+      if (!login.configured || !login.id || map.has(login.id)) continue;
+      const label = login.account_label?.trim().toLowerCase();
+      if (!label) continue;
+      const route = effectiveRouteOfLogin({ routeLabel: login.route_label, tiers: login.tiers });
+      if (route) continue;
+      const matched = page.accounts.find((a) =>
+        a.executor === login.executor
+        && a.account_label?.trim().toLowerCase() === label
+        && !a.provider?.line,
+      );
+      if (matched) map.set(login.id, matched.id);
+    }
+  }
+  return map;
+}
+
 export function buildLogicalAccountEntries(
   page: AccountsAndMachines,
   usageByAccount?: ReadonlyMap<string, NonNullable<Account['status']>['usage']>,
+  options?: { allowedLoginIds?: ReadonlySet<string> | null },
 ): LogicalAccountEntry[] {
+  const allowed = options?.allowedLoginIds ?? null;
   const entries: LogicalAccountEntry[] = [];
-  const onlineMachines = page.machines.filter((m) => m.node.connected).map((m) => m.id);
+  const onlineMachines = (page.machines ?? []).filter((m) => Boolean(m.node?.connected)).map((m) => m.id);
+  const covered = coveredMachineLoginsByAccount(page);
+  const entryByAccountId = new Map<string, LogicalAccountEntry>();
 
   for (const account of page.accounts) {
+    if (allowed !== null && !allowed.has(account.id)) continue;
     const usage = usageByAccount?.get(account.id) ?? account.status?.usage ?? [];
     const q = usageSummaryOf(usage);
     const identityHint = [account.account_label, account.plan_label].filter(Boolean).join(' · ') || null;
-    entries.push({
+    const entry: LogicalAccountEntry = {
       key: logicalAccountKey({ id: account.id, executor: account.executor, machine: null }),
       name: account.name,
       identityHint,
       executor: account.executor,
+      route: account.provider?.line ?? null,
       scopeShort: '全机分发',
       quotaLabel: q.label,
       quotaRemain: q.remain,
@@ -69,49 +126,84 @@ export function buildLogicalAccountEntries(
       availableMachines: onlineMachines,
       allMachines: true,
       loginIds: [account.id],
-    });
+      supportedTiers: supportedTiersOf([account.tiers]),
+    };
+    entries.push(entry);
+    entryByAccountId.set(account.id, entry);
   }
 
   const aliases = page.login_aliases ?? {};
-  const byExecutor = new Map<string, { machine: Machine; login: MachineLogin }[]>();
+  // Group machine-authorized logins by (executor, effective route/provider) so identical
+  // multi-machine logins stay collapsed into 1 row while distinct routes/providers (e.g. office
+  // LAN `lan-gw` vs paid `deepseek-official`) naturally split into independent priority rows.
+  const byLogicalKey = new Map<string, { executor: string; route: string | null; members: { machine: Machine; login: MachineLogin }[] }>();
   for (const machine of page.machines) {
     for (const login of machine.logins ?? []) {
       if (!login.configured || !login.id) continue;
-      const list = byExecutor.get(login.executor);
-      if (list) list.push({ machine, login });
-      else byExecutor.set(login.executor, [{ machine, login }]);
+      if (allowed !== null && !allowed.has(login.id)) continue;
+      const parentAccountId = covered.get(login.id);
+      if (parentAccountId) {
+        const parentEntry = entryByAccountId.get(parentAccountId);
+        if (parentEntry) {
+          if (!parentEntry.loginIds.includes(login.id)) parentEntry.loginIds.push(login.id);
+          continue;
+        }
+      }
+      const route = effectiveRouteOfLogin({ routeLabel: login.route_label, tiers: login.tiers });
+      const key = logicalAccountKey({ id: login.id, executor: login.executor, machine: machine.id, route });
+      const existing = byLogicalKey.get(key);
+      if (existing) {
+        existing.members.push({ machine, login });
+        if (!existing.route && route) existing.route = route;
+      } else {
+        byLogicalKey.set(key, { executor: login.executor, route, members: [{ machine, login }] });
+      }
     }
   }
 
-  for (const [executor, members] of byExecutor) {
+  for (const [key, bucket] of byLogicalKey) {
+    const { executor, route, members } = bucket;
     const provider = formatProviderName(executor);
     const first = members[0]!;
-    const routes = [...new Set(members.map((m) => m.login.route_label).filter((r): r is string => Boolean(r)))];
-    const accounts = [...new Set(members.map((m) => m.login.account_label).filter((r): r is string => Boolean(r)))];
-    const plans = [...new Set(members.map((m) => m.login.plan_label).filter((r): r is string => Boolean(r)))];
-    const groupAlias = aliases[`group:${executor}`];
+    const routes = [...new Set(members.map((m) => effectiveRouteOfLogin({ routeLabel: m.login.route_label, tiers: m.login.tiers })).filter((r): r is string => Boolean(r)))];
+    const accounts = [...new Set(members.map((m) => m.login.account_label).filter((a): a is string => Boolean(a)))];
+    const plans = [...new Set(members.map((m) => m.login.plan_label).filter((p): p is string => Boolean(p)))];
+    const idNorm = accounts.length === 1 ? accounts[0]!.trim().toLowerCase() : '';
+    const routeNorm = route ? route.toLowerCase() : '';
+    const groupSuffix = [idNorm, routeNorm].filter(Boolean).join(':');
+    const canonicalGroupKey = groupSuffix ? `/group/${executor}:${groupSuffix}` : `/group/${executor}`;
+    const routeOnlyGroupKey = routeNorm ? `/group/${executor}:${routeNorm}` : `/group/${executor}`;
+    const groupAlias = aliases[canonicalGroupKey]
+      ?? aliases[routeOnlyGroupKey]
+      ?? (routeNorm ? aliases[`group:${executor}:${routeNorm}`] : undefined)
+      ?? (routes.length === 0 ? (aliases[`/group/${executor}`] ?? aliases[`group:${executor}`]) : undefined);
     const singleAlias = members.length === 1 ? (first.login.display_name || (first.login.id ? aliases[first.login.id] : undefined)) : undefined;
     const label = singleAlias
       ?? groupAlias
       ?? (members.length === 1 && first.login.account_label
         ? first.login.account_label
-        : routes.length === 1
-          ? `${provider} · ${routes[0]}`
-          : provider);
+        : route
+          ? `${provider} · ${route}`
+          : routes.length === 1
+            ? `${provider} · ${routes[0]}`
+            : provider);
+    const machineNames = members.map((m) => m.machine.id);
     const identityHint = [
       ...(accounts.length === 1 && accounts[0] !== label ? [accounts[0]] : []),
       ...(plans.length === 1 ? [plans[0]] : []),
-      ...(routes.length === 1 && !label.includes(routes[0]!) ? [routes[0]] : []),
+      ...(route && !label.includes(route) ? [`线路 ${route}`] : []),
+      ...(members.length === 1 && route ? [machineNames[0]] : []),
     ].join(' · ') || null;
-    const online = members.filter((m) => m.machine.node.connected).map((m) => m.machine.id);
+    const online = members.filter((m) => Boolean(m.machine.node?.connected)).map((m) => m.machine.id);
     const freshest = latestQuota(members, (m) => m.login.status?.usage ?? []).login.status?.usage ?? [];
     const q = usageSummaryOf(freshest);
     const maxRuns = members.map((m) => m.login.max_runs).find((v): v is number => typeof v === 'number' && v > 0) ?? null;
     entries.push({
-      key: logicalAccountKey({ id: first.login.id!, executor, machine: first.machine.id }),
+      key,
       name: label,
       identityHint,
       executor,
+      route,
       scopeShort: `${online.length}/${members.length} 台`,
       quotaLabel: q.label,
       quotaRemain: q.remain,
@@ -119,6 +211,7 @@ export function buildLogicalAccountEntries(
       availableMachines: online,
       allMachines: false,
       loginIds: members.map((m) => m.login.id!).filter(Boolean),
+      supportedTiers: supportedTiersOf(members.map((m) => m.login.tiers)),
     });
   }
 
@@ -128,6 +221,8 @@ export function buildLogicalAccountEntries(
 export function effectiveSlotsByTier(
   page: AccountsAndMachines,
   entries: readonly LogicalAccountEntry[],
+  overrideSlots?: DispatchSlotsConfig | null,
+  overrideLegacyOrder?: Partial<Record<TierId, string[]>> | null,
 ): Record<TierId, TierDispatchSlots> {
   const keys = entries.map((e) => e.key);
   const idToKey = new Map<string, string>();
@@ -137,7 +232,7 @@ export function effectiveSlotsByTier(
   }
   const out = {} as Record<TierId, TierDispatchSlots>;
   for (const tier of TIERS) {
-    const rawLegacy = page.dispatch_order?.[tier.id] ?? [];
+    const rawLegacy = overrideLegacyOrder?.[tier.id] ?? page.dispatch_order?.[tier.id] ?? [];
     const legacyKeys: string[] = [];
     const seen = new Set<string>();
     for (const id of rawLegacy) {
@@ -146,7 +241,8 @@ export function effectiveSlotsByTier(
       seen.add(k);
       legacyKeys.push(k);
     }
-    out[tier.id] = deriveEffectiveTierSlots(keys, page.dispatch_slots?.[tier.id], legacyKeys);
+    const configured = overrideSlots?.[tier.id] ?? (overrideLegacyOrder?.[tier.id] ? undefined : page.dispatch_slots?.[tier.id]);
+    out[tier.id] = deriveEffectiveTierSlots(keys, configured, legacyKeys);
   }
   return out;
 }
@@ -158,13 +254,23 @@ export function DispatchSlotsPanel({
   busy,
   error,
   onSaveTier,
+  compact = false,
+  hideSimulator = false,
+  showTierSupport = false,
+  ariaLabel = '各档位全局默认派发策略',
+  hint,
 }: {
   page: AccountsAndMachines;
   entries: readonly LogicalAccountEntry[];
   slotsByTier: Record<TierId, TierDispatchSlots>;
   busy: boolean;
-  error: string | null;
+  error?: string | null;
   onSaveTier: (tier: TierId, next: TierDispatchSlots) => void;
+  compact?: boolean;
+  hideSimulator?: boolean;
+  showTierSupport?: boolean;
+  ariaLabel?: string;
+  hint?: ReactNode;
 }) {
   const [simOpen, setSimOpen] = useState(false);
   const [simTier, setSimTier] = useState<TierId>('decide');
@@ -172,7 +278,7 @@ export function DispatchSlotsPanel({
   const [simBusy, setSimBusy] = useState<Record<string, number>>({});
 
   const entryMap = useMemo(() => new Map(entries.map((e) => [e.key, e])), [entries]);
-  const machineOptions = useMemo(() => page.machines.map((m) => ({ id: m.id, online: m.node.connected })), [page.machines]);
+  const machineOptions = useMemo(() => (page.machines ?? []).map((m) => ({ id: m.id, online: Boolean(m.node?.connected) })), [page.machines]);
 
   function slotOf(tier: TierId, key: string): DispatchSlotName {
     const s = slotsByTier[tier];
@@ -233,107 +339,136 @@ export function DispatchSlotsPanel({
     };
   }, [slotsByTier, simTier, simMachine, simBusy, entryMap, page.machines.length]);
 
+  const showSim = !hideSimulator && entries.length > 0;
+
   return (
-    <section aria-label="各档位全局默认派发策略" className="max-w-[960px] space-y-3">
+    <section aria-label={ariaLabel} className={cn('space-y-3', !compact && 'max-w-[960px]')}>
       {/* Compact single-line principle hint */}
-      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        <SlidersHorizontal className="size-3.5 text-primary" aria-hidden="true" />
-        <span>
-          <strong className="font-medium text-foreground">P1 主力槽</strong>内按「最少活跃并发 → 剩余额度优先」自动均衡；全满或冷却时降级至 <strong className="font-medium text-foreground">P2 备选槽</strong>；同一逻辑账号的多台机器由项目机器范围自动择优。
-        </span>
-      </p>
+      {hint !== null ? (
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <SlidersHorizontal className="size-3.5 text-primary" aria-hidden="true" />
+          <span>
+            {hint ?? (
+              <>
+                <strong className="font-medium text-foreground">P1 主力槽</strong>内按「最少活跃并发 → 剩余额度优先」自动均衡；全满或冷却时降级至 <strong className="font-medium text-foreground">P2 备选槽</strong>；同执行器不同线路（如内网与官网）会自动拆行独立设槽。
+              </>
+            )}
+          </span>
+        </p>
+      ) : null}
 
       {error ? <Problem role="alert">{error}</Problem> : null}
 
       {/* Flat, border-light Routing Matrix */}
-      <div className="overflow-hidden rounded-xl border border-border bg-raised shadow-card">
+      <div className={cn('overflow-hidden rounded-xl border border-border bg-raised', !compact && 'shadow-card')}>
         {/* Matrix Header (desktop) */}
-        <div className="hidden grid-cols-[minmax(0,1fr)_128px_128px_128px] items-center gap-2 border-b border-border bg-muted/55 px-4 py-2 text-xs font-medium text-muted-foreground sm:grid">
-          <span>逻辑账号</span>
+        <div className={cn(
+          'hidden items-center gap-2 border-b border-border bg-muted/55 px-4 py-2 text-xs font-medium text-muted-foreground sm:grid',
+          compact ? 'grid-cols-[minmax(0,1fr)_112px_112px_112px]' : 'grid-cols-[minmax(0,1fr)_128px_128px_128px]',
+        )}>
+          <span>逻辑账号 / 渠道</span>
           {TIERS.map((tier) => (
             <span key={tier.id} className="text-center">{tier.label}</span>
           ))}
         </div>
 
         {/* Account Rows */}
-        <div className="divide-y divide-border/70">
-          {entries.map((entry) => (
-            <div
-              key={entry.key}
-              className="grid grid-cols-1 items-center gap-2.5 px-4 py-3 transition-colors hover:bg-hover/35 sm:grid-cols-[minmax(0,1fr)_128px_128px_128px] sm:gap-2"
-            >
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <Dot tone={entry.availableMachines.length > 0 || page.machines.length === 0 ? 'success' : 'waiting'} />
-                  <span className="truncate text-sm font-semibold text-foreground">{entry.name}</span>
-                  <span className="flex-none rounded bg-hover/80 px-1.5 py-0.5 font-mono text-2xs text-muted-foreground">
-                    {entry.executor}
-                  </span>
-                  <span className="flex-none rounded bg-muted px-1.5 py-0.5 text-2xs text-muted-foreground">
-                    {entry.scopeShort}
-                  </span>
+        {entries.length > 0 ? (
+          <div className="divide-y divide-border/70">
+            {entries.map((entry) => (
+              <div
+                key={entry.key}
+                className={cn(
+                  'grid grid-cols-1 items-center gap-2.5 px-4 transition-colors hover:bg-hover/35 sm:gap-2',
+                  compact ? 'py-2.5 sm:grid-cols-[minmax(0,1fr)_112px_112px_112px]' : 'py-3 sm:grid-cols-[minmax(0,1fr)_128px_128px_128px]',
+                )}
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Dot tone={entry.availableMachines.length > 0 || page.machines.length === 0 ? 'success' : 'waiting'} />
+                    <span className="truncate text-sm font-semibold text-foreground">{entry.name}</span>
+                    <span className="flex-none rounded bg-hover/80 px-1.5 py-0.5 font-mono text-2xs text-muted-foreground">
+                      {entry.executor}
+                    </span>
+                    <span className="flex-none rounded bg-muted px-1.5 py-0.5 text-2xs text-muted-foreground">
+                      {entry.scopeShort}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 truncate pl-4 text-xs text-muted-foreground tabular-nums">
+                    {[entry.identityHint, entry.quotaLabel].filter(Boolean).join(' · ')}
+                  </div>
                 </div>
-                <div className="mt-0.5 truncate pl-4 text-xs text-muted-foreground tabular-nums">
-                  {[entry.identityHint, entry.quotaLabel].filter(Boolean).join(' · ')}
-                </div>
-              </div>
 
-              <div className="grid grid-cols-3 gap-2 sm:contents">
-                {TIERS.map((tier) => {
-                  const current = slotOf(tier.id, entry.key);
-                  return (
-                    <div key={tier.id} className="flex flex-col items-center gap-1 sm:justify-center">
-                      <span className="text-2xs text-muted-foreground sm:hidden">{tier.label}</span>
-                      <div
-                        role="group"
-                        aria-label={`${tier.label} ${entry.name} 槽位`}
-                        className="inline-flex items-center rounded-md border border-border bg-muted/70 p-0.5 text-2xs"
-                      >
-                        {([
-                          ['p1', 'P1'],
-                          ['p2', 'P2'],
-                          ['off', '停'],
-                        ] as const).map(([slotKey, label]) => {
-                          const active = current === slotKey;
-                          return (
-                            <button
-                              key={slotKey}
-                              type="button"
-                              disabled={busy}
-                              aria-pressed={active}
-                              aria-label={`把 ${entry.name} 设为 ${label}`}
-                              onClick={() => { if (!active) moveKey(tier.id, entry.key, slotKey); }}
-                              className={cn(
-                                'cursor-pointer rounded px-2 py-0.5 font-mono transition-colors disabled:opacity-50',
-                                active
-                                  ? slotKey === 'p1'
-                                    ? 'bg-primary font-semibold text-primary-foreground'
-                                    : slotKey === 'p2'
-                                      ? 'bg-waiting-soft font-semibold text-waiting-foreground'
-                                      : 'bg-raised font-semibold text-foreground shadow-xs'
-                                  : 'text-muted-foreground hover:text-foreground',
-                              )}
-                            >
-                              {label}
-                            </button>
-                          );
-                        })}
+                <div className="grid grid-cols-3 gap-2 sm:contents">
+                  {TIERS.map((tier) => {
+                    const supported = !showTierSupport || entry.supportedTiers[tier.id];
+                    const current = slotOf(tier.id, entry.key);
+                    return (
+                      <div key={tier.id} className="flex flex-col items-center gap-1 sm:justify-center">
+                        <span className="text-2xs text-muted-foreground sm:hidden">{tier.label}</span>
+                        {!supported ? (
+                          <span className="text-2xs text-faint">未配档位</span>
+                        ) : (
+                          <div
+                            role="group"
+                            aria-label={`${tier.label} ${entry.name} 槽位`}
+                            className="inline-flex items-center rounded-md border border-border bg-muted/70 p-0.5 text-2xs"
+                          >
+                            {([
+                              ['p1', 'P1'],
+                              ['p2', 'P2'],
+                              ['off', '停'],
+                            ] as const).map(([slotKey, label]) => {
+                              const active = current === slotKey;
+                              return (
+                                <button
+                                  key={slotKey}
+                                  type="button"
+                                  disabled={busy}
+                                  aria-pressed={active}
+                                  aria-label={`把 ${entry.name} 设为 ${label}`}
+                                  onClick={() => { if (!active) moveKey(tier.id, entry.key, slotKey); }}
+                                  className={cn(
+                                    'cursor-pointer rounded px-2 py-0.5 font-mono transition-colors disabled:opacity-50',
+                                    active
+                                      ? slotKey === 'p1'
+                                        ? 'bg-primary font-semibold text-primary-foreground'
+                                        : slotKey === 'p2'
+                                          ? 'bg-waiting-soft font-semibold text-waiting-foreground'
+                                          : 'bg-raised font-semibold text-foreground shadow-xs'
+                                      : 'text-muted-foreground hover:text-foreground',
+                                  )}
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <p className="px-4 py-4 text-xs text-muted-foreground">暂无可用的登录或渠道。</p>
+        )}
 
         {/* Built-in Live Effective Topology Footer */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/40 px-4 py-2.5 text-xs">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
             {TIERS.map((tier) => {
               const s = slotsByTier[tier.id];
-              const p1 = s.p1.map((k) => entryMap.get(k)?.name).filter((n): n is string => Boolean(n));
-              const p2 = s.p2.map((k) => entryMap.get(k)?.name).filter((n): n is string => Boolean(n));
+              const p1 = s.p1
+                .map((k) => entryMap.get(k))
+                .filter((e): e is LogicalAccountEntry => e !== undefined && (!showTierSupport || e.supportedTiers[tier.id]))
+                .map((e) => e.name);
+              const p2 = s.p2
+                .map((k) => entryMap.get(k))
+                .filter((e): e is LogicalAccountEntry => e !== undefined && (!showTierSupport || e.supportedTiers[tier.id]))
+                .map((e) => e.name);
               return (
                 <div key={tier.id} role="region" aria-label={`${tier.label}派发槽位`} className="inline-flex flex-wrap items-center gap-1.5">
                   <span className="font-medium text-muted-foreground">{tier.label}</span>
@@ -358,7 +493,7 @@ export function DispatchSlotsPanel({
             })}
           </div>
 
-          {entries.length > 0 ? (
+          {showSim ? (
             <button
               type="button"
               aria-expanded={simOpen}
@@ -373,7 +508,7 @@ export function DispatchSlotsPanel({
       </div>
 
       {/* Collapsible Compact Simulator Drawer */}
-      {simOpen && entries.length > 0 ? (
+      {showSim && simOpen ? (
         <div className="space-y-2.5 rounded-xl border border-border bg-raised px-4 py-3 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">

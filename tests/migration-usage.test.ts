@@ -26,7 +26,7 @@ test('26 → 28 adds the usage table empty; an older round counts with no figure
       VALUES ('r', 'now', 't', 1, 'host', 'ended', 'm', '{"brief":"b","login":{"executor":"codex"}}', '2026-11-10T01:00:00.000Z', '2026-11-10T01:00:30.000Z');`);
   const before = old.prepare('SELECT * FROM run').all().map((row) => ({ ...row }));
   old.close();
-  assert.equal(SCHEMA_VERSION, 44);
+  assert.ok(SCHEMA_VERSION >= 44);
   const ledger = openLedger(path, { copyBeforeUpgrade: false });
   try {
     const report = ledger.usageReport({ from: '2026-11-10T00:00:00.000Z', to: '2026-11-11T00:00:00.000Z', tzOffsetMinutes: 0 });

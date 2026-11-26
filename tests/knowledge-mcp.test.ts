@@ -30,7 +30,19 @@ import { ownerEntry } from './knowledge-helpers.ts';
 import { createLibrary } from '../service/library.ts';
 
 const MCP_SERVER = join(import.meta.dirname, '..', 'service', 'knowledge-mcp.ts');
-const SEED = join(import.meta.dirname, '..', 'docs', 'knowledge-seed', 'ty-lessons-2026-11-09.md');
+const SYNTHETIC_SEED = `# Synthetic Knowledge Seed\n\n${Array.from({ length: 12 }, (_, idx) => {
+  const n = idx + 1;
+  const key = `E${n}`;
+  const scoped = n >= 11 ? '只适用于当前项目环境' : '所有工程任务通用';
+  return [
+    `### ${key} 工程经验条目 ${n}`,
+    `- **适用范围**：${scoped}`,
+    `- **触发情境**：执行第 ${n} 类排查或性能优化任务时`,
+    `- **正确做法**：先量化基线再做第 ${n} 步改动。改动后用同一测试集复测确认收益。`,
+    `- **反例**：`,
+    `  - L${100 + n} 未测基线直接改代码，耗时从 7.92s 抖动到 48–67s`,
+  ].join('\n');
+}).join('\n\n')}`;
 const WHY = { when: '何时', changes: '改什么', generalizes: '依据和边界' };
 const EVIDENCE = [{ source: 'conversation', ref: 's1', location: 'L1', excerpt: '摘录' }];
 
@@ -268,7 +280,7 @@ test('the TY lessons go in through the MCP, publish or await owner, reach a new 
   const ql = app.f.ledger.createProject({ name: 'QL' }, USER);
   const { token } = await issue(app, ['read', 'propose'], 'TY 负责人会话');
   const session = stdioServer(t, ['--url', app.url], { TYCHO_KNOWLEDGE_TOKEN: token });
-  const lessons = lessonsOf(readFileSync(SEED, 'utf8'));
+  const lessons = lessonsOf(SYNTHETIC_SEED);
   assert.deepEqual(lessons.map(({ key }) => key), ['E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7', 'E8', 'E9', 'E10', 'E11', 'E12']);
 
   // Submitted, each once: a retry of the whole batch makes nothing new.

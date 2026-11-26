@@ -69,7 +69,7 @@ test('schema migration v45 -> v46, verifySnapshot, and bindProjectHomeGuard', (t
   assert.equal(verifySnapshot(v45Snap).get('schema_version'), '45');
 
   // Opening with projectHome guard runs MIGRATIONS[45..] -> SCHEMA_VERSION and binds guards for every table.
-  assert.equal(SCHEMA_VERSION, 47);
+  assert.equal(SCHEMA_VERSION, 48);
   home = createProjectHome(dir);
   ledger = openLedger(dbPath, { projectHome: home, copyBeforeUpgrade: false });
 

@@ -14,7 +14,7 @@ import { ulid } from './ids.ts';
 import { bindProjectHomeGuard } from './project-home-guard.ts';
 import { PROJECT_HOME_KEY_PREFIX, type ProjectHome, type ProjectOwnership } from './project-home.ts';
 
-export const SCHEMA_VERSION = 47;
+export const SCHEMA_VERSION = 48;
 // 42 adds admitted Router calls and links their committed business changes.
 // 41 is code sources (docs/design/code-sources.md; shared/sources.ts SOURCES_LEDGER_VERSION):
 // a project's repo/code_dir columns become an ordered sources list, and a Task is pinned to the
@@ -130,8 +130,10 @@ CREATE TABLE IF NOT EXISTS task (
   -- The logins the Router asked to try first, in its order, with why (roles-and-tiers.md §11).
   prefer_json TEXT,
   -- The project source the Task works on, as it stood when the Task was pinned (shared/sources.ts
-  -- TaskSource); null when its project names no source and its rounds work in an empty directory.
-  source_json TEXT
+  -- TaskSource); null when its project names no source or the Task uses the default empty task directory.
+  source_json TEXT,
+  -- Optional target machine pinned on the Task (machine.id); null lets the dispatcher choose.
+  machine_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS run (
@@ -403,10 +405,10 @@ CREATE TABLE IF NOT EXISTS trigger_fire (
   merged_count INTEGER NOT NULL,
   merged_capped INTEGER NOT NULL DEFAULT 0,
   push_final INTEGER NOT NULL,
-  broadcast_groups INTEGER NOT NULL DEFAULT 0,
-  broadcast_group_ids_json TEXT NOT NULL DEFAULT '[]',
   keep_until TEXT NOT NULL,
   released_at TEXT,
+  broadcast_groups INTEGER NOT NULL DEFAULT 0,
+  broadcast_group_ids_json TEXT NOT NULL DEFAULT '[]',
   CHECK ((trigger_id IS NOT NULL) + (source_id IS NOT NULL) = 1)
 );
 
@@ -2512,6 +2514,13 @@ DELETE FROM trigger_rule WHERE source = 'webhook';`);
       conn.exec('ALTER TABLE project ADD COLUMN dispatch_order_json TEXT');
     }
   },
+  47: (conn) => {
+    const hasColumn = (table: string, name: string): boolean =>
+      (conn.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((col) => col.name === name);
+    if (!hasColumn('task', 'machine_id')) {
+      conn.exec('ALTER TABLE task ADD COLUMN machine_id TEXT');
+    }
+  },
 };
 
 // The tables a ledger of each version cannot be without: what tells one from a file that
@@ -2616,6 +2625,9 @@ const LEDGER_TABLES: Record<number, readonly string[]> = {
     'knowledge', 'knowledge_proposal', 'knowledge_revision', 'knowledge_evidence', 'knowledge_client', 'router_segment', 'router_context', 'front_desk', 'push',
     'trigger_rule', 'trigger_fire', 'trigger_cursor', 'inbound_source', 'inbound_key', 'usage', 'work_cleanup', 'machine_login_refusal', 'router_call', 'router_exchange', 'router_template', 'inbound_receipt_reply', 'project_file', 'project_files_cleanup', 'im_group_binding', 'im_group_context'],
   47: [...V4_TABLES.filter((table) => table !== 'router_session' && table !== 'decision'), 'account', 'machine', 'machine_login', 'login_state', 'machine_invite', 'machine_material', 'role',
+    'knowledge', 'knowledge_proposal', 'knowledge_revision', 'knowledge_evidence', 'knowledge_client', 'router_segment', 'router_context', 'front_desk', 'push',
+    'trigger_rule', 'trigger_fire', 'trigger_cursor', 'inbound_source', 'inbound_key', 'usage', 'work_cleanup', 'machine_login_refusal', 'router_call', 'router_exchange', 'router_template', 'inbound_receipt_reply', 'project_file', 'project_files_cleanup', 'im_group_binding', 'im_group_context'],
+  48: [...V4_TABLES.filter((table) => table !== 'router_session' && table !== 'decision'), 'account', 'machine', 'machine_login', 'login_state', 'machine_invite', 'machine_material', 'role',
     'knowledge', 'knowledge_proposal', 'knowledge_revision', 'knowledge_evidence', 'knowledge_client', 'router_segment', 'router_context', 'front_desk', 'push',
     'trigger_rule', 'trigger_fire', 'trigger_cursor', 'inbound_source', 'inbound_key', 'usage', 'work_cleanup', 'machine_login_refusal', 'router_call', 'router_exchange', 'router_template', 'inbound_receipt_reply', 'project_file', 'project_files_cleanup', 'im_group_binding', 'im_group_context'],
 };

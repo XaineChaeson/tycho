@@ -25,8 +25,8 @@ import { knowledgeTaskMaterial } from './knowledge-brief.ts';
 import { noGateKeeperText } from '../shared/knowledge.ts';
 import { parseKnowledgeTask, type KnowledgeLimits } from './knowledge.ts';
 import { isDirectorySkillId } from '../shared/skill-catalog.ts';
-import { slotForLogin, type TierDispatchSlots } from '../shared/dispatch-slots.ts';
-import { isTierId } from '../shared/tiers.ts';
+import { effectiveRouteOfLogin, slotForLogin, type TierDispatchSlots } from '../shared/dispatch-slots.ts';
+import { isTierId, type TierId } from '../shared/tiers.ts';
 import type { PlacedBy } from '../shared/tasks.ts';
 import type { NodeEntryReport } from '../shared/node-protocol.ts';
 
@@ -348,7 +348,9 @@ export function createDispatcher(options: DispatcherOptions) {
     // eligible machine if the original machine is offline or gone.
     const candidates = (() => {
       if (fix.kind === 'machine') {
-        return [fix.machine].filter((machine) => machineAllowed(machine, login, [], task.project_id ?? undefined));
+        const allowed = fix.from === 'folder' ? [] : range.allowed;
+        const scopeProject = fix.from === 'folder' ? (task.project_id ?? undefined) : range.projectId;
+        return [fix.machine].filter((machine) => machineAllowed(machine, login, allowed, scopeProject));
       }
       const all = eligibleMachines(login, range.allowed, machines, range.projectId);
       if (fix.kind === 'prefer') {
@@ -406,22 +408,34 @@ export function createDispatcher(options: DispatcherOptions) {
     const held = sourceOfRun(run);
     return held !== undefined && held.binding_key === bindingKey(pin.pinned);
   };
-  // Where a Task's rounds are fixed or preferred: a folder source requires its own machine;
-  // a repository source prefers the machine its first round ran on and falls back cleanly to
-  // any eligible machine if the original machine is gone.
+  // Where a Task's rounds are fixed or preferred: a folder source or task.machine_id requires
+  // its own machine; a repository source prefers the machine its first round ran on and falls
+  // back cleanly to any eligible machine if the original machine is gone.
   type Fix =
     | { kind: 'none' }
-    | { kind: 'machine'; machine: Machine }
+    | { kind: 'machine'; machine: Machine; from: 'folder' | 'task' }
     | { kind: 'prefer'; machine: Machine }
     | { kind: 'gone'; why: string };
   const fixOf = (task: TaskRow, pin: TaskSource | null): Fix => {
-    if (pin === null) return { kind: 'none' };
-    if (pin.pinned.kind === 'folder') {
-      const machine = machineOfUid(pin.pinned.machine_uid);
-      return machine === undefined || machine.leftAt !== undefined
-        ? { kind: 'gone', why: `任务钉的来源里那台机器已经不在了：${pinText(pin)}。改派到别的来源，或者放弃这个任务` }
-        : { kind: 'machine', machine };
+    let folderMachine: Machine | undefined;
+    if (pin?.pinned.kind === 'folder') {
+      folderMachine = machineOfUid(pin.pinned.machine_uid);
+      if (folderMachine === undefined || folderMachine.leftAt !== undefined) {
+        return { kind: 'gone', why: `任务钉的来源里那台机器已经不在了：${pinText(pin)}。改派到别的来源，或者放弃这个任务` };
+      }
     }
+    if (task.machine_id !== null) {
+      const target = machines.list().find((each) => each.id === task.machine_id && each.leftAt === undefined);
+      if (target === undefined) {
+        return { kind: 'gone', why: `任务指定的目标机器 ${task.machine_id} 已不存在或已注销：改派到别的机器，或者取消指定机器` };
+      }
+      if (folderMachine !== undefined && folderMachine.uid !== target.uid) {
+        return { kind: 'gone', why: `任务指定的目标机器 ${target.id} 与代码来源 ${pinText(pin!)} 所在机器 ${folderMachine.id} 冲突：传 source: null 使用默认任务目录，或改派目标机器` };
+      }
+      return { kind: 'machine', machine: target, from: folderMachine ? 'folder' : 'task' };
+    }
+    if (folderMachine !== undefined) return { kind: 'machine', machine: folderMachine, from: 'folder' };
+    if (pin === null) return { kind: 'none' };
     const first = ledger.listRuns(task.id).find((run) => run.machine_id !== null && !neverStarted(run) && !workerNeverRan(run) && onPinnedSource(run, pin));
     if (first === undefined) return { kind: 'none' };
     const machine = machines.list().find((each) => runOnMachine(first, each));
@@ -429,17 +443,32 @@ export function createDispatcher(options: DispatcherOptions) {
       ? { kind: 'none' }
       : { kind: 'prefer', machine };
   };
-  // Why a Task's pinned source stops it before any machine is asked: its source is no longer
-  // in the project's list, the migration left it waiting for a machine, or the machine it
-  // names, or whose checkout its first round holds, is gone. Null when it may go on. The first
-  // two are the ledger's one rule for a pin (service/ledger.ts sourceRefusalOf), asked about
-  // `pin` because a review reads the pin of the Task it reviews, not its own row's older copy.
-  const sourceStop = (task: TaskRow, pin: TaskSource | null): string | undefined => {
-    if (pin === null) return undefined;
-    const refused = ledger.sourceRefusal({ id: task.id, project_id: task.project_id, source_json: JSON.stringify(pin) });
-    if (refused !== undefined) return refused;
+  // Why a Task's pinned source or target machine stops it before any machine is asked: its source
+  // is no longer in the project's list, the migration left it waiting for a machine, the pinned
+  // machine is gone/disallowed, or the pinned login belongs to a different machine.
+  const sourceStop = (task: TaskRow, pin: TaskSource | null, range: ReturnType<Ledger['machineRange']>): string | undefined => {
+    if (pin !== null) {
+      const refused = ledger.sourceRefusal({ id: task.id, project_id: task.project_id, source_json: JSON.stringify(pin) });
+      if (refused !== undefined) return refused;
+    }
     const fix = fixOf(task, pin);
-    return fix.kind === 'gone' ? fix.why : undefined;
+    if (fix.kind === 'gone') return fix.why;
+    if (fix.kind === 'machine') {
+      if (fix.from === 'task' && !('conflict' in range)) {
+        const allowed = range.allowed.length === 0 || range.allowed.includes(fix.machine.id);
+        const scopedOk = fix.machine.scope === undefined || fix.machine.scope.project_id === range.projectId;
+        if (!allowed || !scopedOk) {
+          return `任务指定的目标机器 ${fix.machine.id} 不在项目允许的机器范围内：改派到允许的机器，或调整项目允许的机器`;
+        }
+      }
+      if (task.login_id !== null) {
+        const pinnedLogin = logins.get(task.login_id);
+        if (pinnedLogin?.machine !== undefined && pinnedLogin.machine !== fix.machine.id) {
+          return `指定的登录 ${pinnedLogin.name} 只能在机器 ${pinnedLogin.machine} 上跑，与任务固定机器 ${fix.machine.id} 冲突：改钉托管账号 / ${fix.machine.id} 上的登录，或改派目标机器/代码来源`;
+        }
+      }
+    }
+    return undefined;
   };
   // The source one round is told about: the pin as it stands, and the commit a review is
   // checked out at (the reviewed round's own). A first repository round names no commit: the
@@ -528,25 +557,76 @@ export function createDispatcher(options: DispatcherOptions) {
     warnAt: options.usageWarnAt(),
   });
 
-  // Logical-account priority slots for this task's tier, when configured globally and not
-  // overridden by a project-specific dispatch order.
+  // Logical-account priority slots for this task's tier: project-level slot override first,
+  // legacy linear project dispatch_order falls back to linear mode, otherwise global slots.
   function tierSlotsFor(task: Pick<TaskRow, 'tier' | 'project_id'>): TierDispatchSlots | undefined {
     if (task.tier === null || !isTierId(task.tier)) return undefined;
-    if (task.project_id !== null && typeof ledger.projectDispatchOrder === 'function') {
-      const projOrder = ledger.projectDispatchOrder(task.project_id);
-      if (projOrder?.[task.tier] && projOrder[task.tier]!.length > 0) return undefined;
+    if (task.project_id !== null) {
+      if (typeof ledger.projectDispatchSlots === 'function') {
+        const projSlots = ledger.projectDispatchSlots(task.project_id);
+        if (projSlots?.[task.tier]) return projSlots[task.tier];
+      }
+      if (typeof ledger.projectDispatchOrder === 'function') {
+        const projOrder = ledger.projectDispatchOrder(task.project_id);
+        if (projOrder?.[task.tier] && projOrder[task.tier]!.length > 0) return undefined;
+      }
     }
     return typeof ledger.dispatchSlots === 'function' ? ledger.dispatchSlots()?.[task.tier] : undefined;
   }
 
+  function coveringAccountIdsFor(
+    login: Login,
+    states?: ReadonlyMap<string, { identity?: { organizationId?: string | null; quotaOwner?: string | null; accountLabel?: string | null } }>,
+  ): string[] {
+    if (!login.machine || !states) return [];
+    const ownId = states.get(login.id)?.identity;
+    const ownOrg = ownId?.organizationId?.trim() || null;
+    const ownOwner = ownId?.quotaOwner?.trim() || null;
+    if (!ownOrg && !ownOwner) return [];
+    const coveredBy: string[] = [];
+    for (const candidate of logins.list()) {
+      if (candidate.machine !== undefined || candidate.executor !== login.executor) continue;
+      const acctId = states.get(candidate.id)?.identity;
+      if (!acctId) continue;
+      const sameOrg = Boolean(ownOrg && acctId.organizationId?.trim() === ownOrg);
+      const sameOwner = Boolean(ownOwner && acctId.quotaOwner?.trim() === ownOwner);
+      if (sameOrg || sameOwner) coveredBy.push(candidate.id);
+    }
+    return coveredBy;
+  }
+
+  function slotOf(
+    login: Login,
+    tierSlots: TierDispatchSlots | undefined,
+    states?: ReadonlyMap<string, { identity?: { routeLabel?: string | null; organizationId?: string | null; quotaOwner?: string | null; accountLabel?: string | null } }>,
+    tier?: TierId | null,
+  ): 1 | 2 | 'off' | undefined {
+    if (!tierSlots) return undefined;
+    const routeLabel = login.machine
+      ? (states?.get(login.id)?.identity?.routeLabel ?? (typeof ledger.loginState === 'function' ? ledger.loginState(login.id)?.identity?.routeLabel : null))
+      : null;
+    const route = login.machine ? effectiveRouteOfLogin({ routeLabel, tiers: login.tiers }, tier) : null;
+    const covering = coveringAccountIdsFor(login, states);
+    return slotForLogin({ id: login.id, executor: login.executor, machine: login.machine, route }, tierSlots, covering, tier);
+  }
+
   // The logins a Task may run as, in the tier's order (project override -> global default).
+  // When a Task is fixed to one machine (folder source or task.machine_id), machine-local logins
+  // belonging to other machines can never run it and are excluded up front.
   const allowedOf = (task: TaskRow): string[] => ledger.loginPool(task).ids;
+  function compatibleWithFix(task: TaskRow, list: Login[]): Login[] {
+    const fix = fixOf(task, pinOf(task));
+    if (fix.kind !== 'machine') return list;
+    return list.filter((login) => login.machine === undefined || login.machine === fix.machine.id);
+  }
   function candidatesOf(task: TaskRow): Login[] {
-    const raw = candidateLogins(task, allowedOf(task), logins, executors, ledger.loginOrder(task.tier, task.project_id));
+    const raw = compatibleWithFix(task, candidateLogins(task, allowedOf(task), logins, executors, ledger.loginOrder(task.tier, task.project_id)));
     if (task.login_id !== null) return raw;
     const slots = tierSlotsFor(task);
     if (!slots) return raw;
-    return raw.filter((login) => slotForLogin(login, slots) !== 'off');
+    const tier = task.tier !== null && isTierId(task.tier) ? task.tier : null;
+    const states = typeof ledger.loginStates === 'function' ? ledger.loginStates() : undefined;
+    return raw.filter((login) => slotOf(login, slots, states, tier) !== 'off');
   }
   // A review's fallback: logins of the executors that wrote its product (including a pinned
   // writer login when explicitly requested).
@@ -555,20 +635,22 @@ export function createDispatcher(options: DispatcherOptions) {
       const writers = excludedExecutors(task);
       const pinned = logins.get(task.login_id);
       if (pinned && writers.includes(pinned.executor) && (task.permission !== 'read' || readOnlyRefusal(pinned, executors) === undefined)) {
-        return [pinned];
+        return compatibleWithFix(task, [pinned]);
       }
       return [];
     }
-    const raw = sameExecutorReviewers(task, allowedOf(task), logins, executors, ledger.loginOrder(task.tier, task.project_id));
+    const raw = compatibleWithFix(task, sameExecutorReviewers(task, allowedOf(task), logins, executors, ledger.loginOrder(task.tier, task.project_id)));
     const slots = tierSlotsFor(task);
     if (!slots) return raw;
-    return raw.filter((login) => slotForLogin(login, slots) !== 'off');
+    const tier = task.tier !== null && isTierId(task.tier) ? task.tier : null;
+    const states = typeof ledger.loginStates === 'function' ? ledger.loginStates() : undefined;
+    return raw.filter((login) => slotOf(login, slots, states, tier) !== 'off');
   }
 
   // Those logins as they stand now: what runs on each, whether it rests, how much of
   // its quota is used. `without` are logins known to have no machine that answers;
   // `except` is a Run not to count, for the Task that waits to go on in its place.
-  function standing(candidates: readonly Login[], without: ReadonlySet<string>, except?: string, tierSlots?: TierDispatchSlots): Candidate[] {
+  function standing(candidates: readonly Login[], without: ReadonlySet<string>, except?: string, tierSlots?: TierDispatchSlots, tier?: TierId | null): Candidate[] {
     const at = now();
     const active = ledger.listActiveRuns().filter((run) => run.id !== except);
     const states = ledger.loginStates();
@@ -576,7 +658,7 @@ export function createDispatcher(options: DispatcherOptions) {
       const state = states.get(login.id);
       const rest = restingUntil(state, at);
       const used = usageNow(state, at).map((figure) => figure.used);
-      const slot = tierSlots ? slotForLogin(login, tierSlots) : undefined;
+      const slot = slotOf(login, tierSlots, states, tier);
       return {
         id: login.id,
         active: active.filter((run) => run.login_id === login.id).length,
@@ -652,9 +734,10 @@ export function createDispatcher(options: DispatcherOptions) {
     }
     const groups: PlacementGroup[] = grouped ? groupsOf(task, candidates) : [{ logins: [...candidates], placedBy: 'order' }];
     const slots = task.login_id === null ? tierSlotsFor(task) : undefined;
+    const tier = task.tier !== null && isTierId(task.tier) ? task.tier : null;
     for (const { logins: group, placedBy } of groups) {
       for (;;) {
-        const choice = pickLogin(standing(group, without, except, slots), picking());
+        const choice = pickLogin(standing(group, without, except, slots, tier), picking());
         if ('wait' in choice) break;
         const login = group.find(({ id }) => id === choice.pick)!;
         const machine = await machineFor(login, task, forContinuation);
@@ -813,7 +896,7 @@ export function createDispatcher(options: DispatcherOptions) {
       // The source the Task is pinned to, as the project holds it now: a source taken out of
       // the list, or a machine that registration has left, stops the Task with the reason.
       const pin = pinOf(task);
-      const stuck = writable ?? ('conflict' in range ? range.conflict : undefined) ?? (unpinned === undefined ? undefined : `${unpinned}：改钉别的登录，或者取消钉住`) ?? sourceStop(task, pin);
+      const stuck = writable ?? ('conflict' in range ? range.conflict : undefined) ?? (unpinned === undefined ? undefined : `${unpinned}：改钉别的登录，或者取消钉住`) ?? sourceStop(task, pin, range);
       if (stuck !== undefined) {
         ledger.holdTask(task.id, stuck, DISPATCHER);
         return;
@@ -840,8 +923,11 @@ export function createDispatcher(options: DispatcherOptions) {
       }
       const readers = [...candidates, ...fallback];
       if (readers.length === 0) {
+        const fix = fixOf(task, pin);
         hold(task.login_id === null
-          ? `没有可用的登录：项目允许的登录里没有带档位 ${task.tier ?? '（未选）'} 的`
+          ? (fix.kind === 'machine'
+            ? `没有能在机器 ${fix.machine.id} 上跑的可用登录：项目允许的登录里既没有带档位 ${task.tier ?? '（未选）'} 的托管账号，也没有 ${fix.machine.id} 本机登录`
+            : `没有可用的登录：项目允许的登录里没有带档位 ${task.tier ?? '（未选）'} 的`)
           : `没有可用的登录：${logins.get(task.login_id)?.name ?? '指定的登录已删除，请重新选择'}`);
         return;
       }

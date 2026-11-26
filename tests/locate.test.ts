@@ -184,20 +184,80 @@ test('声明是本程序自带的封闭集合：只按命令名从自带的适�
   assert.deepEqual(placesOf('claude'), ADAPTERS['claude']!.installs);
   assert.deepEqual(placesOf('dsh'), ADAPTERS['dsh']!.installs);
   assert.deepEqual(placesOf('agy'), ADAPTERS['gemini']!.installs);
-  assert.deepEqual(placesOf('codex'), [], 'Codex 只看 PATH');
+  assert.deepEqual(placesOf('codex'), ADAPTERS['codex']!.installs);
   assert.deepEqual(placesOf('C:\\evil\\claude'), [], '路径不是命令名，没有声明的位置');
   assert.deepEqual(placesOf('something-else'), []);
+});
+
+test('Windows：Codex 与 Gemini 在 PATH 缺失时也能命中常见用户安装位置', () => {
+  const codexCmd = 'C:\\Users\\u\\AppData\\Roaming\\npm\\codex.cmd';
+  const agyOfficial = 'C:\\Users\\u\\AppData\\Local\\agy\\bin\\agy.exe';
+  const agyHome = 'C:\\Users\\u\\.agy\\bin\\agy.exe';
+  const agyExe = 'C:\\Users\\u\\AppData\\Local\\Programs\\Antigravity\\bin\\agy.exe';
+  const env = { PATH: '', USERPROFILE: 'C:\\Users\\u', APPDATA: 'C:\\Users\\u\\AppData\\Roaming', LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' };
+  assert.equal(locate('codex', { env, platform: 'win32', ...disk([codexCmd]) }).path, codexCmd);
+  assert.equal(locate('agy', { env, platform: 'win32', ...disk([agyOfficial]) }).path, agyOfficial);
+  assert.equal(locate('agy', { env, platform: 'win32', ...disk([agyHome]) }).path, agyHome);
+  assert.equal(locate('agy', { env, platform: 'win32', ...disk([agyExe]) }).path, agyExe);
+});
+
+test('Tycho 托管用户级 CLI 目录（~/.tycho/cli）存在时优先于系统只读 PATH', () => {
+  const posixManaged = '/home/o/.tycho/cli/bin/codex';
+  const posixSystem = '/usr/local/bin/codex';
+  assert.deepEqual(
+    locate('codex', { env: { PATH: '/usr/local/bin', HOME: '/home/o' }, platform: 'linux', ...disk([posixManaged, posixSystem], posix) }),
+    { path: posixManaged, searched: [posixManaged] },
+  );
+  // Absent managed binary falls through to PATH cleanly without polluting `searched`.
+  assert.deepEqual(
+    locate('codex', { env: { PATH: '/usr/local/bin', HOME: '/home/o' }, platform: 'linux', ...disk([posixSystem], posix) }),
+    { path: posixSystem, searched: ['PATH'] },
+  );
+  // Windows managed binary also respects `exclude`.
+  const winManaged = 'C:\\Users\\u\\.tycho\\cli\\codex.cmd';
+  const winSys = 'C:\\Program Files\\nodejs\\codex.cmd';
+  assert.equal(
+    locate('codex', { env: { PATH: 'C:\\Program Files\\nodejs', USERPROFILE: 'C:\\Users\\u' }, platform: 'win32', ...disk([winManaged, winSys]) }).path,
+    winManaged,
+  );
 });
 
 test('声明的位置同样不进这一轮的目录', () => {
   const home = 'C:\\data\\tasks\\t1\\repo';
   const lookup = locate('claude', { env: { PATH: '', USERPROFILE: home }, platform: 'win32', exclude: ['C:\\data\\tasks'], ...disk([`${home}\\.local\\bin\\claude.exe`]) });
   assert.equal(lookup.path, undefined);
+
+  // POSIX PATH and symlink canonicalization also refuse executables inside excluded task directories.
+  const posixFiles = ['/data/tasks/t1/repo/bin/claude', '/usr/local/bin/claude', '/opt/link/claude'];
+  const posixFake = disk(posixFiles, posix);
+  const directExcluded = locate('claude', {
+    env: { PATH: '/data/tasks/t1/repo/bin:/usr/local/bin', HOME: '/home/o' },
+    platform: 'linux',
+    exclude: ['/data/tasks'],
+    ...posixFake,
+  });
+  assert.equal(directExcluded.path, '/usr/local/bin/claude');
+  const symlinkExcluded = locate('claude', {
+    env: { PATH: '/opt/link:/usr/local/bin', HOME: '/home/o' },
+    platform: 'linux',
+    exclude: ['/data/tasks'],
+    ...posixFake,
+    realpath: (p) => (p === '/opt/link/claude' ? '/data/tasks/t1/repo/bin/claude' : p),
+  });
+  assert.equal(symlinkExcluded.path, '/usr/local/bin/claude');
 });
 
-test('查找用的环境：Windows 就是客户端自己的；登录 shell 打印的东西只认标记之后的那份', async () => {
-  const own = { PATH: 'C:\\bin' };
-  assert.equal((await readLookupEnv({ platform: 'win32', inherited: own })).env, own);
+test('查找用的环境：Windows 会合并注册表系统/用户 PATH；登录 shell 打印的东西只认标记之后的那份', async () => {
+  const own = { Path: 'C:\\bin', APPDATA: 'C:\\Users\\u\\AppData\\Roaming' };
+  assert.equal((await readLookupEnv({ platform: 'win32', inherited: own, registry: () => undefined })).env, own);
+  const reg: RegistryQuery = (args) => {
+    if (args[1]?.startsWith('HKLM\\')) return '\r\nHKEY_LOCAL_MACHINE\\...\r\n    Path    REG_EXPAND_SZ    C:\\bin\\;C:\\Program Files\\nodejs\r\n';
+    if (args[1]?.startsWith('HKCU\\')) return '\r\nHKEY_CURRENT_USER\\Environment\r\n    Path    REG_EXPAND_SZ    %APPDATA%\\npm;C:\\Program Files\\nodejs\r\n';
+    return undefined;
+  };
+  const merged = await readLookupEnv({ platform: 'win32', inherited: own, registry: reg });
+  assert.equal(merged.problem, undefined);
+  assert.equal(merged.env['Path'], 'C:\\bin;C:\\Program Files\\nodejs;C:\\Users\\u\\AppData\\Roaming\\npm');
   const printed = `profile says hi\n\u0000TYCHO_LOOKUP_ENV\u0000${JSON.stringify({ PATH: '/opt/tools/bin:/usr/bin', N: 3 })}`;
   assert.deepEqual(parseLookupEnv(printed), { PATH: '/opt/tools/bin:/usr/bin' });
   assert.equal(parseLookupEnv('no marker at all'), undefined);

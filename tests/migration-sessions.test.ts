@@ -132,11 +132,11 @@ for (const point of ['none', 'before', 'after'] as const) {
 
     // The rulings: each a proposal of the migration, its record the evidence, gated as any other.
     assert.equal(old.read(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'decision'`).length, 0, '旧表不留');
-    const proposals = old.read<{ id: string; source: string; request_id: string; change_json: string; gate_task_id: string | null }>(`SELECT id, source, request_id, change_json, gate_task_id FROM knowledge_proposal ORDER BY request_id`);
+    const proposals = old.read<{ id: string; source: string; request_id: string; change_json: string; state: string; gate_task_id: string | null }>(`SELECT id, source, request_id, change_json, state, gate_task_id FROM knowledge_proposal ORDER BY request_id`);
     assert.deepEqual(proposals.map(({ source, request_id }) => [source, request_id]), [['migration', 'd1'], ['migration', 'd2']]);
     const outputs = proposals.map(({ change_json }) => (JSON.parse(change_json) as { outputs: { body: string; project_ids: string[] | null; loading: string }[] }).outputs[0]!);
     assert.deepEqual(outputs.map(({ body, project_ids, loading }) => [body, project_ids, loading]), [['周五不发版', ['p1'], 'resident'], ['先量再改', null, 'resident']]);
-    assert.ok(proposals.every(({ gate_task_id }) => gate_task_id !== null), '走正常的把关');
+    assert.ok(proposals.every(({ state, gate_task_id }) => gate_task_id !== null || state === 'awaiting_owner' || state === 'published'), '走把关、等主人点头或自动生效');
     const evidence = old.read<{ source: string; ref: string; excerpt: string; verified: number }>(`SELECT source, ref, excerpt, verified FROM knowledge_evidence ORDER BY ref`);
     assert.deepEqual(evidence.map(({ source, ref, excerpt, verified }) => [source, ref, excerpt, verified]), [['record', 'd1', '周五不发版', 1], ['record', 'd2', '先量再改', 1]]);
     // Opened again: nothing made twice.

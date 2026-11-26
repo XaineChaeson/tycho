@@ -4,11 +4,12 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { resolveExecutorUpdaterPlan, runExecutorUpdate } from '../node/executor-updater.ts';
+import { inferNpmPrefix, resolveExecutorUpdaterPlan, runExecutorUpdate } from '../node/executor-updater.ts';
 import { createExecutorUpdates } from '../service/executor-updates.ts';
 import {
   highestSemver,
   inMaintenanceWindow,
+  isLikelyManualUpdate,
   isVersionBehind,
   normalizeExecutorAutoUpdatePolicy,
 } from '../shared/executor-updates.ts';
@@ -191,4 +192,172 @@ test('host executorUpdates queues while busy, updates when idle, ingests fresh r
   assert.deepEqual(notices, ['dev-1:codex:codex-cli 0.165.0->codex-cli 0.167.1']);
 
   manager.stop();
+});
+
+test('closed-loop npm updater infers writable wrapper prefix in-place and falls back to ~/.tycho/cli on read-only prefix or EACCES (243)', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'tycho-closed-loop-'));
+  try {
+    // 1. Wrapper script (/usr/local/bin/codex) pointing to user-writable ~/.local/lib/node_modules -> updates in-place with --prefix
+    const wrapperPath = join(fakeHome, 'codex-wrapper');
+    const userLocalPrefix = '/home/lighthouse/.local';
+    writeFileSync(
+      wrapperPath,
+      `#!/bin/sh\nexec /home/lighthouse/.tycho/app/node/bin/node ${userLocalPrefix}/lib/node_modules/@openai/codex/bin/codex.js "$@"\n`,
+      'utf8',
+    );
+    assert.equal(inferNpmPrefix(wrapperPath, 'linux'), userLocalPrefix);
+
+    const calls1: Array<{ argv: string[]; env?: Record<string, string> }> = [];
+    const res1 = await runExecutorUpdate({
+      executor: 'codex',
+      installedPath: wrapperPath,
+      platform: 'linux',
+      env: { HOME: '/home/lighthouse' },
+      fs: {
+        existsSync: (p) => String(p).startsWith(userLocalPrefix),
+        isWritable: (dir) => dir.startsWith(userLocalPrefix),
+      },
+      run: async (argv, _ms, extraEnv) => {
+        calls1.push({ argv, env: extraEnv });
+        return { stdout: 'added 1 package', stderr: '', code: 0 };
+      },
+    });
+    assert.equal(res1.ok, true);
+    assert.equal(res1.method, 'npm-global');
+    assert.equal(calls1.length, 1);
+    const pIdx1 = calls1[0]!.argv.indexOf('--prefix');
+    assert.ok(pIdx1 > 0);
+    assert.equal(calls1[0]!.argv[pIdx1 + 1], userLocalPrefix);
+    assert.ok(calls1[0]!.env?.npm_config_logs_dir, 'ephemeral npm logs dir is set to avoid root-owned ~/.npm/_logs');
+
+    // 2. Read-only system prefix (/usr/local) -> directly targets ~/.tycho/cli without touching system or .npmrc
+    const madeDirs: string[] = [];
+    const calls2: string[][] = [];
+    const res2 = await runExecutorUpdate({
+      executor: 'codex',
+      installedPath: '/usr/local/bin/codex',
+      platform: 'linux',
+      env: { HOME: '/home/xaine' },
+      fs: {
+        realpathSync: () => '/usr/local/lib/node_modules/@openai/codex/bin/codex.js',
+        existsSync: (p) => String(p).startsWith('/usr/local'),
+        isWritable: () => false,
+        mkdirSync: (d) => madeDirs.push(d),
+      },
+      run: async (argv) => {
+        calls2.push(argv);
+        return { stdout: 'installed in managed prefix', stderr: '', code: 0 };
+      },
+    });
+    assert.equal(res2.ok, true);
+    assert.equal(res2.method, 'npm-tycho-local');
+    assert.deepEqual(madeDirs, ['/home/xaine/.tycho/cli']);
+    assert.equal(calls2.length, 1);
+    assert.equal(calls2[0]![calls2[0]!.indexOf('--prefix') + 1], '/home/xaine/.tycho/cli');
+
+    // 3. Unknown prefix hitting exit code 243 (EACCES) -> automatically retries into ~/.tycho/cli
+    const calls3: string[][] = [];
+    const res3 = await runExecutorUpdate({
+      executor: 'codex',
+      installedPath: undefined,
+      platform: 'linux',
+      env: { HOME: '/home/xaine' },
+      fs: { mkdirSync: () => {} },
+      run: async (argv) => {
+        calls3.push(argv);
+        if (!argv.includes('--prefix')) return { stdout: '', stderr: 'npm error EACCES: permission denied', code: 243 };
+        return { stdout: 'ok', stderr: '', code: 0 };
+      },
+    });
+    assert.equal(res3.ok, true);
+    assert.equal(res3.method, 'npm-tycho-local');
+    assert.equal(calls3.length, 2);
+    assert.equal(calls3[1]![calls3[1]!.indexOf('--prefix') + 1], '/home/xaine/.tycho/cli');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('unsupported updater results (desktop-bundled dsh) record state=unsupported rather than failed and skip fleet batch retries', async (t) => {
+  assert.equal(isLikelyManualUpdate('dsh', 'D:\\software\\dsh\\resources\\runtime\\cli\\bin\\dsh.cmd'), true);
+  assert.equal(isLikelyManualUpdate('dsh', 'C:\\Users\\u\\AppData\\Roaming\\npm\\dsh.cmd'), false);
+  assert.equal(isLikelyManualUpdate('codex', '/usr/local/bin/codex'), false);
+
+  const f = fixture(t, {}, false);
+  const manager = createExecutorUpdates({
+    ledger: f.ledger,
+    machines: { list: () => [{ id: 'win-1' } as never] },
+    nodes: {
+      connected: () => true,
+      reportedExecutors: () => ({
+        at: '2026-11-27T01:00:00.000Z',
+        executors: [{ executor: 'dsh', installed: true, version: '0.2.2-rc.5', logged_in: null, path: 'D:\\software\\dsh\\resources\\runtime\\cli\\bin\\dsh.cmd' }],
+      }),
+      reportedRuns: () => [],
+      send: async () => ({
+        ok: false,
+        executor: 'dsh',
+        method: 'unsupported',
+        before_version: '0.2.2-rc.5',
+        after_version: '0.2.2-rc.5',
+        updated: false,
+        error: 'dsh 在本机未检测到标准包管理器更新方式',
+      } satisfies NodeUpdateExecutorResult),
+      noteExecutors: (_m, raw) => raw as NodeExecutorReport,
+    },
+  });
+
+  manager.triggerUpdate({ executor: 'dsh', machineIds: ['win-1'], trigger: 'manual' });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(manager.status().active_by_key['win-1/dsh']?.state, 'unsupported');
+
+  // Subsequent fleet-wide trigger skips already-unsupported machines cleanly.
+  const second = manager.triggerUpdate({ executor: 'dsh', trigger: 'manual' });
+  assert.equal(second.length, 0);
+  manager.stop();
+});
+
+test('runExecutorUpdate retries direct connection when proxied npm stalls and surfaces Claude-Data hint on failure', async () => {
+  const attempts: { argv: string[]; timeoutMs: number; env?: Record<string, string> }[] = [];
+  const res = await runExecutorUpdate({
+    executor: 'codex',
+    installedPath: '/home/lighthouse/.local/bin/codex',
+    platform: 'linux',
+    env: {
+      HOME: '/home/lighthouse',
+      PATH: '/usr/local/bin:/usr/bin:/bin',
+      HTTP_PROXY: 'http://127.0.0.1:7890',
+      HTTPS_PROXY: 'http://127.0.0.1:7890',
+      NODE_USE_ENV_PROXY: '1',
+    },
+    fs: {
+      realpathSync: () => '/home/lighthouse/.local/lib/node_modules/@openai/codex/bin/codex.js',
+      existsSync: () => true,
+      isWritable: () => true,
+    },
+    run: async (argv, timeoutMs, extraEnv) => {
+      attempts.push({ argv, timeoutMs, env: extraEnv });
+      if (attempts.length === 1) {
+        return { stdout: '', stderr: '', code: null, failure: 'npm install 超过 90000 毫秒没有回答' };
+      }
+      return { stdout: 'changed 2 packages in 11s', stderr: '', code: 0 };
+    },
+  });
+  assert.equal(res.ok, true);
+  assert.equal(attempts.length, 2);
+  assert.equal(attempts[0]!.timeoutMs, 90_000);
+  assert.equal(attempts[0]!.env?.NODE_USE_ENV_PROXY, '');
+  assert.equal(attempts[1]!.env?.HTTP_PROXY, '');
+  assert.equal(attempts[1]!.env?.HTTPS_PROXY, '');
+  assert.equal(attempts[1]!.env?.NO_PROXY, '*');
+
+  const claudeFail = await runExecutorUpdate({
+    executor: 'claude',
+    installedPath: 'C:\\Users\\Xaine\\AppData\\Local\\Claude-Data\\claude_abc\\claude-code\\2.1.321\\claude.exe',
+    platform: 'win32',
+    env: { USERPROFILE: 'C:\\Users\\Xaine' },
+    run: async () => ({ stdout: 'Updating...', stderr: '', code: null, failure: 'claude update 超过 300000 毫秒没有回答' }),
+  });
+  assert.equal(claudeFail.ok, false);
+  assert.match(claudeFail.error ?? '', /Claude-Data/);
 });

@@ -476,9 +476,10 @@ export const dshAdapter: Adapter = {
   listModels: () => ({
     kind: 'command',
     argv: ['dsh', '--profile', PROFILE, '--dump-config'],
-    parse: (stdout) => {
+    extraArgv: ['dsh', '--profile', PROFILE, '--dump-config-schema'],
+    parse: (stdout, schemaStdout) => {
       const fromDump = modelsInDump(stdout);
-      const local = discoverLocalDshRoutesAndModels(stdout);
+      const local = discoverLocalDshRoutesAndModels(stdout, { schemaJson: schemaStdout });
       const merged: ModelInfo[] = [...fromDump];
       for (const model of local.models) {
         const existing = merged.find((each) => each.id === model.id);

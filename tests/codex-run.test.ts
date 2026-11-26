@@ -46,8 +46,7 @@ test('the service starts a Codex login on its tier content, and settles what it 
   service.ledger.updateTask(task.id, { goal: '再来一轮' }, { actor: 'test' });
   service.ledger.resumeTask(task.id, { actor: 'test' });
   const next = await until(() => runsOf(service, task)[1], '第二轮');
-  assert.equal(snapshotOf(next).session_ref, undefined, '§8：Codex 不续接');
-  assert.match(JSON.stringify(snapshotOf(next).history), /好了/, '不续接时靠 history 带上一轮回执');
+  assert.equal(snapshotOf(next).session_ref, '01a1a679-2a95-76d2-ab19-b7b85e95871b', 'Codex 支持原生续接，下一轮沿用上一轮会话');
 });
 
 test('a account changed to Codex still settles its old Claude Run as Claude, from the snapshot', options, async (t) => {

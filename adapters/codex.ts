@@ -4,7 +4,7 @@ import type { ResultLimits, ResultReader } from './result-stream.ts';
 import { checkTierText, codexLines, codexSettings } from './tier.ts';
 import { codexEmailIdentity, codexSecretStrings, decodeCodexOAuthLease, isCodexOAuthLease, isCodexOAuthSecret, materializeCodexWorkerHome } from './codex-auth.ts';
 import { readCommand } from './shell.ts';
-import type { Adapter, DiagnosticLevel, FileChange, ModelInfo, NormalizedEvent, QuotaReading, QuotaStep, QuotaWindow, Reading, ReadingError, Tier, ToolCall, Turn, Usage } from './types.ts';
+import type { Adapter, DiagnosticLevel, FileChange, InstallPlace, ModelInfo, NormalizedEvent, QuotaReading, QuotaStep, QuotaWindow, Reading, ReadingError, Tier, ToolCall, Turn, Usage } from './types.ts';
 import { addUsage } from './usage.ts';
 import { KEY_VALUE_LINES } from '../shared/tier-form.ts';
 
@@ -105,12 +105,13 @@ export function parseCodexModels(stdout: string): ModelInfo[] {
     const id = model?.slug;
     if (!model || typeof id !== 'string' || id === '') return [];
     const name = typeof model.display_name === 'string' && model.display_name !== '' ? model.display_name : undefined;
+    const hasEffortArray = Array.isArray(model.supported_reasoning_levels);
     const efforts = effortsOf(model.supported_reasoning_levels);
     const fallback = model.default_reasoning_level;
     return [{
       id,
       ...(name === undefined ? {} : { name }),
-      ...(efforts.length === 0 ? {} : { efforts }),
+      ...(hasEffortArray ? { efforts } : {}),
       ...(typeof fallback === 'string' && fallback !== '' ? { defaultEffort: fallback } : {}),
       ...(model.visibility === 'hide' ? { hidden: true } : {}),
     }];
@@ -381,6 +382,21 @@ function createCodexResultReader(limits?: ResultLimits): ResultReader {
   }, limits);
 }
 
+const INSTALL_PLACES: readonly InstallPlace[] = [
+  { kind: 'under', platforms: ['win32'], variable: 'APPDATA', path: ['npm', 'codex.cmd'] },
+  { kind: 'under', platforms: ['win32'], variable: 'APPDATA', path: ['npm', 'codex.exe'] },
+  { kind: 'under', platforms: ['win32'], variable: 'LOCALAPPDATA', path: ['pnpm', 'codex.cmd'] },
+  { kind: 'under', platforms: ['win32'], variable: 'USERPROFILE', path: ['.local', 'bin', 'codex.exe'] },
+  { kind: 'under', platforms: ['win32'], variable: 'USERPROFILE', path: ['.local', 'bin', 'codex.cmd'] },
+  { kind: 'under', platforms: ['win32'], variable: 'USERPROFILE', path: ['.volta', 'bin', 'codex.exe'] },
+  { kind: 'under', platforms: ['win32'], variable: 'USERPROFILE', path: ['scoop', 'shims', 'codex.cmd'] },
+  { kind: 'under', platforms: ['win32'], variable: 'USERPROFILE', path: ['.cargo', 'bin', 'codex.exe'] },
+  { kind: 'under', platforms: ['darwin', 'linux'], variable: 'HOME', path: ['.local', 'bin', 'codex'] },
+  { kind: 'under', platforms: ['darwin', 'linux'], variable: 'HOME', path: ['.npm-global', 'bin', 'codex'] },
+  { kind: 'under', platforms: ['darwin', 'linux'], variable: 'HOME', path: ['.volta', 'bin', 'codex'] },
+  { kind: 'under', platforms: ['darwin', 'linux'], variable: 'HOME', path: ['.cargo', 'bin', 'codex'] },
+];
+
 export const codexAdapter: Adapter = {
   canRoute: true,
   // An API key is a login tycho can keep: `codex exec` takes it from this variable of its
@@ -407,6 +423,7 @@ export const codexAdapter: Adapter = {
   accountLogin: ['device', 'key', 'machine'],
   // Recorded (tests/fixtures/login-status): `codex --version` prints its version on stdout.
   probe: { command: 'codex', version: ['--version'] },
+  installs: INSTALL_PLACES,
   // Recorded (tests/fixtures/login-status): `codex login status` answers on its exit code —
   // 0 signed in — and prints its wording on stderr, where nothing reads it. The expired-token
   // case is not recorded.

@@ -10,3 +10,11 @@ const merge = extendTailwindMerge({
 export function cn(...inputs: ClassValue[]): string {
   return merge(clsx(inputs));
 }
+
+export function isTychoDesktop(): boolean {
+  return typeof window !== 'undefined' && (window as { __TYCHO_DESKTOP__?: unknown }).__TYCHO_DESKTOP__ === true;
+}
+
+export function openExternalUrl(url: string): void {
+  window.open(url, '_blank', 'noopener,noreferrer');
+}

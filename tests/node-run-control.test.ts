@@ -77,6 +77,8 @@ test('机器被撤销：下一次 poll 就是 401，客户端停下', options, a
 test('协议版本不符：如实说版本不符，记在这台机器上，不落进“失联超过宽限期”', options, async (t) => {
   const b = await bench(t, {}, {}, HELD);
   await untilConnected(b);
+  // Stop the healthy background test client so its next poll cannot clear the recorded protocol refusal before we assert it.
+  await b.stopClients();
   // What an older client sends: a version this host does not speak.
   const answer = await fetch(`${b.base}/api/node/poll`, {
     method: 'POST',

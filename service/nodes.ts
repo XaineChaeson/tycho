@@ -166,7 +166,7 @@ interface NodeLedger {
   signedInAgain(loginId: string, probedAt: string): void;
   // A login the machine reports signed in, and the owner has not set up here, is written with
   // the tiers its adapter declares — unless the owner removed it in this registration.
-  adoptMachineLogin(machineId: string, executor: string, tiers: Record<string, Tier>, ctx: Ctx): { created: boolean };
+  adoptMachineLogin(machineId: string, executor: string, tiers: Record<string, Tier>, ctx: Ctx, identity?: ExecutorIdentity): { created: boolean };
   // What a machine read of one of its own logins' quota there (docs/design/usage.md §3): the
   // windows it named and the moment it read them, which is what decides whether they are news.
   noteQuota(loginId: string, windows: readonly { window: string; used: number; resetsAt: string | null }[], readAt: string, resultChanged?: boolean): void;
@@ -743,7 +743,7 @@ export function createNodes(options: NodeOptions) {
           continue;
         }
         const tiers = options.ownLoginTiers?.(status.executor);
-        if (tiers !== undefined) options.ledger.adoptMachineLogin(machineId, status.executor, tiers, { actor: 'service' });
+        if (tiers !== undefined) options.ledger.adoptMachineLogin(machineId, status.executor, tiers, { actor: 'service' }, status.identity);
       } catch (err) {
         log(`机器 ${machineId} 报告 ${status.executor} 已登录，没能记下：${String(err)}`);
       }

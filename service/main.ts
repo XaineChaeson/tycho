@@ -8,7 +8,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { ADAPTERS } from '../adapters/all.ts';
 import { compareVersions, versionOf } from '../adapters/version.ts';
 import { codexAccessExpiryMs, codexIdentityFromTokens, decodeCodexOAuthLease } from '../adapters/codex-auth.ts';
-import { codexSettings } from '../adapters/tier.ts';
+import { codexSettings, ownLoginTiersOf } from '../adapters/tier.ts';
 import { claudeAdapter } from '../adapters/claude.ts';
 import { geminiAdapter } from '../adapters/gemini.ts';
 import { geminiBaseUrl } from '../adapters/gemini-provider.ts';
@@ -614,6 +614,7 @@ export async function startService(options: ServiceOptions) {
       barriers: () => ledger.dispatchConditions(),
       endedJoinKeepMs: () => settings.get('node.endedJoinKeepMs'),
       endedJoinMax: () => settings.get('node.endedJoinMax'),
+      ownLoginTiers: (executor) => (Object.hasOwn(adapters, executor) ? ownLoginTiersOf(adapters[executor]!) : undefined),
       log,
     });
     // The host's own version, packed for the machines that follow it (docs/design/nodes.md
@@ -831,7 +832,7 @@ export async function startService(options: ServiceOptions) {
       readReport: (run, ref, range) => readRunReport({ run, ref, dataDir, held: ledger.artifactsOfRun(run.id), readNode: runner.readReportFile, finalMessage: ledger.runReport(run.id), recoverFinal: runner.recoverRunReport, ...range }),
       nodeRelease: { host: programVersion(), reported: (machineId) => nodes.reportedRelease(machineId) },
       serviceManager: nodes.reportedServiceManager,
-      localSkills: (machineId) => nodes.reportedSkills(machineId)?.local_skills ?? [],
+      localSkills: (machineId) => nodes.reportedSkills(machineId)?.local_skills ?? null,
       routerExecutorsFor: (projectId) => [binding(projectId).executor],
       inviteLimits: () => ({
         maxMachines: settings.get('node.inviteMaxMachines'), ttlMs: settings.get('node.inviteTtlMs'), maxTtlMs: SETTINGS['node.inviteTtlMs'].max,

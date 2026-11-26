@@ -17,6 +17,7 @@ import { Input } from '@/components/ui/input';
 import { formOf, loginSettingsBody, newAccountForm, tierEditorOf, tierRefusal, type AccountForm, type TierProblem } from '@/lib/accounts';
 import { api, messageOf, post, put } from '@/lib/api';
 import { accountsQuery, PAGE } from '@/lib/queries';
+import { isTychoDesktop, openExternalUrl } from '@/lib/utils';
 import type { AccountsAndMachines, Machine } from '@/lib/types';
 
 const SIGN_INS = '/api/sign-ins';
@@ -60,6 +61,13 @@ export function MachineSignInSteps({ executor, page, busy, onBack, onDone, fixed
     refetchInterval: (query) => (query.state.data && !signInLive(query.state.data.sign_in.state) ? false : SIGN_IN_POLL_MS),
   });
   const view = signIn === null ? undefined : data?.sign_in;
+  const autoOpenedUrl = useRef<string | null>(null);
+  useEffect(() => {
+    if (view?.state !== 'waiting' || !view.url || !isTychoDesktop()) return;
+    if (autoOpenedUrl.current === view.url) return;
+    autoOpenedUrl.current = view.url;
+    openExternalUrl(view.url);
+  }, [view?.state, view?.url]);
   // What to cancel when the steps go away: the sign-in as last read, while it is under way.
   const live = useRef<SignInView | undefined>(undefined);
   useEffect(() => { live.current = view && signInLive(view.state) ? view : undefined; }, [view]);

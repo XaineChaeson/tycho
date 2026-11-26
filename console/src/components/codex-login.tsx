@@ -16,6 +16,7 @@ import { Dialog, DialogActions, DialogContent } from '@/components/ui/dialog';
 import { accountBody, newAccountForm, tierEditorOf, tierRefusal, type AccountForm, type TierProblem } from '@/lib/accounts';
 import { api, messageOf, post } from '@/lib/api';
 import { accountsQuery, PAGE } from '@/lib/queries';
+import { isTychoDesktop, openExternalUrl } from '@/lib/utils';
 import type { AccountsAndMachines } from '@/lib/types';
 
 const LOGINS = '/api/codex-logins';
@@ -68,6 +69,13 @@ export function CodexLoginSteps({ target, page, seen, onDone, onBack }: {
   });
   const login = id === null ? undefined : data?.login;
   useEffect(() => { seen.current = login; }, [login, seen]);
+  const autoOpenedUrl = useRef<string | null>(null);
+  useEffect(() => {
+    if (login?.state !== 'waiting' || !login.url || !isTychoDesktop()) return;
+    if (autoOpenedUrl.current === login.url) return;
+    autoOpenedUrl.current = login.url;
+    openExternalUrl(login.url);
+  }, [login?.state, login?.url]);
 
   const ready = login?.state === 'signed_in' && login.mode === 'new' && !login.saved && login.duplicate === null && !login.models.refreshing;
   useEffect(() => {

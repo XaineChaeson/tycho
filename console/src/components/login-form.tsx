@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Input, Textarea } from '@/components/ui/input';
 import { Option, Select } from '@/components/ui/select';
 import {
-  blankTier, defaultEffortOf, effortChoices, modelChoices, modelMissing, modelsFor, tierEditorOf,
+  blankTier, defaultEffortOf, effortChoices, effortUnsupported, modelChoices, modelMissing, modelsFor, tierEditorOf,
   type AccountForm, type TierEditor, type TierProblem, type TierRow,
 } from '@/lib/accounts';
 import type { Account, AccountModels, AccountsAndMachines, MachineCheck, MachineLogin, Tier } from '@/lib/types';
@@ -375,6 +375,11 @@ function TierRowEditor({ owner, place, row, decl, editor, models, problem, disab
   // The strengths to offer, and the one the executor uses when the tier names none: both
   // follow the model the row stands on now.
   const efforts = effortChoices(models, values?.model ?? '', editor?.efforts ?? []);
+  const noEffortSupported = effortUnsupported(models, values?.model ?? '');
+  const effortMismatch = Boolean(values?.effort) && (
+    noEffortSupported
+    || (efforts.length > 0 && !efforts.includes(values!.effort))
+  );
   const fallback = defaultEffortOf(models, values?.model ?? '');
   return (
     <div role="group" aria-label={`第 ${place} 个档位`} className={`${TIER_BOX} border-border`}>
@@ -393,8 +398,8 @@ function TierRowEditor({ owner, place, row, decl, editor, models, problem, disab
                 <label key={field} className="grid gap-1">
                   <span className="text-xs text-muted-foreground">{tierText[field]}</span>
                   {field === 'effort' ? (
-                    <Select wrapperClassName="flex" value={values.effort} disabled={disabled} onChange={(change) => set(field, change.target.value)}>
-                      <Option value="">{fallback === undefined ? tierText.effortAny : modelText.defaultEffort(fallback)}</Option>
+                    <Select wrapperClassName="flex" value={values.effort} disabled={disabled || (noEffortSupported && values.effort === '')} onChange={(change) => set(field, change.target.value)}>
+                      <Option value="">{noEffortSupported ? '该模型不支持推理强度' : fallback === undefined ? tierText.effortAny : modelText.defaultEffort(fallback)}</Option>
                       {/* A strength the model does not list is the owner's own: it stays, and is offered back. */}
                       {[...new Set([...efforts, values.effort])].filter((effort) => effort !== '').map((effort) => (
                         <Option key={effort} value={effort}>{effort}</Option>
@@ -409,6 +414,13 @@ function TierRowEditor({ owner, place, row, decl, editor, models, problem, disab
               ))}
             </div>
             {modelMissing(models, values.model) ? <Note className="text-xs text-waiting-foreground">{modelText.missing}</Note> : null}
+            {effortMismatch ? (
+              <Note className="text-xs text-waiting-foreground">
+                {noEffortSupported
+                  ? `当前模型不支持推理强度，建议清空「${values.effort}」改为留空。`
+                  : `推理强度「${values.effort}」不在当前模型已探测的支持列表（${efforts.join(' / ')}）中，派发时可能被执行器拒绝。`}
+              </Note>
+            ) : null}
           </>
         )
       ) : null}

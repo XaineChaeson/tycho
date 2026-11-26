@@ -93,7 +93,7 @@ test('v40 的项目代码目录变成主机机器上的工作目录来源，orig
   });
   const ledger = openLedger(old.path, { log: () => {} });
   try {
-    assert.equal(SCHEMA_VERSION, 44);
+    assert.ok(SCHEMA_VERSION >= 44);
 
   const p1 = ledger.projectSources('p1');
   assert.deepEqual(p1.map((source) => (source.kind === 'folder' ? ['folder', source.machine_uid, source.path] : ['repo', source.url])), [

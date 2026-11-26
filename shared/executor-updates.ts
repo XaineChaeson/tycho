@@ -72,8 +72,27 @@ export function inMaintenanceWindow(policy: Pick<ExecutorAutoUpdatePolicy, 'wind
   return hour >= start || hour < end;
 }
 
-export type ExecutorUpdateState = 'waiting_idle' | 'updating' | 'succeeded' | 'failed';
+export type ExecutorUpdateState = 'waiting_idle' | 'updating' | 'succeeded' | 'unsupported' | 'failed';
 export type ExecutorUpdateTrigger = 'manual' | 'auto';
+
+// Heuristic for whether an installed CLI is managed by an external desktop bundle rather than
+// a standard CLI package manager (used to present a neutral "manual update" cue and avoid
+// failing auto-update runs; users can still configure ~/.tycho/executor-updaters.json).
+export function isLikelyManualUpdate(executor: string, installedPath: string | null | undefined): boolean {
+  if (executor !== 'dsh') return false;
+  if (!installedPath) return true;
+  const p = installedPath.replace(/\\/g, '/').toLowerCase();
+  const npmLike = p.includes('/node_modules/')
+    || p.includes('/appdata/roaming/npm/')
+    || p.includes('/.nvm/')
+    || p.includes('/fnm')
+    || p.includes('/volta/')
+    || p.includes('/npm-global/')
+    || p.includes('/.tycho/cli/')
+    || p.includes('/n/bin/')
+    || p.includes('/nodenv/');
+  return !npmLike;
+}
 
 export interface ExecutorUpdateJobView {
   id: string;

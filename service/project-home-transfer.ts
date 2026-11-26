@@ -121,7 +121,7 @@ function requirePortable(db: Db, projectId: string, materials = false): void {
     ['任务引用了源服务已删除的职能', `SELECT 1 FROM (${roleIds}) requested WHERE NOT EXISTS(SELECT 1 FROM role WHERE role.id = requested.role_id)`],
     ['本机代码目录', "SELECT 1 FROM project, json_each(sources_json) item WHERE project.id = ?1 AND json_extract(item.value, '$.kind') != 'repo'"],
     ['工作绑定了本机代码目录、登录或技能', `SELECT 1 FROM task WHERE id IN (${taskIds}) AND
-      (login_id IS NOT NULL OR prefer_json IS NOT NULL OR skills_json IS NOT NULL OR json_extract(source_json, '$.pinned.kind') = 'folder')`],
+      (login_id IS NOT NULL OR machine_id IS NOT NULL OR prefer_json IS NOT NULL OR skills_json IS NOT NULL OR json_extract(source_json, '$.pinned.kind') = 'folder')`],
     ['需单独迁移的文件证据或技能知识', `SELECT 1 FROM run WHERE id IN (${runIds}) AND
       ((artifacts_json IS NOT NULL AND releases_dropped_at IS NULL)
        OR COALESCE(json_array_length(snapshot_json, '$.knowledge'), 0) > 0

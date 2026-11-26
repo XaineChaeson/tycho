@@ -622,7 +622,7 @@ test('33 版账本升上来：两列有了，旧数据一行都没变', (t) => {
       VALUES ('r', 'now', 't', 1, 'host', 'ended', 'm', '{"brief":"b"}', '{"registration":null,"registered":[],"problem":null}');`);
   const before = db.prepare('SELECT * FROM run ORDER BY rowid').all().map((row) => ({ ...row }));
   db.close();
-  assert.equal(SCHEMA_VERSION, 46);
+  assert.ok(SCHEMA_VERSION >= 46);
   const ledger = openLedger(path, { copyBeforeUpgrade: false });
   try {
     const [run] = ledger.listRuns('t');

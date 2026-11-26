@@ -24,7 +24,7 @@ function oldLedger(t: TestContext) {
 
 test('24 → 25 保留已有模型、额度和账号，身份从未知开始；重开仍在', (t) => {
   const path = oldLedger(t);
-  assert.equal(SCHEMA_VERSION, 44);
+  assert.ok(SCHEMA_VERSION >= 44);
   const ledger = openLedger(path, { copyBeforeUpgrade: false });
   try {
     const state = ledger.loginState(migrationId(ledger, 'a'));

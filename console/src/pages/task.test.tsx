@@ -1362,8 +1362,13 @@ test('the detail column follows the window as it widens and narrows', async () =
 test('how to look at the native session depends on whether the task is stopped and on the executor', async () => {
   const codex = open('#/task/task', site({ ...DETAILED, runs: [ended({ session_ref: 'sess-2', executor: 'codex' })] }));
   await loaded();
-  expect(screen.getByText('可在实例上查阅原生记录。此账号的续接方式未提供。')).toBeInTheDocument();
+  expect(screen.getByText('在实例上 codex exec resume sess-2 查看。人工操作后，请通过插话说明现场变化。')).toBeInTheDocument();
   codex.unmount();
+
+  const custom = open('#/task/task', site({ ...DETAILED, runs: [ended({ session_ref: 'sess-x', executor: 'custom-exec' })] }));
+  await loaded();
+  expect(screen.getByText('可在实例上查阅原生记录。此账号的续接方式未提供。')).toBeInTheDocument();
+  custom.unmount();
 
   open('#/task/task', site({ task: aTask({ state: 'running' }), runs: [aRun({ state: 'running', session_ref: 'sess-3' })] }));
   await loaded();

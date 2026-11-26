@@ -1537,11 +1537,11 @@ export function createRunner(options: RunnerOptions) {
             // (§8.7). The round did not start, and the next dispatch asks after that machine.
             const snapshot = snapshotOf(placed);
             const readOnly = snapshot.access?.permission === 'read';
-            const movable = snapshot.source?.kind !== 'folder' && sourceRound(placed) === undefined;
+            const rehostTask = ledger.getTask(placed.task_id);
+            const movable = snapshot.source?.kind !== 'folder' && rehostTask?.machine_id === null && sourceRound(placed) === undefined;
             const inputsHere = (machine: Machine) => machineInputsHere(snapshot, adapters,
               snapshot.executor === undefined ? null : options.reported?.(machine.id, snapshot.executor) ?? null,
               options.reportedEntry?.(machine.id), options.externalEntryEnabled?.() ?? false);
-            const rehostTask = ledger.getTask(placed.task_id);
             const preparedKnowledge = revisionSet(snapshot.knowledge ?? []);
             const fitting = movable && target && rehostTask && availableTo(target, placed)
               .filter((each) => (options.outputReady?.(each.id) ?? true)

@@ -82,7 +82,7 @@ test('v46 -> v47 migration adds project.dispatch_order_json and verifies snapsho
 
   const upgraded = openLedger(path, { copyBeforeUpgrade: false });
   try {
-    assert.equal(SCHEMA_VERSION, 47);
+    assert.equal(SCHEMA_VERSION, 48);
     const pid = upgraded.createProject({ name: '迁移项目' }, USER);
     assert.equal(upgraded.projectDispatchOrder(pid), null);
     upgraded.setProjectDispatchOrder(pid, { execute: ['x1', 'x1', 'x2'] }, USER);
@@ -92,11 +92,11 @@ test('v46 -> v47 migration adds project.dispatch_order_json and verifies snapsho
     upgraded.close();
   }
 
-  const v47Snap = join(f.dir, 'snap-v47.db');
+  const v48Snap = join(f.dir, 'snap-v48.db');
   const c2 = new DatabaseSync(path);
-  c2.prepare('VACUUM INTO ?').run(v47Snap);
+  c2.prepare('VACUUM INTO ?').run(v48Snap);
   c2.close();
-  assert.equal(verifySnapshot(v47Snap).get('schema_version'), '47');
+  assert.equal(verifySnapshot(v48Snap).get('schema_version'), '48');
 });
 
 test('per-project tier priority override falls back to global default and scrubs deleted logins', (t) => {

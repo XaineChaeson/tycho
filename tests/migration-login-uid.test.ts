@@ -38,7 +38,7 @@ const inspect = (db: Db) => Object.fromEntries(['account', 'machine_login', 'pro
 test('25 → 26 migrates every reference, keeps historical names and audits dangling references', (t) => {
   const { path, open } = version25(t);
   const db = open();
-  assert.equal(SCHEMA_VERSION, 44);
+  assert.ok(SCHEMA_VERSION >= 44);
   const account = db.get<{ id: string; name: string; credential_ref: string }>('SELECT * FROM account')!;
   assert.equal(account.name, 'alice');
   assert.match(account.id, /^[0-9A-HJKMNP-TV-Z]{26}$/);

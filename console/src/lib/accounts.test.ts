@@ -17,7 +17,7 @@ import { expect, test } from 'vitest';
 import type { TierFormSpec } from '@shared/tier-form.ts';
 import { modelText, tierText } from '@shared/labels.ts';
 import {
-  accountBody, loginSettingsBody, blankTier, checkFine, checkLine, defaultEffortOf, effortChoices, formOf, modelChoices, modelMissing, modelsFor,
+  accountBody, loginSettingsBody, blankTier, checkFine, checkLine, defaultEffortOf, effortChoices, effortUnsupported, formOf, modelChoices, modelMissing, modelsFor,
   modelsLine, newAccountForm, tierEditorOf, tierRefusal, tierRowsOf,
 } from './accounts.ts';
 import type { Account, AccountModels } from './types.ts';
@@ -211,10 +211,18 @@ test('what the form offers for a model and a strength follows the account\'s own
   expect(modelMissing(undefined, '<别名>')).toBe(false);
   expect(modelMissing({ list: [], at: null, refreshing: false }, '<别名>')).toBe(false);
 
-  // The strengths follow the model: its own entry when it has one, the executor's own
+  // The strengths follow the model: its own entry when it has one (including explicit `[]` for
+  // non-reasoning models — never falling back to hardcoded executor defaults), the executor's own
   // declaration when the list says nothing, and the declaration again for a model the list
   // does not have.
-  expect(effortChoices(models, '<模型甲>', ['low', 'max'])).toEqual(['low', 'high']);
+  const modelsWithNonReasoning: AccountModels = {
+    ...models,
+    list: [...models.list, { id: '<非推理模型>', efforts: [] }],
+  };
+  expect(effortChoices(modelsWithNonReasoning, '<模型甲>', ['low', 'max'])).toEqual(['low', 'high']);
+  expect(effortChoices(modelsWithNonReasoning, '<非推理模型>', ['low', 'max'])).toEqual([]);
+  expect(effortUnsupported(modelsWithNonReasoning, '<非推理模型>')).toBe(true);
+  expect(effortUnsupported(modelsWithNonReasoning, '<模型甲>')).toBe(false);
   expect(effortChoices(models, '<没说强度的>', ['low', 'max'])).toEqual(['low', 'max']);
   expect(effortChoices(models, '<别名>', ['low', 'max'])).toEqual(['low', 'max']);
   expect(effortChoices(undefined, '<模型甲>', ['low', 'max'])).toEqual(['low', 'max']);

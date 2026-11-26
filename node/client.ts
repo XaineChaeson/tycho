@@ -577,8 +577,7 @@ export function createClient(options: ClientOptions) {
     localSkillsAt = nowMs;
     try {
       const scanned = scanLocalNonMirrorSkills(resolvedSkillDirs());
-      const { local_skills: _prev, ...rest } = skillsReport;
-      skillsReport = scanned.length > 0 ? { ...rest, local_skills: scanned } : rest;
+      skillsReport = { ...skillsReport, local_skills: scanned };
     } catch {
       // Never fail a poll because a local skill directory could not be scanned.
     }
@@ -611,7 +610,7 @@ export function createClient(options: ClientOptions) {
       if (manifest.items.length === 0 && !existsSync(mirrorDir)) {
         const scanned = scanLocalNonMirrorSkills({ mirrorDir, linkDirs, skipLinkDirs });
         localSkillsAt = Date.now();
-        skillsReport = { digest: manifest.digest, synced: [], ...(scanned.length > 0 ? { local_skills: scanned } : {}) };
+        skillsReport = { digest: manifest.digest, synced: [], local_skills: scanned };
         return;
       }
       try {
@@ -758,7 +757,18 @@ export function createClient(options: ClientOptions) {
     }
   }
 
+  const updatingExecutors = new Set<string>();
+
   async function start(command: NodeStart): Promise<NodeStartResult> {
+    if (updatingExecutors.size > 0) {
+      return {
+        code: 2,
+        confirmed: false,
+        pid: null,
+        started_at: null,
+        error: `本机正在更新执行器（${[...updatingExecutors].join(', ')}），暂不启动新轮次`,
+      };
+    }
     const box = boxOf(dataDir, command.run_dir);
     if (!existsSync(join(box.runDir, 'snapshot', 'brief.md'))) {
       return { code: 2, confirmed: false, pid: null, started_at: null, error: '这一轮的快照还没有落盘，不启动' };
@@ -957,9 +967,9 @@ export function createClient(options: ClientOptions) {
         if (!executor) throw new Error('缺少要更新的执行器名称');
         const beforeStatus = executors?.executors.find((each) => each.executor === executor) ?? null;
         const beforeVersion = beforeStatus?.version ?? null;
-        // Idle-safe gate: never upgrade an executor CLI while any Worker round or native sign-in is active.
+        // Idle-safe gate: never upgrade an executor CLI while any Worker round, sign-in, or concurrent update is active.
         const busyState = await releaseBusy();
-        if (busyState.runs > 0 || busyState.signIns > 0) {
+        if (busyState.runs > 0 || busyState.signIns > 0 || updatingExecutors.has(executor)) {
           return {
             ok: false,
             executor,
@@ -968,47 +978,54 @@ export function createClient(options: ClientOptions) {
             after_version: beforeVersion,
             updated: false,
             busy: true,
-            error: busyState.runs > 0
-              ? `本机有 ${busyState.runs} 个任务正在运行，等待空闲后再更新`
-              : '本机有登录流程正在进行，等待结束后再更新',
+            error: updatingExecutors.has(executor)
+              ? `执行器 ${executor} 已有正在进行的更新，请等待完成`
+              : busyState.runs > 0
+                ? `本机有 ${busyState.runs} 个任务正在运行，等待空闲后再更新`
+                : '本机有登录流程正在进行，等待结束后再更新',
           } satisfies NodeUpdateExecutorResult;
         }
-        const read = await refreshLookup();
-        const outcome = await runExecutorUpdate({
-          executor,
-          installedPath: beforeStatus?.path,
-          ...(typeof command.timeout_ms === 'number' && Number.isFinite(command.timeout_ms) ? { timeoutMs: command.timeout_ms } : {}),
-          env: read.env,
-          exclude: roundDirs(dataDir),
-          signal: leaving.signal,
-          ...(options.executors?.run === undefined ? {} : { run: options.executors.run }),
-        });
-        if (!outcome.ok) {
+        updatingExecutors.add(executor);
+        try {
+          const read = await refreshLookup();
+          const outcome = await runExecutorUpdate({
+            executor,
+            installedPath: beforeStatus?.path,
+            ...(typeof command.timeout_ms === 'number' && Number.isFinite(command.timeout_ms) ? { timeoutMs: command.timeout_ms } : {}),
+            env: read.env,
+            exclude: roundDirs(dataDir),
+            signal: leaving.signal,
+            ...(options.executors?.run === undefined ? {} : { run: options.executors.run }),
+          });
+          if (!outcome.ok) {
+            return {
+              ok: false,
+              executor,
+              method: outcome.method,
+              before_version: beforeVersion,
+              after_version: beforeVersion,
+              updated: false,
+              ...(outcome.error ? { error: outcome.error } : {}),
+              ...(outcome.output ? { output: outcome.output } : {}),
+            } satisfies NodeUpdateExecutorResult;
+          }
+          // Immediately re-probe executors so the host receives the new version and refreshed model catalog.
+          const freshReport = await look();
+          const afterStatus = freshReport.executors.find((each) => each.executor === executor) ?? null;
+          const afterVersion = afterStatus?.version ?? null;
           return {
-            ok: false,
+            ok: true,
             executor,
             method: outcome.method,
             before_version: beforeVersion,
-            after_version: beforeVersion,
-            updated: false,
-            ...(outcome.error ? { error: outcome.error } : {}),
+            after_version: afterVersion,
+            updated: afterVersion !== null && afterVersion !== beforeVersion,
             ...(outcome.output ? { output: outcome.output } : {}),
+            report: freshReport,
           } satisfies NodeUpdateExecutorResult;
+        } finally {
+          updatingExecutors.delete(executor);
         }
-        // Immediately re-probe executors so the host receives the new version and refreshed model catalog.
-        const freshReport = await look();
-        const afterStatus = freshReport.executors.find((each) => each.executor === executor) ?? null;
-        const afterVersion = afterStatus?.version ?? null;
-        return {
-          ok: true,
-          executor,
-          method: outcome.method,
-          before_version: beforeVersion,
-          after_version: afterVersion,
-          updated: afterVersion !== null && afterVersion !== beforeVersion,
-          ...(outcome.output ? { output: outcome.output } : {}),
-          report: freshReport,
-        } satisfies NodeUpdateExecutorResult;
       }
       default: {
         const never: never = command;

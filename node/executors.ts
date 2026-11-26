@@ -712,13 +712,20 @@ async function listModels(query: NonNullable<ExecutorQuestion['models']>, run: C
   const none = (error: string) => ({ models: { list: [], error } });
   if (answer.failure !== undefined || answer.code === null) return none(answer.failure ?? `运行不了 ${asked}`);
   if (answer.code !== 0) return none(`${asked} 退出码 ${answer.code}`);
+  let extraStdout: string | undefined;
+  if (query.extraArgv && query.extraArgv.length > 0) {
+    const extra = await runQuietly(run, query.extraArgv, timeoutMs);
+    if (extra.failure === undefined && extra.code === 0) {
+      extraStdout = extra.stdout.trim() !== '' ? extra.stdout : extra.stderr;
+    }
+  }
   let identity: ExecutorIdentity | undefined;
   try {
     identity = query.identity?.(answer.stdout);
   } catch { /* An optional identity reading failed. */ }
   let models: NonNullable<NodeExecutorStatus['models']>;
   try {
-    const list = query.parse(answer.stdout);
+    const list = query.parse(answer.stdout, extraStdout);
     const problem = list.length === 0 ? '没有列出任何模型' : unfit(list);
     models = problem === undefined ? { list } : { list: [], error: `${asked} ${problem}` };
   } catch {

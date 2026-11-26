@@ -1328,7 +1328,7 @@ function TaskDetails({ data, run, wide, embedded = false, selected, snapshot, so
               one that round ran on (docs/design/roles-and-tiers.md §2). */}
           <p className="wrap-anywhere">{loginLine([
             (run?.login_name ?? task.login_name) ? loginName((run?.login_name ?? task.login_name)!) : ANY_LOGIN_TEXT,
-            run?.machine_id ?? run?.host,
+            run?.machine_id ?? run?.host ?? task.machine_id,
             shown.tier ? `${tierLabel(shown.tier)}${shown.from ? `（${tierSubstituteText(shown.from)}）` : shown.source ? `（${TIER_SOURCE_TEXT[shown.source]}）` : ''}` : null,
           ])}</p>
           {shown.reason ? <Note className="mt-1 text-xs">{`理由：${shown.reason}`}</Note> : null}
@@ -1352,7 +1352,7 @@ function TaskDetails({ data, run, wide, embedded = false, selected, snapshot, so
           ) : task.project_id ? (
             <section aria-label="这件活选定的来源">
               <p className={LABEL}>这件活选定的来源</p>
-              <p className="wrap-anywhere">没有配代码来源。</p>
+              <p className="wrap-anywhere">{task.machine_id ? '使用目标机器默认任务目录（未绑定项目代码来源）。' : '没有配代码来源。'}</p>
             </section>
           ) : null}
           {/* What the round shown was told, apart from what the work is pinned to now — merged when identical. */}
@@ -1404,7 +1404,16 @@ function TaskDetails({ data, run, wide, embedded = false, selected, snapshot, so
                     <p className={LABEL}>{`第 ${index + 1} 轮执行器里的会话`}</p>
                     <p><Copyable value={item.session_ref} /></p>
                     <Note className="mt-1 text-xs">{task.state === 'held' && !active
-                      ? item.executor === 'claude' ? `在实例上 claude --resume ${item.session_ref} 查看。人工操作后，请通过插话说明现场变化。` : '可在实例上查阅原生记录。此账号的续接方式未提供。'
+                      ? (() => {
+                          const cmd = item.executor === 'claude' ? `claude --resume ${item.session_ref}`
+                            : item.executor === 'codex' ? `codex exec resume ${item.session_ref}`
+                            : item.executor === 'gemini' ? `agy --conversation ${item.session_ref}`
+                            : item.executor === 'dsh' ? `dsh --profile headless --session-id ${item.session_ref}`
+                            : null;
+                          return cmd
+                            ? `在实例上 ${cmd} 查看。人工操作后，请通过插话说明现场变化。`
+                            : '可在实例上查阅原生记录。此账号的续接方式未提供。';
+                        })()
                       : '执行期间请在这里查看现场。'}</Note>
                   </>
                 ) : null}

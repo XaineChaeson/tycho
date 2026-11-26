@@ -11,6 +11,7 @@ import {
   EXECUTOR_UPDATE_OUTPUT_MAX_CHARS,
   highestSemver,
   inMaintenanceWindow,
+  isLikelyManualUpdate,
   isVersionBehind,
   jobKey,
   normalizeExecutorAutoUpdatePolicy,
@@ -30,8 +31,8 @@ const UPSTREAM_TTL_MS = 6 * 60 * 60 * 1000; // 6h in-memory TTL
 const UPSTREAM_TIMEOUT_MS = 8_000;
 const IDLE_POLL_MS = 10_000;
 const AUTO_SCHEDULER_TICK_MS = 15 * 60 * 1000; // 15m check cadence
-const UPDATE_COMMAND_TIMEOUT_MS = 210_000;
-const UPDATE_NODE_TIMEOUT_MS = 180_000;
+const UPDATE_COMMAND_TIMEOUT_MS = 330_000;
+const UPDATE_NODE_TIMEOUT_MS = 300_000;
 
 interface UpstreamSource {
   source: string;
@@ -248,14 +249,15 @@ export function createExecutorUpdates({
         nodes.noteExecutors(job.machine_id, raw.report);
       }
       if (!raw.ok) {
+        const unsupported = raw.method === 'unsupported' || raw.method === 'disabled';
         recordJob({
           ...running,
-          state: 'failed',
+          state: unsupported ? 'unsupported' : 'failed',
           method: raw.method || null,
           before_version: raw.before_version ?? running.before_version,
           after_version: raw.after_version ?? running.before_version,
           updated: false,
-          error: raw.error ?? '更新失败',
+          error: raw.error ?? (unsupported ? '该执行器不支持自动更新' : '更新失败'),
           output: trimOutput(raw.output),
           finished_at: isoNow(),
         });
@@ -323,7 +325,7 @@ export function createExecutorUpdates({
     if (!executor) return [];
     const trigger: ExecutorUpdateTrigger = input.trigger ?? 'manual';
     const allMachines = machines.list();
-    const targetIds = input.machineIds && input.machineIds.length > 0
+    const candidateIds = input.machineIds && input.machineIds.length > 0
       ? input.machineIds.filter((id) => allMachines.some((m) => m.id === id))
       : allMachines
         .filter((m) => {
@@ -332,6 +334,13 @@ export function createExecutorUpdates({
           return status?.installed === true;
         })
         .map((m) => m.id);
+    const targetIds = candidateIds.filter((machineId) => {
+      const status = nodes.reportedExecutors(machineId)?.executors.find((e) => e.executor === executor);
+      if (trigger === 'auto' && activeByKey.get(jobKey(machineId, executor))?.state === 'unsupported') return false;
+      if (trigger === 'auto' && isLikelyManualUpdate(executor, status?.path)) return false;
+      if ((!input.machineIds || input.machineIds.length === 0) && activeByKey.get(jobKey(machineId, executor))?.state === 'unsupported') return false;
+      return true;
+    });
 
     const queued: ExecutorUpdateJobView[] = [];
     for (const machineId of targetIds) {

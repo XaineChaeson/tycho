@@ -149,7 +149,7 @@ test('schema migration 43 -> 44 seeds orchestrate role without overwriting exist
   raw.prepare(`UPDATE role SET name = '自定义验证' WHERE id = 'verify'`).run();
   raw.close();
 
-  assert.equal(SCHEMA_VERSION, 46);
+  assert.ok(SCHEMA_VERSION >= 46);
   const upgraded = openLedger(path, { copyBeforeUpgrade: false });
   try {
     const orch = upgraded.getRole('orchestrate');

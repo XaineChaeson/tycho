@@ -68,6 +68,7 @@ function makeTask(overrides: Partial<TaskRow> = {}): TaskRow {
     skills_json: null,
     landing_json: null,
     source_json: null,
+    machine_id: null,
     prefer_json: null,
     priority: 0,
     state: 'held',

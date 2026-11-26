@@ -114,7 +114,7 @@ test('Host Codex device-auth login creates OAuth account, detects duplicates, su
   assert.equal(signedIn.state, 'signed_in');
   assert.equal(signedIn.url, null);
   assert.equal(signedIn.code, null);
-  assert.equal(signedIn.identity.accountLabel, 'owner');
+  assert.equal(signedIn.identity.accountLabel, 'owner@e***.com');
   assert.equal(signedIn.models.list[0]?.id, 'gpt-5.4');
   assert.equal(signedIn.duplicate, null);
   // Ensure view & logs never leak tokens or user code.

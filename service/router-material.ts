@@ -61,6 +61,7 @@ export function routerMaterial(ledger: MaterialLedger, projectId: string, limitB
         id: task.id, title: task.title, state: task.state, reason: task.reason, revision: task.revision,
         parent_id: task.parent_id,
         role_id: task.role_id, tier: task.tier, login_id: loginName(task.login_id),
+        ...(task.machine_id === null ? {} : { machine_id: task.machine_id }),
         ...(reviewOf === null ? {} : { review_of: { task_id: reviewOf.task_id, run_id: reviewOf.run_id } }),
         ...(verdict === null ? {} : { verdict: { result: verdict.result, current: verdict.current } }),
         ...(task.state === 'ready' ? { active_review: ledger.activeReview(task.id)?.id ?? null, accept_blocked: ledger.reviewGate(task.id) } : {}),

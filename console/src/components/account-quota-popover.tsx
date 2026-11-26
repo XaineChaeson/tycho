@@ -9,6 +9,7 @@ import { loginName } from '@shared/logins.ts';
 import { formatTime } from '@shared/time.ts';
 import { latestQuota } from '@shared/usage.ts';
 import { Dot, Mono } from '@/components/bits';
+import { coveredMachineLoginsByAccount } from '@/components/dispatch-slots-panel';
 import { Badge, type BadgeTone } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/menu';
 import { messageOf, post } from '@/lib/api';
@@ -308,10 +309,12 @@ export function collectQuotaLogins(data: AccountsAndMachines | undefined): Quota
   for (const account of data.accounts ?? []) {
     items.push(buildAccountItem(account, groupedUsage, telemetryMap));
   }
+  const covered = coveredMachineLoginsByAccount(data);
   const machineItems: QuotaLoginItem[] = [];
   for (const machine of data.machines ?? []) {
     for (const login of machine.logins ?? []) {
       if (!login.configured || login.id === null) continue;
+      if (covered.has(login.id)) continue;
       machineItems.push(buildMachineLoginItem(machine.id, login, telemetryMap));
     }
   }

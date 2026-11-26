@@ -82,7 +82,7 @@ const version = (path: string): string => {
 test('a machine that never joined goes with its own logins; the one that joined stays, and projects keep restricting', (t) => {
   const path = version23(t);
   const ledger = openLedger(path, { copyBeforeUpgrade: false, log: () => {} });
-  assert.equal(SCHEMA_VERSION, 47);
+  assert.equal(SCHEMA_VERSION, 48);
   assert.equal(ledger.getMachine('cluster-a1'), undefined);
   assert.equal(ledger.getMachineLogin('cluster-a1', 'codex'), undefined);
   assert.equal(ledger.loginState('cluster-a1/codex')?.rest_until ?? null, null, '它学到的状态一起走');

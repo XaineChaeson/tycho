@@ -196,3 +196,49 @@ test('Gemini 支持在添加账号窗口填 GEMINI_API_KEY 建全机通用账号
     },
   });
 });
+
+test('桌面端进入 Codex 等待授权时自动调用 window.open 打开验证页（且同一网址只弹一次）', async () => {
+  const win = window as unknown as { __TYCHO_DESKTOP__?: boolean };
+  const prevDesktop = win.__TYCHO_DESKTOP__;
+  const origOpen = window.open;
+  const opened: Array<[string | URL | undefined, string | undefined, string | undefined]> = [];
+  win.__TYCHO_DESKTOP__ = true;
+  window.open = ((url?: string | URL, target?: string, features?: string) => {
+    opened.push([url, target, features]);
+    return null;
+  }) as typeof window.open;
+  try {
+    const login = view({ id: 'C-desktop', mode: 'new', state: 'waiting', url: DEVICE_URL, code: DEVICE_CODE });
+    const p = open('#/accounts', async (call: Call) => {
+      if (call.method === 'GET' && call.path === LIST) {
+        return {
+          ...ACCOUNTS_PAGE,
+          executors: ['claude', 'codex'],
+          credential_executors: ['claude', 'codex'],
+          account_logins: {
+            ...ACCOUNTS_PAGE.account_logins,
+            codex: [{ way: 'device', available: true }, { way: 'key', available: true }],
+          },
+        };
+      }
+      if (call.method === 'GET' && call.path === '/api/machines') return { machines: MACHINES, invites: [], host_entry: null };
+      if (call.method === 'GET' && call.path === '/api/node/joins') return { protocol: 1, joins: [] };
+      if (call.method === 'POST' && call.path === LOGINS) return { login };
+      if (call.method === 'GET' && call.path.startsWith(`${LOGINS}/`)) return { login };
+      if (call.path.endsWith('/cancel')) return { login: { ...login, state: 'cancelled', ended: true } };
+      return undefined;
+    });
+
+    await screen.findByRole('heading', { level: 1, name: '账号' });
+    await p.user.click(await screen.findByRole('button', { name: '添加账号' }));
+    await p.user.click(within(dialog()).getByRole('radio', { name: /^codex/ }));
+    await p.user.click(within(dialog()).getByRole('button', { name: '开始登录' }));
+    await within(dialog()).findByRole('link', { name: '打开验证页' });
+
+    await waitFor(() => expect(opened).toHaveLength(1));
+    expect(opened[0]).toEqual([DEVICE_URL, '_blank', 'noopener,noreferrer']);
+  } finally {
+    win.__TYCHO_DESKTOP__ = prevDesktop;
+    window.open = origOpen;
+  }
+});

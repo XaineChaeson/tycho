@@ -13,15 +13,17 @@
 //      - agy native binary: runs `agy update`.
 //   3. Clean error guiding the owner to ~/.tycho/executor-updaters.json when the CLI is
 //      managed by an external desktop bundle or unknown installer.
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, dirname, join, posix, win32 } from 'node:path';
 import { EXECUTOR_UPDATE_OUTPUT_MAX_CHARS } from '../shared/executor-updates.ts';
 import type { CommandAnswer, CommandRun } from './executors.ts';
 import { shellRun } from './executors.ts';
+import { managedCliPrefix } from './locate.ts';
 
 export const EXECUTOR_UPDATERS_FILENAME = 'executor-updaters.json';
-export const DEFAULT_EXECUTOR_UPDATE_TIMEOUT_MS = 180_000;
+export const DEFAULT_EXECUTOR_UPDATE_TIMEOUT_MS = 300_000;
+const PROXIED_NPM_FIRST_TRY_TIMEOUT_MS = 90_000;
 
 export interface CustomUpdaterEntry {
   disabled?: boolean;
@@ -107,6 +109,7 @@ function isNpmPath(p: string): boolean {
     || p.includes('/fnm')
     || p.includes('/volta/')
     || p.includes('/npm-global/')
+    || p.includes('/.tycho/cli/')
     || p.includes('/n/bin/')
     || p.includes('/nodenv/')
   );
@@ -175,18 +178,7 @@ export function resolveExecutorUpdaterPlan(
       return { kind: 'run', method: 'claude-builtin', argv: ['claude', 'update'] };
     }
     case 'gemini': {
-      if (p.includes('gemini-cli') || isNpmPath(p)) {
-        if (isPnpmPath(p)) return { kind: 'run', method: 'pnpm-global', argv: ['pnpm', 'add', '-g', '@google/gemini-cli@latest'] };
-        if (isBunPath(p)) return { kind: 'run', method: 'bun-global', argv: ['bun', 'add', '-g', '@google/gemini-cli@latest'] };
-        if (p.includes('gemini')) {
-          return {
-            kind: 'run',
-            method: 'npm-global',
-            argv: ['npm', 'install', '-g', '@google/gemini-cli@latest', '--no-audit', '--no-fund', '--prefer-online'],
-            ephemeralNpmCache: true,
-          };
-        }
-      }
+      // Tycho's gemini adapter drives the Antigravity CLI (`agy`), never `@google/gemini-cli`.
       if (isBrewPath(p)) {
         return { kind: 'run', method: 'brew', argv: ['brew', 'upgrade', 'antigravity'], extraEnv: { HOMEBREW_NO_INSTALL_CLEANUP: '0' } };
       }
@@ -214,6 +206,161 @@ export function resolveExecutorUpdaterPlan(
   }
 }
 
+export interface NpmPrefixFs {
+  existsSync?: typeof existsSync;
+  statSync?: typeof statSync;
+  readFileSync?: typeof readFileSync;
+  realpathSync?: (path: string) => string;
+  isWritable?: (dir: string) => boolean;
+  mkdirSync?: (dir: string) => void;
+}
+
+const MAX_WRAPPER_BYTES = 8_192;
+
+function defaultIsWritable(dir: string): boolean {
+  try {
+    accessSync(dir, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function prefixFromNodeModulesPath(filePath: string, platform: NodeJS.Platform): string | undefined {
+  if (platform === 'win32') {
+    const match = /^([A-Za-z]:[\\/][^"'`\r\n]*?)[\\/]node_modules(?:[\\/]|$)/i.exec(filePath.trim());
+    return match?.[1] ? win32.normalize(match[1]) : undefined;
+  }
+  const match = /^(\/[^"'`\s]*?)\/lib\/node_modules(?:\/|$)/.exec(filePath.trim());
+  return match?.[1] ? posix.normalize(match[1]) : undefined;
+}
+
+// Infer the npm global prefix an installed CLI lives under — following symlinks and small shell/cmd
+// wrapper scripts (e.g. a root-owned `/usr/local/bin/codex` wrapper pointing into `~/.local/lib/node_modules`).
+export function inferNpmPrefix(
+  installedPath: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+  fsDeps: NpmPrefixFs = {},
+): string | undefined {
+  if (!installedPath || installedPath.trim() === '') return undefined;
+  const exists = fsDeps.existsSync ?? existsSync;
+  const stat = fsDeps.statSync ?? statSync;
+  const readFile = fsDeps.readFileSync ?? readFileSync;
+  const resolveReal = fsDeps.realpathSync ?? ((p: string) => realpathSync(p));
+
+  const candidates: string[] = [];
+  try {
+    const st = stat(installedPath);
+    if (st.isFile() && st.size > 0 && st.size <= MAX_WRAPPER_BYTES) {
+      const content = readFile(installedPath, 'utf8');
+      const pattern = platform === 'win32'
+        ? /[A-Za-z]:[\\/][^"'`\r\n]*?[\\/]node_modules[\\/][^"'`\r\n]*/gi
+        : /\/[^"'`\s]*?\/lib\/node_modules\/[^"'`\s]*/g;
+      for (const hit of content.matchAll(pattern)) {
+        candidates.push(hit[0]);
+      }
+    }
+  } catch {
+    // Non-readable or non-existent on fake/test disks; continue with path-based inference.
+  }
+  try {
+    candidates.push(resolveReal(installedPath));
+  } catch {
+    // Fall back to the path as reported.
+  }
+  candidates.push(installedPath);
+
+  for (const candidate of candidates) {
+    const prefix = prefixFromNodeModulesPath(candidate, platform);
+    if (prefix) return prefix;
+  }
+
+  if (platform === 'win32') {
+    const dir = win32.dirname(installedPath);
+    if (dir && dir !== installedPath && exists(win32.join(dir, 'node_modules'))) return dir;
+    return undefined;
+  }
+  const binMatch = /^(\/[^"'`\s]*?)\/bin\/[^/]+$/.exec(installedPath);
+  if (binMatch?.[1] && exists(posix.join(binMatch[1], 'lib', 'node_modules'))) {
+    return posix.normalize(binMatch[1]);
+  }
+  return undefined;
+}
+
+export function isWritableNpmPrefix(
+  prefix: string,
+  platform: NodeJS.Platform = process.platform,
+  fsDeps: NpmPrefixFs = {},
+): boolean {
+  const exists = fsDeps.existsSync ?? existsSync;
+  const writable = fsDeps.isWritable ?? defaultIsWritable;
+  if (platform === 'win32') {
+    const nm = win32.join(prefix, 'node_modules');
+    return exists(nm) ? writable(nm) : writable(prefix);
+  }
+  const libNm = posix.join(prefix, 'lib', 'node_modules');
+  const lib = posix.join(prefix, 'lib');
+  const bin = posix.join(prefix, 'bin');
+  const modulesWritable = exists(libNm) ? writable(libNm) : exists(lib) ? writable(lib) : writable(prefix);
+  const binWritable = exists(bin) ? writable(bin) : true;
+  return modulesWritable && binWritable;
+}
+
+export function isNpmPermissionFailure(answer: Pick<CommandAnswer, 'code' | 'stdout' | 'stderr'>): boolean {
+  if (answer.code === 243) return true;
+  return /\b(EACCES|EPERM|permission denied)\b/i.test(`${answer.stdout}\n${answer.stderr}`);
+}
+
+export function hasProxyEnv(env: NodeJS.ProcessEnv): boolean {
+  return Boolean(
+    env.HTTP_PROXY?.trim()
+    || env.HTTPS_PROXY?.trim()
+    || env.http_proxy?.trim()
+    || env.https_proxy?.trim()
+    || env.ALL_PROXY?.trim()
+    || env.all_proxy?.trim(),
+  );
+}
+
+export function isNetworkOrTimeoutFailure(answer: Pick<CommandAnswer, 'code' | 'failure' | 'stdout' | 'stderr'>): boolean {
+  if (answer.failure && /超过 \d+ 毫秒没有回答|ETIMEDOUT|timed?\s*out/i.test(answer.failure)) return true;
+  if (answer.code === 0) return false;
+  return /\b(ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|ERR_SOCKET_TIMEOUT|EPROTO)\b|socket hang up|network timeout|tunneling socket|proxy|fetch failed/i
+    .test(`${answer.failure ?? ''}\n${answer.stdout}\n${answer.stderr}`);
+}
+
+function directConnectionEnv(): Record<string, string> {
+  return {
+    HTTP_PROXY: '',
+    HTTPS_PROXY: '',
+    http_proxy: '',
+    https_proxy: '',
+    ALL_PROXY: '',
+    all_proxy: '',
+    NO_PROXY: '*',
+    no_proxy: '*',
+    NODE_USE_ENV_PROXY: '',
+  };
+}
+
+function prependRuntimeNodeToPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Record<string, string> {
+  if (!process.execPath) return {};
+  const nodeDir = dirname(process.execPath);
+  if (!nodeDir) return {};
+  const pathKey = platform === 'win32'
+    ? (Object.keys(env).find((k) => k.toLowerCase() === 'path') ?? 'PATH')
+    : 'PATH';
+  const current = env[pathKey] ?? '';
+  if (!current) return {};
+  const sep = platform === 'win32' ? ';' : delimiter;
+  const parts = current.split(sep).filter(Boolean);
+  const existsAlready = parts.some((entry) =>
+    platform === 'win32' ? entry.toLowerCase() === nodeDir.toLowerCase() : entry === nodeDir,
+  );
+  if (existsAlready) return {};
+  return { [pathKey]: `${nodeDir}${sep}${current}` };
+}
+
 export function trimOutputTail(stdout: string, stderr: string, maxChars = EXECUTOR_UPDATE_OUTPUT_MAX_CHARS): string {
   const combined = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
   if (combined.length <= maxChars) return combined;
@@ -229,6 +376,7 @@ export interface RunExecutorUpdateOptions {
   exclude?: string[];
   signal?: AbortSignal;
   run?: CommandRun;
+  fs?: NpmPrefixFs;
 }
 
 export interface RunExecutorUpdateOutcome {
@@ -238,21 +386,41 @@ export interface RunExecutorUpdateOutcome {
   output?: string;
 }
 
-// Run the resolved updater command. For npm global installs, an ephemeral `--cache` temp dir
-// is created and removed unconditionally in `finally`, guaranteeing zero cache buildup on disk.
+// Run the resolved updater command. For npm global installs, an ephemeral `--cache` and logs dir
+// are created and removed unconditionally in `finally`, guaranteeing zero cache buildup on disk.
+// When the CLI lives in a user-writable prefix, `--prefix` updates it in-place without requiring
+// global `.npmrc` edits; when the system prefix is read-only (e.g. root-owned `/usr/local` causing
+// EACCES / exit 243), Tycho automatically installs into its managed user-local prefix `~/.tycho/cli`,
+// which `node/locate.ts` picks up automatically for probes and Workers.
+// When a local proxy stalls or rejects large tarball downloads (e.g. overseas host with a selective
+// proxy), Tycho bounds the proxied attempt and automatically retries once via direct connection.
 export async function runExecutorUpdate(options: RunExecutorUpdateOptions): Promise<RunExecutorUpdateOutcome> {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
+  const fsDeps = options.fs ?? {};
   const plan = resolveExecutorUpdaterPlan(options.executor, options.installedPath, env);
   if (plan.kind === 'disabled') return { ok: false, method: 'disabled', error: plan.reason };
   if (plan.kind === 'unsupported') return { ok: false, method: 'unsupported', error: plan.reason };
 
   const timeoutMs = plan.timeoutMs ?? options.timeoutMs ?? DEFAULT_EXECUTOR_UPDATE_TIMEOUT_MS;
   let ephemeralCacheDir: string | undefined;
-  let argv = [...plan.argv];
+  let baseArgv = [...plan.argv];
+  let baseExtraEnv: Record<string, string> | undefined = plan.extraEnv ? { ...plan.extraEnv } : undefined;
   if (plan.ephemeralNpmCache) {
     ephemeralCacheDir = mkdtempSync(join(tmpdir(), 'tycho-npm-cache-'));
-    argv = [...argv, '--cache', ephemeralCacheDir];
+    baseArgv = [...baseArgv, '--cache', ephemeralCacheDir];
+    baseExtraEnv = {
+      ...(baseExtraEnv ?? {}),
+      ...prependRuntimeNodeToPath(env, platform),
+      npm_config_logs_dir: join(ephemeralCacheDir, 'logs'),
+      npm_config_fetch_timeout: '45000',
+      npm_config_fetch_retries: '1',
+      npm_config_fetch_retry_mintimeout: '2000',
+      npm_config_fetch_retry_maxtimeout: '5000',
+      NODE_USE_ENV_PROXY: '',
+    };
+  } else if (plan.method === 'claude-builtin') {
+    baseExtraEnv = { ...(baseExtraEnv ?? {}), NONINTERACTIVE: '1' };
   }
 
   const run: CommandRun = options.run ?? ((cmdArgv, ms, extraEnv, signal) => shellRun(cmdArgv, ms, platform, {
@@ -262,28 +430,95 @@ export async function runExecutorUpdate(options: RunExecutorUpdateOptions): Prom
     ...(signal ? { signal } : {}),
   }));
 
+  const ensureDir = fsDeps.mkdirSync ?? ((dir: string) => mkdirSync(dir, { recursive: true }));
+  const managedPrefix = plan.ephemeralNpmCache ? managedCliPrefix(env, platform) : undefined;
+  const inferredPrefix = plan.ephemeralNpmCache ? inferNpmPrefix(options.installedPath, platform, fsDeps) : undefined;
+
+  let activeMethod = plan.method;
+  let argv = baseArgv;
+  let usedManagedPrefix = false;
+
+  if (plan.ephemeralNpmCache && inferredPrefix !== undefined) {
+    if (isWritableNpmPrefix(inferredPrefix, platform, fsDeps)) {
+      argv = [...baseArgv, '--prefix', inferredPrefix];
+      if (managedPrefix !== undefined && inferredPrefix === managedPrefix) {
+        activeMethod = 'npm-tycho-local';
+        usedManagedPrefix = true;
+      }
+    } else if (managedPrefix !== undefined) {
+      ensureDir(managedPrefix);
+      argv = [...baseArgv, '--prefix', managedPrefix];
+      activeMethod = 'npm-tycho-local';
+      usedManagedPrefix = true;
+    }
+  }
+
+  const canProxyFallback = plan.method !== 'custom'
+    && hasProxyEnv(env)
+    && (plan.ephemeralNpmCache === true || plan.method === 'claude-builtin' || plan.method === 'agy-builtin');
+
   try {
-    const answer: CommandAnswer = await run(argv, timeoutMs, plan.extraEnv, options.signal);
+    const deadlineMs = Date.now() + timeoutMs;
+    const remainingMs = (): number => Math.max(5_000, deadlineMs - Date.now());
+    let activeEnv = baseExtraEnv;
+    const firstTimeoutMs = canProxyFallback && plan.ephemeralNpmCache
+      ? Math.min(remainingMs(), PROXIED_NPM_FIRST_TRY_TIMEOUT_MS)
+      : remainingMs();
+    let answer: CommandAnswer = await run(argv, firstTimeoutMs, activeEnv, options.signal);
+
+    if (
+      canProxyFallback
+      && !options.signal?.aborted
+      && Date.now() < deadlineMs - 5_000
+      && (answer.failure !== undefined || answer.code !== 0)
+      && isNetworkOrTimeoutFailure(answer)
+    ) {
+      activeEnv = { ...(baseExtraEnv ?? {}), ...directConnectionEnv() };
+      answer = await run(argv, remainingMs(), activeEnv, options.signal);
+    }
+
+    if (
+      plan.ephemeralNpmCache
+      && !usedManagedPrefix
+      && managedPrefix !== undefined
+      && Date.now() < deadlineMs - 5_000
+      && answer.failure === undefined
+      && answer.code !== null
+      && answer.code !== 0
+      && isNpmPermissionFailure(answer)
+    ) {
+      ensureDir(managedPrefix);
+      activeMethod = 'npm-tycho-local';
+      usedManagedPrefix = true;
+      answer = await run([...baseArgv, '--prefix', managedPrefix], remainingMs(), activeEnv, options.signal);
+    }
+
     const output = trimOutputTail(answer.stdout, answer.stderr);
+    const claudeDesktopHint = plan.method === 'claude-builtin' && normPath(options.installedPath).includes('/claude-data/')
+      ? '（检测到该 claude 位于 Claude Desktop 内置目录 Claude-Data，网络较慢或目录受控时可改由 Claude Desktop 自动更新，或执行 claude install 修复独立 CLI）'
+      : '';
     if (answer.failure !== undefined || answer.code === null) {
       return {
         ok: false,
-        method: plan.method,
-        error: answer.failure ?? `更新命令 ${argv[0]} 执行失败`,
+        method: activeMethod,
+        error: `${answer.failure ?? `更新命令 ${argv[0]} 执行失败`}${claudeDesktopHint}`,
         ...(output ? { output } : {}),
       };
     }
     if (answer.code !== 0) {
+      const permHint = plan.ephemeralNpmCache && isNpmPermissionFailure(answer)
+        ? '（权限不足 EACCES：当前用户无法写入 npm 目标目录）'
+        : '';
       return {
         ok: false,
-        method: plan.method,
-        error: `更新命令退出码 ${answer.code}（${plan.method}）`,
+        method: activeMethod,
+        error: `更新命令退出码 ${answer.code}（${activeMethod}）${permHint}${claudeDesktopHint}`,
         ...(output ? { output } : {}),
       };
     }
     return {
       ok: true,
-      method: plan.method,
+      method: activeMethod,
       ...(output ? { output } : {}),
     };
   } finally {

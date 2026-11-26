@@ -5,11 +5,11 @@ import { Check, Ellipsis, KeyRound, Layers, Pencil, Plus, RefreshCw, Search, Shi
 import { NEEDS_LOGIN_TEXT, credentialText, loginFull, loginStatusLine, machineLoginRefusedText, modelText, tierText, usageReadLine } from '@shared/labels.ts';
 import { loginName, RETIRED_TIER_STANDING, takesTypedLogin } from '@shared/logins.ts';
 import { isTierId, TIERS, type TierId } from '@shared/tiers.ts';
-import { executionPermissionSummary, logicalAccountKey, type DispatchSlotsConfig, type TierDispatchSlots } from '@shared/dispatch-slots.ts';
+import { effectiveRouteOfLogin, executionPermissionSummary, logicalAccountKey, normalizeRouteKey, type DispatchSlotsConfig, type TierDispatchSlots } from '@shared/dispatch-slots.ts';
 import { latestQuota } from '@shared/usage.ts';
 import { formatTime } from '@shared/time.ts';
 import { formatCompactTokens, formatProviderName, formatSpecialQuotaLabel } from '@/components/account-quota-popover';
-import { buildLogicalAccountEntries, DispatchSlotsPanel, effectiveSlotsByTier } from '@/components/dispatch-slots-panel';
+import { buildLogicalAccountEntries, coveredMachineLoginsByAccount, DispatchSlotsPanel, effectiveSlotsByTier } from '@/components/dispatch-slots-panel';
 import { Callout, Dot, Empty, Field, HashLink, Mono, Note, Problem, type Tone } from '@/components/bits';
 import { QuotaWindow } from '@/components/quota';
 import { CheckLine } from '@/components/check-line';
@@ -401,8 +401,9 @@ function UnifiedGroupDetail({
   onDeleteMember: (member: OwnMember) => void;
 }) {
   const provider = formatProviderName(executor);
-  const displayTitle = page.login_aliases?.[groupKeyId] || identityLabel || provider;
-  const verifiedIdentity = [identityLabel, planLabel].filter(Boolean).join(' · ') || '各机本地 OAuth 授权';
+  const sampleRoute = effectiveRouteOfLogin({ routeLabel: members[0]!.login.route_label, tiers: members[0]!.login.tiers });
+  const displayTitle = page.login_aliases?.[groupKeyId] || identityLabel || (sampleRoute ? `${provider} · ${sampleRoute}` : provider);
+  const verifiedIdentity = [identityLabel, planLabel, sampleRoute ? `线路 ${sampleRoute}` : null].filter(Boolean).join(' · ') || '各机本地 OAuth 授权';
   const onlineCount = members.filter((m) => m.machine.node.connected).length;
   const readyCount = members.filter((m) => machineLoginStanding(m.login).tone === 'success').length;
   const telemetry = sumTelemetry(members.map((m) => m.login.id), page.login_telemetry);
@@ -410,7 +411,13 @@ function UnifiedGroupDetail({
   const sample = members[0]!.login;
   const editor = tierEditorOf(page.tier_forms, executor);
   const perm = executionPermissionSummary(executor, sample.permission_mode);
-  const logicalKey = logicalAccountKey({ id: sample.id ?? executor, executor, machine: members[0]!.machine.id });
+  const logicalKey = logicalAccountKey({
+    id: sample.id ?? executor,
+    executor,
+    machine: members[0]!.machine.id,
+    routeLabel: sample.route_label,
+    tiers: sample.tiers,
+  });
   const maxRuns = members.map((m) => m.login.max_runs).find((v): v is number => typeof v === 'number' && v > 0) ?? null;
 
   return (
@@ -621,14 +628,17 @@ function ownRailLabel(machine: Machine, login: MachineLogin): string {
   return `选择单机登录 ${parts.join(' · ')}`;
 }
 
-function LoginDetail({ row, page, slotsByTier, usageOverride, draft, busy, failure, refreshingQuota, quotaError, onRename, onOpenPolicy, onRefreshQuota, onCheck, onRetry, onRelogin, onEdit, onToken, onDelete }: {
+function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft, busy, failure, refreshingQuota, quotaError, onRename, onOpenPolicy, onRefreshQuota, onCheck, onRetry, onRelogin, onEdit, onToken, onDelete, onEditLinkedOwn, onDeleteLinkedOwn }: {
   row: Extract<LoginRow, { kind: 'account' | 'machine' }>; page: AccountsAndMachines;
   slotsByTier: Record<TierId, TierDispatchSlots>;
   usageOverride?: NonNullable<Account['status']>['usage'];
+  linkedOwns?: readonly OwnMember[];
   draft: LoginDraft; busy: boolean; failure: string | null;
   refreshingQuota: boolean; quotaError: string | null; onRename: (nextName: string | null) => Promise<void>; onOpenPolicy: () => void; onRefreshQuota: () => void;
   onCheck: () => void; onRetry: () => void; onRelogin: (way: 'page' | 'device') => void;
   onEdit: () => void; onToken: () => void; onDelete: () => void;
+  onEditLinkedOwn?: (member: OwnMember) => void;
+  onDeleteLinkedOwn?: (member: OwnMember) => void;
 }) {
   const account = row.kind === 'account' ? row.account : null;
   const own = row.kind === 'machine' ? row.login : null;
@@ -666,6 +676,8 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, draft, busy, failu
     id: account?.id ?? own?.id ?? login.executor,
     executor: login.executor,
     machine: row.kind === 'machine' ? row.machine.id : null,
+    routeLabel: own?.route_label,
+    tiers: own?.tiers,
   });
 
   const facts: { label: string; value: string }[] = [
@@ -943,6 +955,38 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, draft, busy, failu
         </div>
       ) : null}
 
+      {linkedOwns && linkedOwns.length > 0 ? (
+        <div className="grid gap-2 rounded-lg border border-border/75 bg-muted/35 px-3.5 py-3 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-semibold text-muted-foreground">{`同账号本机冗余登录（${linkedOwns.length} 台）`}</h3>
+            <span className="text-faint">已由当前全机分发账号覆盖并自动合并展示，可按需清理</span>
+          </div>
+          <ul className="divide-y divide-border/60 rounded-md border border-border/70 bg-background/70">
+            {linkedOwns.map((member) => (
+              <li key={member.key} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Dot tone={member.machine.node.connected ? 'success' : 'waiting'} />
+                  <Mono className="font-medium text-foreground">{`${member.machine.id}/${member.login.executor}`}</Mono>
+                  <span className="text-muted-foreground">{member.machine.node.connected ? '在线' : '离线'}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {onEditLinkedOwn ? (
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={busy} onClick={() => onEditLinkedOwn(member)}>
+                      修改本机档位
+                    </Button>
+                  ) : null}
+                  {onDeleteLinkedOwn ? (
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive hover:text-destructive" disabled={busy} onClick={() => onDeleteLinkedOwn(member)}>
+                      删除冗余登录
+                    </Button>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
       {failure ? <Problem role="alert">{failure}</Problem> : null}
     </section>
   );
@@ -954,7 +998,10 @@ export function AccountsPage() {
   const { data, isPending, error } = useQuery(accountsQuery);
   const [query] = useSearchParams();
   const focus = query.get('login');
-  const [activeTab, setActiveTab] = useState<'pool' | 'policy'>('pool');
+  const [activeTab, setActiveTab] = useState<'pool' | 'policy'>(() => {
+    const hash = typeof window !== 'undefined' ? window.location.hash : '';
+    return query.get('tab') === 'policy' || hash.endsWith('#policy') || hash.endsWith('#dispatch-order') ? 'policy' : 'pool';
+  });
   const [search, setSearch] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const rowRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -1160,8 +1207,7 @@ export function AccountsPage() {
     if (await changeOwn(ownKey(machine, login), () => del(machineLoginPath(machine, login)))) setOwnRemoving(null);
   }
 
-  function saveGroup(executor: string, members: readonly OwnMember[]): void {
-    const key = groupKey(executor);
+  function saveGroup(key: string, executor: string, members: readonly OwnMember[]): void {
     const { form } = draftOf(key);
     if (!form || !change.free() || !data) return;
     const tierProblem = tierRefusal(form.tiers, tierEditorOf(data.tier_forms, executor));
@@ -1183,7 +1229,7 @@ export function AccountsPage() {
           const updated: Machine[] = [];
           for (const member of members) {
             const memberTiers = form.tiers.map((row) => {
-              if (!isTierId(row.name)) return row;
+              if (!isTierId(row.name) || (row.value.trim() === '' && !row.held)) return row;
               const nextParsed = editor.parse(row.value);
               const existingText = member.login.tiers?.[row.name]?.text ?? '';
               const existingProvider = editor.parse(existingText)?.provider ?? '';
@@ -1246,21 +1292,44 @@ export function AccountsPage() {
     ),
     [data?.machines],
   );
+  const coveredByAccount = useMemo(
+    () => (data ? coveredMachineLoginsByAccount(data) : new Map<string, string>()),
+    [data],
+  );
+  const linkedOwnsByAccount = useMemo(() => {
+    const map = new Map<string, OwnMember[]>();
+    for (const member of owns) {
+      if (!member.login.id) continue;
+      const parentId = coveredByAccount.get(member.login.id);
+      if (!parentId) continue;
+      const list = map.get(parentId);
+      if (list) list.push(member);
+      else map.set(parentId, [member]);
+    }
+    return map;
+  }, [owns, coveredByAccount]);
+  const independentOwns = useMemo(
+    () => owns.filter((member) => !member.login.id || !coveredByAccount.has(member.login.id)),
+    [owns, coveredByAccount],
+  );
   const accountRows = useMemo<LoginRow[]>(
     () => (data?.accounts ?? []).map((account): LoginRow => ({ kind: 'account', key: account.id, account })),
     [data?.accounts],
   );
   const ownRows = useMemo<LoginRow[]>(
-    () => owns.map(({ machine, login, key }): LoginRow => ({ kind: 'machine', key, machine, login })),
-    [owns],
+    () => independentOwns.map(({ machine, login, key }): LoginRow => ({ kind: 'machine', key, machine, login })),
+    [independentOwns],
   );
   const groupRows = useMemo<Extract<LoginRow, { kind: 'group' }>[]>(() => {
-    // Group machine-local logins by (executor, verified identity) so two distinct emails on the
-    // same harness NEVER merge into one logical account.
+    // Group machine-local logins by (executor, verified identity, effective route/provider) so two
+    // distinct emails OR two distinct channels (e.g. office LAN `lan-gw` vs paid `deepseek-official`)
+    // NEVER merge into one logical account.
     const buckets = new Map<string, { executor: string; identityLabel: string | null; planLabel: string | null; members: OwnMember[] }>();
-    for (const member of owns) {
+    for (const member of independentOwns) {
       const idNorm = member.login.account_label?.trim().toLowerCase() || '';
-      const bucketKey = idNorm ? `${groupKey(member.login.executor)}:${idNorm}` : groupKey(member.login.executor);
+      const routeNorm = normalizeRouteKey(effectiveRouteOfLogin({ routeLabel: member.login.route_label, tiers: member.login.tiers })) || '';
+      const suffix = [idNorm, routeNorm].filter(Boolean).join(':');
+      const bucketKey = suffix ? `${groupKey(member.login.executor)}:${suffix}` : groupKey(member.login.executor);
       const existing = buckets.get(bucketKey);
       if (existing) {
         existing.members.push(member);
@@ -1288,16 +1357,19 @@ export function AccountsPage() {
       }
     }
     return groups;
-  }, [owns]);
+  }, [independentOwns]);
   const allRows = useMemo<LoginRow[]>(() => [...accountRows, ...groupRows, ...ownRows], [accountRows, groupRows, ownRows]);
 
   // If a centralized account shares subscription quota with a machine login, surface the freshest
   // quota reading directly on the account card without duplicating a nested source tree.
   const usageByAccount = useMemo(() => {
     const map = new Map<string, NonNullable<Account['status']>['usage']>();
+    const everyIndividual: Extract<LoginRow, { kind: 'account' | 'machine' }>[] = [
+      ...accountRows.filter((row): row is Extract<LoginRow, { kind: 'account' }> => row.kind === 'account'),
+      ...owns.map(({ machine, login, key }): Extract<LoginRow, { kind: 'machine' }> => ({ kind: 'machine', key, machine, login })),
+    ];
     for (const ids of data?.login_groups ?? []) {
-      const members = allRows.filter((row): row is Extract<LoginRow, { kind: 'account' | 'machine' }> => {
-        if (row.kind === 'group') return false;
+      const members = everyIndividual.filter((row) => {
         const id = row.kind === 'account' ? row.account.id : row.login.id;
         return id !== null && ids.includes(id);
       });
@@ -1309,7 +1381,7 @@ export function AccountsPage() {
       }
     }
     return map;
-  }, [data?.login_groups, allRows]);
+  }, [data?.login_groups, accountRows, owns]);
 
   const needle = search.trim().toLowerCase();
   const visibleAccountRows = useMemo(() => {
@@ -1414,10 +1486,15 @@ export function AccountsPage() {
     }
     const matchedOwn = owns.find(({ login }) => login.id === focus);
     if (matchedOwn) {
-      const group = groupRows.find((g) => g.executor === matchedOwn.login.executor);
+      const parentAccountId = matchedOwn.login.id ? coveredByAccount.get(matchedOwn.login.id) : undefined;
+      if (parentAccountId) {
+        setSelectedKey(parentAccountId);
+        return;
+      }
+      const group = groupRows.find((g) => g.members.some((m) => m.key === matchedOwn.key));
       setSelectedKey(group ? group.key : matchedOwn.key);
     }
-  }, [data, focus, owns, groupRows]);
+  }, [data, focus, owns, groupRows, coveredByAccount]);
 
   const selectedRow = visibleRows.find((row) => row.key === selectedKey) ?? visibleRows[0] ?? null;
 
@@ -1505,6 +1582,7 @@ export function AccountsPage() {
         page={data!}
         slotsByTier={slotsByTier}
         usageOverride={account ? usageByAccount.get(account.id) : undefined}
+        linkedOwns={account ? linkedOwnsByAccount.get(account.id) : undefined}
         draft={draft}
         busy={busy}
         failure={draft.form === null && (account ? deleting !== row.key : ownRemoving !== row.key) ? draft.error : null}
@@ -1519,6 +1597,8 @@ export function AccountsPage() {
         onEdit={() => patch(row.key, { form: formOf(account ?? own!.login), confirm: false, error: null, tierProblem: null })}
         onToken={() => { if (account) { dropCredential(account.id); setTokenFor(account.id); } }}
         onDelete={() => { patch(row.key, { confirm: false, error: null }); if (account) setDeleting(account.id); else setOwnRemoving(row.key); }}
+        onEditLinkedOwn={(member) => patch(member.key, { form: formOf(member.login), confirm: false, error: null, tierProblem: null })}
+        onDeleteLinkedOwn={(member) => { patch(member.key, { confirm: false, error: null }); setOwnRemoving(member.key); }}
       />
     );
   };
@@ -1692,7 +1772,12 @@ export function AccountsPage() {
 
                             if (row.kind === 'group') {
                               const provider = formatProviderName(row.executor);
-                              const title = data.login_aliases?.[row.key] || row.identityLabel || provider;
+                              const sampleRoute = row.members
+                                .map((m) => effectiveRouteOfLogin({ routeLabel: m.login.route_label, tiers: m.login.tiers }))
+                                .find((r): r is string => Boolean(r)) ?? null;
+                              const title = data.login_aliases?.[row.key]
+                                || (row.identityLabel ? (sampleRoute ? `${row.identityLabel} · ${sampleRoute}` : row.identityLabel)
+                                  : sampleRoute ? `${provider} · ${sampleRoute}` : provider);
                               const readyCount = row.members.filter((m) => machineLoginStanding(m.login).tone === 'success').length;
                               const gt = sumTelemetry(row.members.map((m) => m.login.id), data.login_telemetry);
                               const freshest = latestQuota(row.members, (m) => m.login.status?.usage ?? []).login.status?.usage ?? [];
@@ -1905,7 +1990,7 @@ export function AccountsPage() {
                     if (!current.form) return all;
                     return { ...all, [editingGroup.key]: { ...current, form: { ...current.form, [name]: value }, ...(name === 'tiers' ? { tierProblem: null } : {}) } };
                   })}
-                  onSave={() => saveGroup(editingGroup.executor, editingGroup.members)}
+                  onSave={() => saveGroup(editingGroup.key, editingGroup.executor, editingGroup.members)}
                   onCancel={() => closeEditor(editingGroup.key)}
                 />
                 {editingGroup.draft.error ? <Problem role="alert" className="mt-3">{editingGroup.draft.error}</Problem> : null}

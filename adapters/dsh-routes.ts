@@ -26,10 +26,111 @@ import type { ModelInfo } from './types.ts';
 export const DSH_ACCOUNT_ROUTE = 'deepseek-account';
 export const DSH_OFFICIAL_ROUTE = 'deepseek-official';
 
-const OFFICIAL_MODELS: readonly ModelInfo[] = [
-  { id: 'deepseek-v4.1-flash', name: 'DeepSeek-V4.1-Flash', efforts: ['off', 'low', 'medium', 'high', 'max'] },
-  { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', efforts: ['off', 'low', 'medium', 'high', 'max'] },
-];
+export interface DshSchemaCatalog {
+  officialModels: ModelInfo[];
+  officialEfforts: string[];
+  accountModels: ModelInfo[];
+  accountEfforts: string[];
+}
+
+function collectSchemaStringConsts(node: unknown, out: string[] = []): string[] {
+  if (!node || typeof node !== 'object') return out;
+  const obj = node as Record<string, unknown>;
+  if (typeof obj.const === 'string' && obj.const.trim() !== '' && !out.includes(obj.const.trim())) {
+    out.push(obj.const.trim());
+  }
+  if (Array.isArray(obj.enum)) {
+    for (const v of obj.enum) {
+      if (typeof v === 'string' && v.trim() !== '' && !out.includes(v.trim())) out.push(v.trim());
+    }
+  }
+  for (const key of ['anyOf', 'oneOf', 'allOf']) {
+    if (Array.isArray(obj[key])) {
+      for (const child of obj[key] as unknown[]) collectSchemaStringConsts(child, out);
+    }
+  }
+  return out;
+}
+
+// Dynamically read official provider models and supported `reasoningEffort` levels straight from
+// `dsh --profile headless --dump-config-schema` so Tycho never hardcodes DeepSeek model IDs or efforts.
+export function parseDshConfigSchema(schemaJson: string | undefined): DshSchemaCatalog {
+  const empty: DshSchemaCatalog = { officialModels: [], officialEfforts: [], accountModels: [], accountEfforts: [] };
+  if (!schemaJson || schemaJson.trim() === '') return empty;
+  let root: unknown;
+  try {
+    root = JSON.parse(schemaJson);
+  } catch {
+    return empty;
+  }
+  if (!root || typeof root !== 'object' || Array.isArray(root)) return empty;
+  const obj = root as Record<string, unknown>;
+  const defs = (obj.$defs && typeof obj.$defs === 'object' ? obj.$defs : {}) as Record<string, unknown>;
+
+  const entryRefs = new Map<string, string>();
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    const rec = node as Record<string, unknown>;
+    if (typeof rec.id === 'string' && typeof rec.configRef === 'string') {
+      entryRefs.set(rec.id, rec.configRef);
+    }
+    for (const val of Object.values(rec)) walk(val);
+  };
+  walk(obj['x-cordis'] ?? obj);
+
+  const readProviderDef = (entryId: string): { models: ModelInfo[]; efforts: string[] } => {
+    const ref = entryRefs.get(entryId);
+    const defKey = ref?.split('/').pop();
+    const def = defKey ? defs[defKey] : undefined;
+    if (!def || typeof def !== 'object') return { models: [], efforts: [] };
+    const defObj = def as Record<string, unknown>;
+    const propHolder = (defObj.properties && typeof defObj.properties === 'object'
+      ? defObj
+      : Array.isArray(defObj.anyOf)
+        ? (defObj.anyOf as unknown[]).find((branch) => branch && typeof branch === 'object' && 'properties' in branch)
+        : undefined) as { properties?: Record<string, unknown> } | undefined;
+    const props = propHolder?.properties;
+    if (!props || typeof props !== 'object') return { models: [], efforts: [] };
+
+    const efforts = collectSchemaStringConsts(props.reasoningEffort);
+    const modelsProp = props.models as { default?: unknown } | undefined;
+    const rawModels = Array.isArray(modelsProp?.default) ? modelsProp.default : [];
+    const models: ModelInfo[] = [];
+    for (const entry of rawModels) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+      const m = entry as Record<string, unknown>;
+      const id = typeof m.id === 'string' ? m.id.trim() : '';
+      if (!id) continue;
+      const name = typeof m.name === 'string' && m.name.trim() !== '' && m.name.trim() !== id ? m.name.trim() : undefined;
+      models.push({
+        id,
+        ...(name ? { name } : {}),
+        ...(efforts.length > 0 ? { efforts: [...efforts] } : {}),
+      });
+    }
+    return { models, efforts };
+  };
+
+  const official = readProviderDef('llm-deepseek');
+  const account = readProviderDef('llm-deepseek-account');
+  // `llm-deepseek-account` shares DeepSeek's official catalog when its schema only declares `modelOverrides`.
+  const accountModels = account.models.length > 0
+    ? account.models
+    : official.models.map((m) => ({
+        ...m,
+        ...(account.efforts.length > 0 ? { efforts: [...account.efforts] } : {}),
+      }));
+  return {
+    officialModels: official.models,
+    officialEfforts: official.efforts,
+    accountModels,
+    accountEfforts: account.efforts.length > 0 ? account.efforts : official.efforts,
+  };
+}
 
 function unquote(value: string): string {
   const cleaned = value.replace(/\s+#.*$/, '').trim();
@@ -73,7 +174,7 @@ export function parseDshYamlRoutes(yamlText: string): {
   let currentProvider: (ParsedCustomProvider & { indent: number }) | null = null;
   let inModels = false;
   let modelsIndent = -1;
-  let currentModel: { id: string; name?: string; efforts: string[]; indent: number } | null = null;
+  let currentModel: { id: string; name?: string; efforts: string[]; effortsDisabled?: boolean; indent: number } | null = null;
   let inEfforts = false;
   let effortsIndent = -1;
 
@@ -84,7 +185,7 @@ export function parseDshYamlRoutes(yamlText: string): {
         currentProvider.models.push({
           id: currentModel.id,
           ...(currentModel.name && currentModel.name !== currentModel.id ? { name: currentModel.name } : {}),
-          ...(currentModel.efforts.length > 0 ? { efforts: currentModel.efforts } : {}),
+          ...(currentModel.effortsDisabled ? { efforts: [] } : currentModel.efforts.length > 0 ? { efforts: currentModel.efforts } : {}),
         });
       }
     }
@@ -234,6 +335,11 @@ export function parseDshYamlRoutes(yamlText: string): {
         currentModel.name = unquote(nameMatch[1]!);
         continue;
       }
+      if (/^reasoningEfforts:\s*false\s*(?:#.*)?$/i.test(trimmed)) {
+        currentModel.effortsDisabled = true;
+        currentModel.efforts = [];
+        continue;
+      }
       if (/^reasoningEfforts:\s*$/.test(trimmed)) {
         inEfforts = true;
         effortsIndent = indent;
@@ -257,13 +363,14 @@ export interface DshLocalDiscovery {
 //   - shared credentials presence (`$DSH_HOME/.credentials.yaml` + env, zero secrets read)
 export function discoverLocalDshRoutesAndModels(
   headlessDump: string,
-  options: { env?: NodeJS.ProcessEnv; homeDir?: string } = {},
+  options: { env?: NodeJS.ProcessEnv; homeDir?: string; schemaJson?: string } = {},
 ): DshLocalDiscovery {
   const env = options.env ?? process.env;
   const isolatedTest = options.homeDir === undefined && !env.DSH_HOME?.trim() && Boolean(env.TYCHO_TEST_CACHE || env.NODE_TEST_CONTEXT);
   const dshHome = isolatedTest ? null : resolveDshHome(env, options.homeDir);
 
   const headless = parseDshYamlRoutes(headlessDump);
+  const schema = parseDshConfigSchema(options.schemaJson);
   let desktop: ReturnType<typeof parseDshYamlRoutes> | null = null;
   if (dshHome) {
     const desktopPatchPath = join(dshHome, 'profiles', 'desktop', 'cordis.patch.yml');
@@ -312,18 +419,18 @@ export function discoverLocalDshRoutesAndModels(
     }
   };
 
-  // 1) Official DeepSeek Account subscription channel
+  // 1) Official DeepSeek Account subscription channel (models & efforts dynamically read from dsh schema)
   const accountEnabledInHeadless = headless.entries['llm-deepseek-account']?.present && !headless.entries['llm-deepseek-account']?.disabled;
   if (hasAccountGrant || accountEnabledInHeadless) {
     addRoute({ id: DSH_ACCOUNT_ROUTE, label: 'DeepSeek 账号', source: 'account' });
-    for (const m of OFFICIAL_MODELS) addModel(m);
+    for (const m of schema.accountModels) addModel(m);
   }
 
-  // 2) Official DeepSeek API Key channel
+  // 2) Official DeepSeek API Key channel (models & efforts dynamically read from dsh schema)
   const officialEnabledInHeadless = headless.entries['llm-deepseek']?.present && !headless.entries['llm-deepseek']?.disabled;
   if (hasApiKey || officialEnabledInHeadless) {
     addRoute({ id: DSH_OFFICIAL_ROUTE, label: 'DeepSeek (API Key)', source: 'api-key' });
-    for (const m of OFFICIAL_MODELS) addModel(m);
+    for (const m of schema.officialModels) addModel(m);
   }
 
   // 3) Custom `llm-pi-ai` providers merged across headless + desktop

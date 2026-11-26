@@ -120,11 +120,21 @@ export function modelMissing(models: AccountModels | undefined, model: string): 
   return model.trim() !== '' && (models?.list.length ?? 0) > 0 && modelOf(models, model) === undefined;
 }
 
-// The strengths to offer for the model a tier names: the ones its own entry takes, and the
-// executor's own declaration when the list says nothing about that model.
+// The strengths to offer for the model a tier names:
+//   - If the catalog explicitly reports `efforts` for this model (including `[]` for non-reasoning
+//     models), respect that exact list and never inject hardcoded fallback choices.
+//   - Only fall back to the executor's declared efforts when the catalog is unread or the model
+//     does not declare effort metadata (`efforts === undefined`).
 export function effortChoices(models: AccountModels | undefined, model: string, declared: readonly string[]): string[] {
-  const efforts = modelOf(models, model)?.efforts;
-  return efforts && efforts.length > 0 ? [...efforts] : [...declared];
+  const entry = modelOf(models, model);
+  if (entry?.efforts !== undefined) return [...entry.efforts];
+  return [...declared];
+}
+
+// Whether the catalog explicitly states that the selected model does not support reasoning effort.
+export function effortUnsupported(models: AccountModels | undefined, model: string): boolean {
+  const entry = modelOf(models, model);
+  return entry !== undefined && Array.isArray(entry.efforts) && entry.efforts.length === 0;
 }
 
 // The strength the executor uses when a tier names none, when it said so for this model.

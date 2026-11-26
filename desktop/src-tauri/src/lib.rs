@@ -1,15 +1,20 @@
+mod updater;
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::webview::NewWindowResponse;
+use tauri::webview::{NewWindowResponse, PageLoadEvent};
 use tauri::{AppHandle, Manager, State, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
+use updater::{apply_update_and_prepare_exit, check_for_update, DesktopUpdateInfo, CURRENT_VERSION};
 use url::Url;
 
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -19,6 +24,108 @@ const MIN_WINDOW_WIDTH: u32 = 900;
 const MIN_WINDOW_HEIGHT: u32 = 600;
 const MAX_WINDOW_WIDTH: u32 = 3840;
 const MAX_WINDOW_HEIGHT: u32 = 2160;
+
+// WebView2 on Windows can silently swallow `<a target="_blank" rel="noopener noreferrer">` and
+// programmatic `window.open(...)` popups in `NewWindowRequested`. Routing external links and
+// external `window.open` calls through top-level navigation guarantees `on_navigation` intercepts
+// them, launches the system browser off the UI callback thread, and cancels navigation so the SPA
+// dialog stays intact. Also exposes desktop version + lightweight native update notification bar.
+const DESKTOP_EXTERNAL_LINK_SCRIPT_TEMPLATE: &str = r#"(() => {
+  if (window.__TYCHO_DESKTOP__) return;
+  window.__TYCHO_DESKTOP__ = true;
+  window.__TYCHO_DESKTOP_VERSION__ = "__CURRENT_VERSION__";
+  const externalHref = (raw) => {
+    try {
+      const value = raw instanceof URL ? raw.href : typeof raw === 'string' ? raw : '';
+      if (!value) return null;
+      const parsed = new URL(value, window.location.href);
+      if (parsed.protocol === 'tycho-desktop:') return null;
+      if (parsed.protocol === 'mailto:') return parsed.href;
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+      return parsed.origin !== window.location.origin ? parsed.href : null;
+    } catch {
+      return null;
+    }
+  };
+  const openExternal = (href) => {
+    window.location.assign(href);
+  };
+  const origOpen = typeof window.open === 'function' ? window.open.bind(window) : null;
+  window.open = function(url, target, features) {
+    const ext = externalHref(url);
+    if (ext) {
+      openExternal(ext);
+      return null;
+    }
+    return origOpen ? origOpen(url, target, features) : null;
+  };
+  document.addEventListener('click', (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const target = event.target;
+    const anchor = target && typeof target.closest === 'function' ? target.closest('a[href]') : null;
+    if (!anchor) return;
+    const ext = externalHref(anchor.getAttribute('href'));
+    if (!ext) return;
+    event.preventDefault();
+    openExternal(ext);
+  }, true);
+
+  let dismissedVersion = null;
+  window.__TYCHO_DESKTOP_SET_UPDATE__ = (state) => {
+    const mount = () => {
+      const existing = document.getElementById('tycho-desktop-update-bar');
+      if (!state || !state.version || (state.status === 'available' && dismissedVersion === state.version)) {
+        if (existing) existing.remove();
+        return;
+      }
+      const bar = existing || document.createElement('div');
+      bar.id = 'tycho-desktop-update-bar';
+      bar.setAttribute('role', 'status');
+      bar.style.cssText = 'position:fixed;top:10px;right:14px;z-index:2147483647;display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:10px;border:1px solid rgba(59,130,246,0.35);background:rgba(15,23,42,0.95);color:#f8fafc;font:12.5px/1.4 system-ui,-apple-system,sans-serif;box-shadow:0 8px 24px rgba(0,0,0,0.28);backdrop-filter:blur(8px);max-width:440px;';
+      bar.textContent = '';
+
+      const text = document.createElement('span');
+      text.style.cssText = 'flex:1;min-width:0;';
+      if (state.status === 'installing') {
+        text.textContent = `正在下载并校验桌面端 v${state.version}，完成后自动重启…`;
+      } else if (state.status === 'error') {
+        text.textContent = `桌面端更新失败：${state.message || '请稍后重试'}`;
+      } else {
+        text.textContent = `发现 Tycho 桌面端新版本 v${state.version}（当前 v${window.__TYCHO_DESKTOP_VERSION__}）`;
+      }
+      bar.appendChild(text);
+
+      if (state.status !== 'installing') {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = state.status === 'error' ? '重试更新' : '一键更新';
+        btn.style.cssText = 'cursor:pointer;border:none;border-radius:7px;padding:4px 10px;background:#2563eb;color:#fff;font-weight:600;font-size:12px;white-space:nowrap;';
+        btn.onclick = () => { window.location.assign('tycho-desktop://install-update'); };
+        bar.appendChild(btn);
+
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.textContent = '稍后';
+        close.style.cssText = 'cursor:pointer;border:1px solid rgba(148,163,184,0.35);border-radius:7px;padding:4px 8px;background:transparent;color:#cbd5e1;font-size:12px;white-space:nowrap;';
+        close.onclick = () => {
+          dismissedVersion = state.version;
+          bar.remove();
+        };
+        bar.appendChild(close);
+      }
+
+      if (!existing && document.body) {
+        document.body.appendChild(bar);
+      }
+    };
+    if (document.body) mount();
+    else window.addEventListener('DOMContentLoaded', mount, { once: true });
+  };
+})();"#;
+
+fn desktop_init_script() -> String {
+    DESKTOP_EXTERNAL_LINK_SCRIPT_TEMPLATE.replace("__CURRENT_VERSION__", CURRENT_VERSION)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct DesktopConfig {
@@ -62,6 +169,9 @@ pub struct AppState {
     config_path: PathBuf,
     last_title: Mutex<String>,
     launcher_base_url: Mutex<String>,
+    available_update: Mutex<Option<DesktopUpdateInfo>>,
+    updating: AtomicBool,
+    update_menu_item: Mutex<Option<MenuItem<tauri::Wry>>>,
 }
 
 impl AppState {
@@ -72,6 +182,9 @@ impl AppState {
             config_path,
             last_title: Mutex::new(String::new()),
             launcher_base_url: Mutex::new(default_launcher_base_url().to_string()),
+            available_update: Mutex::new(None),
+            updating: AtomicBool::new(false),
+            update_menu_item: Mutex::new(None),
         }
     }
 
@@ -318,10 +431,23 @@ fn refresh_tray_tooltip(app: &AppHandle) {
     }
 }
 
+fn is_external_openable_url(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https" | "mailto")
+}
+
 fn open_external_url(app: &AppHandle, url: &Url) {
-    if matches!(url.scheme(), "http" | "https" | "mailto") {
-        let _ = app.opener().open_url(url.as_str(), None::<&str>);
+    if !is_external_openable_url(url) {
+        return;
     }
+    // Spawn off the WebView navigation/new-window COM callback thread so ShellExecuteW on Windows
+    // never blocks or fails inside WebView2's synchronous event handler.
+    let handle = app.clone();
+    let target = url.as_str().to_string();
+    std::thread::spawn(move || {
+        if let Err(err) = handle.opener().open_url(&target, None::<&str>) {
+            eprintln!("[tycho-desktop] Warning: failed to open external URL {target}: {err}");
+        }
+    });
 }
 
 #[tauri::command]
@@ -371,16 +497,155 @@ fn remove_recent_url(url: String, state: State<'_, AppState>) -> Result<DesktopC
     Ok(updated)
 }
 
+fn set_update_menu_label(app: &AppHandle, label: &str) {
+    if let Ok(guard) = app.state::<AppState>().update_menu_item.lock() {
+        if let Some(item) = guard.as_ref() {
+            let _ = item.set_text(label);
+        }
+    }
+}
+
+fn push_update_ui(app: &AppHandle, payload: serde_json::Value) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        if let Ok(json) = serde_json::to_string(&payload) {
+            let script = format!(
+                "window.__TYCHO_DESKTOP_SET_UPDATE__ && window.__TYCHO_DESKTOP_SET_UPDATE__({json});"
+            );
+            let _ = window.eval(&script);
+        }
+    }
+}
+
+fn notify_user(app: &AppHandle, body: &str) {
+    let _ = app
+        .notification()
+        .builder()
+        .title("Tycho")
+        .body(body)
+        .show();
+}
+
+fn trigger_check_update(app: &AppHandle, manual: bool) {
+    let handle = app.clone();
+    let server_url = app.state::<AppState>().current_config().server_url;
+    std::thread::spawn(move || match check_for_update(server_url.as_deref()) {
+        Ok(Some(info)) => {
+            if let Ok(mut guard) = handle.state::<AppState>().available_update.lock() {
+                *guard = Some(info.clone());
+            }
+            set_update_menu_label(&handle, &format!("立即更新桌面端到 v{}", info.version));
+            push_update_ui(
+                &handle,
+                serde_json::json!({
+                    "status": "available",
+                    "version": info.version,
+                    "source": info.source,
+                }),
+            );
+            notify_user(
+                &handle,
+                &format!(
+                    "发现 Tycho 桌面端新版本 v{}，可在托盘菜单或右上角提示栏一键更新",
+                    info.version
+                ),
+            );
+        }
+        Ok(None) => {
+            if manual {
+                notify_user(
+                    &handle,
+                    &format!("Tycho 桌面端 v{CURRENT_VERSION} 已是最新版本"),
+                );
+            }
+        }
+        Err(err) => {
+            if manual {
+                notify_user(&handle, &format!("检查桌面端更新失败：{err}"));
+            }
+        }
+    });
+}
+
+fn trigger_install_update(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if state.updating.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let maybe_info = state
+        .available_update
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone());
+    let Some(info) = maybe_info else {
+        state.updating.store(false, Ordering::SeqCst);
+        trigger_check_update(app, true);
+        return;
+    };
+
+    set_update_menu_label(app, &format!("正在更新到 v{}…", info.version));
+    push_update_ui(
+        app,
+        serde_json::json!({
+            "status": "installing",
+            "version": info.version,
+        }),
+    );
+
+    let handle = app.clone();
+    std::thread::spawn(move || match apply_update_and_prepare_exit(&info) {
+        Ok(should_exit) => {
+            if should_exit {
+                let _ = handle.state::<AppState>().save_current_config();
+                handle.exit(0);
+            } else {
+                handle.state::<AppState>().updating.store(false, Ordering::SeqCst);
+                set_update_menu_label(&handle, &format!("立即更新桌面端到 v{}", info.version));
+                notify_user(&handle, &format!("已下载桌面端 v{}，请完成安装", info.version));
+            }
+        }
+        Err(err) => {
+            handle.state::<AppState>().updating.store(false, Ordering::SeqCst);
+            set_update_menu_label(&handle, &format!("立即更新桌面端到 v{}", info.version));
+            push_update_ui(
+                &handle,
+                serde_json::json!({
+                    "status": "error",
+                    "version": info.version,
+                    "message": err,
+                }),
+            );
+            notify_user(&handle, &format!("桌面端更新失败：{err}"));
+        }
+    });
+}
+
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "show", "打开 Tycho", true, None::<&str>)?;
     let switch_item = MenuItem::with_id(app, "switch", "切换服务器地址…", true, None::<&str>)?;
     let reload_item = MenuItem::with_id(app, "reload", "重新加载", true, None::<&str>)?;
+    let update_item = MenuItem::with_id(
+        app,
+        "check_update",
+        format!("检查桌面端更新 (v{CURRENT_VERSION})…"),
+        true,
+        None::<&str>,
+    )?;
+    if let Ok(mut guard) = app.state::<AppState>().update_menu_item.lock() {
+        *guard = Some(update_item.clone());
+    }
     let separator = PredefinedMenuItem::separator(app)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出 Tycho", true, None::<&str>)?;
 
     let menu = Menu::with_items(
         app,
-        &[&show_item, &switch_item, &reload_item, &separator, &quit_item],
+        &[
+            &show_item,
+            &switch_item,
+            &reload_item,
+            &update_item,
+            &separator,
+            &quit_item,
+        ],
     )?;
 
     let tray_icon = Image::from_bytes(include_bytes!("../icons/32x32.png"))
@@ -421,6 +686,20 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             "reload" => {
                 if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
                     let _ = window.reload();
+                }
+            }
+            "check_update" => {
+                let has_update = app
+                    .state::<AppState>()
+                    .available_update
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone())
+                    .is_some();
+                if has_update {
+                    trigger_install_update(app);
+                } else {
+                    trigger_check_update(app, true);
                 }
             }
             "quit" => {
@@ -472,15 +751,56 @@ fn setup_main_window(app: &AppHandle) -> tauri::Result<()> {
     let nav_app = app.clone();
     let new_win_app = app.clone();
     let title_app = app.clone();
+    let load_app = app.clone();
 
     let mut builder = WebviewWindowBuilder::from_config(app, &win_cfg)?
+        .initialization_script(&desktop_init_script())
         .on_navigation(move |target_url| {
             let server_url = nav_app.state::<AppState>().current_config().server_url;
+            if target_url.scheme() == "tycho-desktop" {
+                let trusted_caller = nav_app
+                    .get_webview_window(MAIN_WINDOW_LABEL)
+                    .and_then(|win| win.url().ok())
+                    .is_some_and(|current| is_allowed_in_app_url(&current, server_url.as_deref()));
+                if trusted_caller {
+                    match target_url.host_str() {
+                        Some("install-update") => trigger_install_update(&nav_app),
+                        Some("check-update") => trigger_check_update(&nav_app, true),
+                        _ => {}
+                    }
+                }
+                return false;
+            }
             if is_allowed_in_app_url(target_url, server_url.as_deref()) {
                 return true;
             }
             open_external_url(&nav_app, target_url);
             false
+        })
+        .on_page_load(move |_window, payload| {
+            if matches!(payload.event(), PageLoadEvent::Finished) {
+                let maybe_info = load_app
+                    .state::<AppState>()
+                    .available_update
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.clone());
+                if let Some(info) = maybe_info {
+                    let status = if load_app.state::<AppState>().updating.load(Ordering::SeqCst) {
+                        "installing"
+                    } else {
+                        "available"
+                    };
+                    push_update_ui(
+                        &load_app,
+                        serde_json::json!({
+                            "status": status,
+                            "version": info.version,
+                            "source": info.source,
+                        }),
+                    );
+                }
+            }
         })
         .on_new_window(move |target_url, _features| {
             let server_url = new_win_app.state::<AppState>().current_config().server_url;
@@ -587,6 +907,11 @@ pub fn run() {
             setup_tray(handle)?;
             setup_main_window(handle)?;
             setup_global_shortcut(handle);
+            let startup_handle = handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(4));
+                trigger_check_update(&startup_handle, false);
+            });
             Ok(())
         })
         .run(tauri::generate_context!())
@@ -785,5 +1110,29 @@ mod tests {
             format_tray_tooltip(Some("https://tycho.example.com"), Some("(2) 待审批")),
             "Tycho (tycho.example.com) — (2) 待审批"
         );
+    }
+
+    #[test]
+    fn external_url_policy_and_desktop_script_cover_login_links() {
+        assert!(is_external_openable_url(
+            &Url::parse("https://auth.openai.com/codex/device").unwrap()
+        ));
+        assert!(is_external_openable_url(
+            &Url::parse("http://example.com").unwrap()
+        ));
+        assert!(is_external_openable_url(
+            &Url::parse("mailto:owner@example.com").unwrap()
+        ));
+        assert!(!is_external_openable_url(
+            &Url::parse("javascript:alert(1)").unwrap()
+        ));
+        assert!(!is_external_openable_url(
+            &Url::parse("file:///C:/Windows/System32/calc.exe").unwrap()
+        ));
+        let init_script = desktop_init_script();
+        assert!(init_script.contains("__TYCHO_DESKTOP__"));
+        assert!(init_script.contains("window.location.assign"));
+        assert!(init_script.contains("__TYCHO_DESKTOP_SET_UPDATE__"));
+        assert!(init_script.contains(CURRENT_VERSION));
     }
 }

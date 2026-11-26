@@ -64,7 +64,7 @@ test('codex-oauth-v1 codec strips refresh_token on lease, extracts identity & ex
 
   assert.equal(codexAccessExpiryMs(bundle.access_token), expSec * 1000);
   const identity = codexIdentityFromTokens(bundle);
-  assert.equal(identity.accountLabel, 'Alice.Dev');
+  assert.equal(identity.accountLabel, 'Alice.Dev@e***.com');
   assert.match(identity.quotaOwner!, /^v1:[0-9a-f]{64}$/);
   // Matches codexAdapter.identityTalk quotaOwner normalization of the same email (case-insensitive).
   const talkIdentity = codexAdapter.identityTalk!.parse(JSON.stringify({

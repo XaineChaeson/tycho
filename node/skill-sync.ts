@@ -463,12 +463,12 @@ export async function syncNodeSkills(options: SyncNodeSkillsOptions): Promise<No
         linkDirs: options.linkDirs,
         skipLinkDirs: options.skipLinkDirs,
       })
-    : [];
+    : undefined;
   return {
     digest: reportDigest,
     synced: sortedSynced,
     ...(skipped.length > 0 ? { skipped } : {}),
-    ...(localSkills.length > 0 ? { local_skills: localSkills } : {}),
+    ...(localSkills !== undefined ? { local_skills: localSkills } : {}),
     ...(errors.length > 0 ? { error: errors.join('；') } : {}),
   };
 }

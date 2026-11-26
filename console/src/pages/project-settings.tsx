@@ -6,15 +6,17 @@
 // project once its name is typed again. The project's standing rules are knowledge entries,
 // edited directly in place.
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, ArrowDown, ArrowUp, BookOpen, FolderGit2, MessageSquare, RotateCcw, Server, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, BookOpen, FolderGit2, MessageSquare, RotateCcw, Server, ShieldCheck } from 'lucide-react';
 import { useEffect, useState, type ComponentType, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { loginName } from '@shared/logins.ts';
-import { TIER_IDS, TIERS, tierLabel, tierValueFrom, type TierId } from '@shared/tiers.ts';
+import { sameDispatchSlotsConfig, type DispatchSlotsConfig, type TierDispatchSlots } from '@shared/dispatch-slots.ts';
+import { TIERS, tierLabel, tierValueFrom, type TierId } from '@shared/tiers.ts';
 import { PROJECT_ARCHIVED_LABEL, PROJECT_PAUSED_LABEL } from '@shared/labels.ts';
 import { GRANT_IDS, GRANTS } from '@shared/grants.ts';
 import { Callout, Card, Dot, Mono, Note, Problem, Rows, Time } from '@/components/bits';
 import { DeleteProjectDialog } from '@/components/delete-project-dialog';
+import { buildLogicalAccountEntries, DispatchSlotsPanel, effectiveSlotsByTier, type LogicalAccountEntry } from '@/components/dispatch-slots-panel';
 import { ProjectGroupsPanel } from '@/components/project-groups-panel';
 import { ProjectRules } from '@/components/project-rules';
 import { CODE_SOURCE_HINT, SourceEditor } from '@/components/source-list';
@@ -28,7 +30,7 @@ import { Option, Select } from '@/components/ui/select';
 import { useChange } from '@/hooks/use-change';
 import { useProjectFlag } from '@/hooks/use-project-flag';
 import { messageOf, put } from '@/lib/api';
-import { changed, draftOf, machinesGoneText, machinesMoved, moveItem, projectBody, sameNames, withName, withoutName, withProject, type ProjectDraft } from '@/lib/projects';
+import { changed, draftOf, machinesGoneText, machinesMoved, projectBody, sameNames, withName, withoutName, withProject, type ProjectDraft } from '@/lib/projects';
 import { accountsQuery, projectsQuery } from '@/lib/queries';
 import { loginChoices } from '@/lib/logins';
 import type { AccountsAndMachines, Project } from '@/lib/types';
@@ -50,14 +52,6 @@ function sourcesChanged(baseline: ProjectDraft['sources'], next: ProjectDraft['s
 
 function sameGrantSet(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((each) => b.includes(each));
-}
-
-type ProjectDispatchOrder = Partial<Record<TierId, string[]>> | null;
-
-function sameDispatchOrder(a: ProjectDispatchOrder, b: ProjectDispatchOrder): boolean {
-  if (a == null && b == null) return true;
-  if (a == null || b == null) return false;
-  return TIER_IDS.every((tier) => sameNames(a[tier] ?? [], b[tier] ?? []));
 }
 
 interface LoginMeta {
@@ -228,7 +222,7 @@ export function ProjectSettings({ project }: { project: Project }) {
   // Null until something is edited: the page then shows the project as the service has it,
   // and follows it as it changes.
   const [draft, setDraft] = useState<ProjectDraft | null>(null);
-  const [dispatchOrderDraft, setDispatchOrderDraft] = useState<ProjectDispatchOrder | undefined>(undefined);
+  const [dispatchSlotsDraft, setDispatchSlotsDraft] = useState<DispatchSlotsConfig | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmUnrestricted, setConfirmUnrestricted] = useState(false);
@@ -236,16 +230,20 @@ export function ProjectSettings({ project }: { project: Project }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [activeTab, setActiveTab] = useState<SettingsTabId>('basic');
   useEffect(() => {
-    setDispatchOrderDraft(undefined);
+    setDispatchSlotsDraft(undefined);
   }, [project.id]);
   const baseline = draftOf(project);
   const shown = draft ?? baseline;
-  const baselineDispatchOrder: ProjectDispatchOrder = project.dispatch_order ?? null;
-  const shownDispatchOrder: ProjectDispatchOrder = dispatchOrderDraft !== undefined ? dispatchOrderDraft : baselineDispatchOrder;
-  const dispatchOrderDirty = dispatchOrderDraft !== undefined && !sameDispatchOrder(baselineDispatchOrder, dispatchOrderDraft);
+  const baselineDispatchSlots: DispatchSlotsConfig | null = project.dispatch_slots ?? null;
+  const hasLegacyDispatchOrder = project.dispatch_slots == null && project.dispatch_order != null && Object.values(project.dispatch_order).some((ids) => Array.isArray(ids) && ids.length > 0);
+  const shownDispatchSlots: DispatchSlotsConfig | null = dispatchSlotsDraft !== undefined ? dispatchSlotsDraft : baselineDispatchSlots;
+  const dispatchSlotsDirty = dispatchSlotsDraft !== undefined && (
+    !sameDispatchSlotsConfig(baselineDispatchSlots, dispatchSlotsDraft)
+    || (hasLegacyDispatchOrder && dispatchSlotsDraft === null)
+  );
   const baseDirty = draft !== null && changed(project, draft);
-  const dirty = baseDirty || dispatchOrderDirty;
-  const tabDirty = dirtyTabsOf(project, draft, dispatchOrderDirty);
+  const dirty = baseDirty || dispatchSlotsDirty;
+  const tabDirty = dirtyTabsOf(project, draft, dispatchSlotsDirty);
 
   useEffect(() => {
     if (!dirty) return undefined;
@@ -288,64 +286,21 @@ export function ProjectSettings({ project }: { project: Project }) {
         ? new Set(project.pool)
         : null;
 
-  const loginLabelFor = (id: string): { name: string; shown: string } => {
-    const meta = metaByLoginId.get(id);
-    if (meta) return { name: meta.name, shown: meta.shortLabel };
-    const choice = allLogins.find((each) => each.id === id);
-    if (choice) {
-      const full = loginName(choice);
-      return { name: full, shown: full };
-    }
-    return { name: options === undefined ? id : '已删除的登录', shown: options === undefined ? id : '已删除的登录' };
+  const projectLogicalEntries: LogicalAccountEntry[] = options
+    ? buildLogicalAccountEntries(options, undefined, { allowedLoginIds })
+    : [];
+  const projectEntryMap = new Map(projectLogicalEntries.map((entry) => [entry.key, entry]));
+  const emptyTierSlots: Record<TierId, TierDispatchSlots> = {
+    operate: { p1: [], p2: [], off: [] },
+    execute: { p1: [], p2: [], off: [] },
+    decide: { p1: [], p2: [], off: [] },
   };
-
-  const resolveTierOrder = (tierId: TierId, source: Partial<Record<TierId, string[]>> | null | undefined): string[] => {
-    const seed = source?.[tierId]
-      ?? project.effective_dispatch_order?.[tierId]
-      ?? options?.dispatch_order?.[tierId]
-      ?? [];
-    const seen = new Set<string>();
-    const list: string[] = [];
-    for (const id of seed) {
-      if (seen.has(id)) continue;
-      if (allowedLoginIds !== null && !allowedLoginIds.has(id)) continue;
-      const meta = metaByLoginId.get(id);
-      if (meta && !meta.supportsTier(tierId)) continue;
-      seen.add(id);
-      list.push(id);
-    }
-    if (options !== undefined) {
-      for (const login of allLogins) {
-        if (seen.has(login.id)) continue;
-        if (allowedLoginIds !== null && !allowedLoginIds.has(login.id)) continue;
-        const meta = metaByLoginId.get(login.id);
-        if (meta && !meta.supportsTier(tierId)) continue;
-        seen.add(login.id);
-        list.push(login.id);
-      }
-    }
-    return list;
-  };
-
-  const effectivePreviewOrder: Record<TierId, string[]> = {
-    operate: resolveTierOrder('operate', project.effective_dispatch_order ?? options?.dispatch_order),
-    execute: resolveTierOrder('execute', project.effective_dispatch_order ?? options?.dispatch_order),
-    decide: resolveTierOrder('decide', project.effective_dispatch_order ?? options?.dispatch_order),
-  };
-
-  const customTierOrder: Record<TierId, string[]> = {
-    operate: resolveTierOrder('operate', shownDispatchOrder),
-    execute: resolveTierOrder('execute', shownDispatchOrder),
-    decide: resolveTierOrder('decide', shownDispatchOrder),
-  };
-
-  const moveCustomTier = (tierId: TierId, from: number, to: number): void => {
-    const next: Record<TierId, string[]> = {
-      ...customTierOrder,
-      [tierId]: moveItem(customTierOrder[tierId], from, to),
-    };
-    setDispatchOrderDraft(next);
-  };
+  const inheritedProjectSlots: Record<TierId, TierDispatchSlots> = options
+    ? effectiveSlotsByTier(options, projectLogicalEntries, null, project.dispatch_order)
+    : emptyTierSlots;
+  const customProjectSlots: Record<TierId, TierDispatchSlots> = options
+    ? effectiveSlotsByTier(options, projectLogicalEntries, shownDispatchSlots, project.dispatch_order)
+    : emptyTierSlots;
   // Until the machines have been read, the ones the project itself names is what is known.
   const allMachines = options?.machines.map(({ uid, id }) => ({ uid, name: id })) ?? project.machines;
   const busy = change.busy || saving;
@@ -379,8 +334,8 @@ export function ProjectSettings({ project }: { project: Project }) {
       // the ledger holds it.
       const body: Record<string, unknown> = {
         ...(draft ? projectBody(project, draft) : {}),
-        ...(dispatchOrderDirty
-          ? { dispatch_order: shownDispatchOrder === null ? null : customTierOrder }
+        ...(dispatchSlotsDirty
+          ? { dispatch_slots: shownDispatchSlots === null ? null : customProjectSlots }
           : {}),
       };
       await change.send(
@@ -388,7 +343,7 @@ export function ProjectSettings({ project }: { project: Project }) {
         (projects, answer) => withProject(projects, answer.project),
       );
       setDraft(null);
-      setDispatchOrderDraft(undefined);
+      setDispatchSlotsDraft(undefined);
       setConfirmUnrestricted(false);
     } catch (refused) {
       setError(messageOf(refused));
@@ -584,115 +539,107 @@ export function ProjectSettings({ project }: { project: Project }) {
           </Setting>
 
           <Setting
-            label={`${project.name} 本项目派发顺位`}
-            title="本项目派发顺位"
-            hint={<>决定每个档位在本项目内优先尝试哪个登录；未自定义时沿用<Link to="/accounts#dispatch-order" className="mx-0.5">账号页的全局默认顺序</Link>。</>}
+            label={`${project.name} 本项目派发槽位`}
+            title="本项目派发槽位"
+            hint={<>决定每个档位在本项目内优先派给哪些逻辑账号 / 渠道（P1 主力并行均衡 → P2 备选降级 → 停）；未自定义时沿用<Link to="/accounts#policy" className="mx-0.5">账号页的全局默认槽位</Link>。</>}
           >
-            <div role="radiogroup" aria-label="派发顺位方式" className="mb-2.5 flex flex-wrap items-center gap-x-5 gap-y-1">
+            {hasLegacyDispatchOrder && dispatchSlotsDraft === undefined ? (
+              <Callout tone="waiting" className="mb-2.5 text-xs">
+                <span>该项目当前存在旧版线性派发顺序覆盖；切换为“沿用全局默认槽位”并保存即可清除旧覆盖，或切换为“自定义本项目槽位”升级为新槽位配置。</span>
+              </Callout>
+            ) : null}
+            <div role="radiogroup" aria-label="派发槽位方式" className="mb-2.5 flex flex-wrap items-center gap-x-5 gap-y-1">
               <Choice>
                 <Radio
-                  name={`dispatch-order-mode-${project.id}`}
-                  checked={shownDispatchOrder === null}
+                  name={`dispatch-slots-mode-${project.id}`}
+                  checked={shownDispatchSlots === null && (!hasLegacyDispatchOrder || dispatchSlotsDraft === null)}
                   disabled={busy}
-                  onChange={() => setDispatchOrderDraft(null)}
+                  onChange={() => setDispatchSlotsDraft(null)}
                 />
-                <span>沿用全局默认顺序</span>
+                <span>沿用全局默认槽位</span>
               </Choice>
               <Choice>
                 <Radio
-                  name={`dispatch-order-mode-${project.id}`}
-                  checked={shownDispatchOrder !== null}
+                  name={`dispatch-slots-mode-${project.id}`}
+                  checked={shownDispatchSlots !== null}
                   disabled={busy}
-                  onChange={() => setDispatchOrderDraft({ ...effectivePreviewOrder })}
+                  onChange={() => setDispatchSlotsDraft({ ...inheritedProjectSlots })}
                 />
-                <span>自定义本项目顺位</span>
+                <span>自定义本项目槽位</span>
               </Choice>
-              {dispatchOrderDirty ? <Badge tone="waiting">未保存</Badge> : null}
+              {dispatchSlotsDirty ? <Badge tone="waiting">未保存</Badge> : null}
             </div>
 
-            {shownDispatchOrder === null ? (
+            {shownDispatchSlots === null ? (
               <div className="grid grid-cols-1 gap-2 rounded-lg border border-border/75 bg-muted/35 p-3 text-xs sm:grid-cols-3">
                 {TIERS.map((tier) => {
-                  const list = effectivePreviewOrder[tier.id];
-                  const topNames = list.slice(0, 2).map((id) => loginLabelFor(id).shown);
-                  const more = list.length > 2 ? ` 等 ${list.length} 个` : '';
+                  const s = inheritedProjectSlots[tier.id];
+                  const p1 = s.p1
+                    .map((k) => projectEntryMap.get(k))
+                    .filter((e): e is LogicalAccountEntry => e !== undefined && e.supportedTiers[tier.id])
+                    .map((e) => e.name);
+                  const p2 = s.p2
+                    .map((k) => projectEntryMap.get(k))
+                    .filter((e): e is LogicalAccountEntry => e !== undefined && e.supportedTiers[tier.id])
+                    .map((e) => e.name);
                   return (
-                    <div key={tier.id} className="min-w-0">
+                    <div key={tier.id} className="min-w-0 space-y-1">
                       <p className="font-medium text-foreground">{tier.label}</p>
-                      <p className="mt-0.5 truncate text-muted-foreground" title={list.map((id) => loginLabelFor(id).name).join(' → ') || '未配置'}>
-                        {topNames.length > 0 ? `${topNames.join(' → ')}${more}` : '暂无可用登录'}
-                      </p>
+                      {p1.length > 0 || p2.length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-1">
+                          {p1.length > 0 ? (
+                            <span className="rounded border border-brand-border bg-brand-soft px-1.5 py-0.5 font-medium text-brand-foreground">
+                              {p1.join(' + ')}
+                              {p1.length >= 2 ? <span className="ml-1 text-2xs opacity-80">均衡</span> : null}
+                            </span>
+                          ) : <span className="text-faint">无主力</span>}
+                          {p2.length > 0 ? (
+                            <>
+                              <span className="text-faint" aria-hidden="true">→</span>
+                              <span className="rounded border border-waiting-border bg-waiting-soft px-1.5 py-0.5 text-waiting-foreground">
+                                {p2.join(' + ')}
+                              </span>
+                            </>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <p className="text-muted-foreground">暂无可用登录</p>
+                      )}
                     </div>
                   );
                 })}
               </div>
-            ) : (
+            ) : options ? (
               <div className="grid gap-2.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Note className="text-xs">仅列出本项目允许且支持对应档位的登录；额度用完或离线时自动顺延。</Note>
+                  <Note className="text-xs">仅列出本项目允许的逻辑账号与渠道；同在 P1 的渠道按最少活跃与剩余额度自动均衡。</Note>
                   <Button
                     type="button"
                     size="sm"
                     variant="ghost"
                     className="h-7 gap-1 px-2 text-xs"
                     disabled={busy}
-                    onClick={() => setDispatchOrderDraft(null)}
+                    onClick={() => setDispatchSlotsDraft(null)}
                   >
                     <RotateCcw className="size-3" aria-hidden="true" />
                     恢复全局
                   </Button>
                 </div>
-                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-                  {TIERS.map((tier) => {
-                    const list = customTierOrder[tier.id];
-                    return (
-                      <div key={tier.id} className="rounded-lg border border-border/75 bg-muted/35 p-2.5">
-                        <div className="mb-1.5 flex items-center justify-between gap-2">
-                          <h4 className="text-xs font-semibold text-foreground">{tier.label}</h4>
-                          <span className="rounded-full bg-hover px-1.5 text-[11px] leading-[17px] text-muted-foreground tabular-nums">
-                            {list.length}
-                          </span>
-                        </div>
-                        {list.length > 0 ? (
-                          <ol aria-label={`${tier.label}本项目派发顺位`} className="divide-y divide-border/60 rounded-md border border-border/70 bg-raised">
-                            {list.map((id, index) => {
-                              const { name, shown: short } = loginLabelFor(id);
-                              return (
-                                <li key={id} className="flex items-center gap-1 py-1 pr-1 pl-2">
-                                  <span className="w-4 flex-none text-[11px] text-faint tabular-nums">{index + 1}</span>
-                                  <span className="min-w-0 flex-1 truncate text-xs" title={name}>{short}</span>
-                                  <Button
-                                    type="button"
-                                    size="icon-sm"
-                                    variant="ghost"
-                                    className="size-6"
-                                    disabled={busy || index === 0}
-                                    aria-label={`把 ${name} 在${tier.label}往前挪`}
-                                    onClick={() => moveCustomTier(tier.id, index, index - 1)}
-                                  >
-                                    <ArrowUp className="size-3.5" />
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="icon-sm"
-                                    variant="ghost"
-                                    className="size-6"
-                                    disabled={busy || index === list.length - 1}
-                                    aria-label={`把 ${name} 在${tier.label}往后挪`}
-                                    onClick={() => moveCustomTier(tier.id, index, index + 1)}
-                                  >
-                                    <ArrowDown className="size-3.5" />
-                                  </Button>
-                                </li>
-                              );
-                            })}
-                          </ol>
-                        ) : <Note className="text-xs">暂无可用登录。</Note>}
-                      </div>
-                    );
-                  })}
-                </div>
+                <DispatchSlotsPanel
+                  page={options}
+                  entries={projectLogicalEntries}
+                  slotsByTier={customProjectSlots}
+                  busy={busy}
+                  compact
+                  hideSimulator
+                  showTierSupport
+                  ariaLabel={`${project.name} 本项目派发槽位矩阵`}
+                  hint={null}
+                  onSaveTier={(tier, next) => setDispatchSlotsDraft({ ...customProjectSlots, [tier]: next })}
+                />
               </div>
+            ) : (
+              <Note className="text-xs">登录信息加载中…</Note>
             )}
           </Setting>
 
@@ -830,7 +777,7 @@ export function ProjectSettings({ project }: { project: Project }) {
               return dirtyLabels.length ? <span className="text-xs text-faint">{`（${dirtyLabels.join('、')}）`}</span> : null;
             })()}
           </span>
-          <Button variant="ghost" disabled={saving} onClick={() => { setDraft(null); setDispatchOrderDraft(undefined); setError(null); }}>取消</Button>
+          <Button variant="ghost" disabled={saving} onClick={() => { setDraft(null); setDispatchSlotsDraft(undefined); setError(null); }}>取消</Button>
           <Button
             variant="primary"
             disabled={busy}

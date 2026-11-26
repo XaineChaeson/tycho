@@ -120,7 +120,7 @@ const dirsOnDisk = (dir: string): string[] => {
 };
 
 // `reg.exe` by its full path: a bare name would be looked for in the working directory first.
-function regOnDisk(args: string[]): string | undefined {
+export function regOnDisk(args: string[]): string | undefined {
   const root = envOf(process.env, 'SYSTEMROOT');
   const reg = win32.join(root !== undefined && fullyQualified(root) ? root : 'C:\\Windows', 'System32', 'reg.exe');
   try {
@@ -178,12 +178,38 @@ export function windowsFinder(env: NodeJS.ProcessEnv, options: Pick<LocateOption
   return { find, isFile, outside };
 }
 
+// Canonical containment check for POSIX paths so a PATH entry, managed prefix, or symlink
+// resolving inside an excluded task checkout directory can never be launched as an executor.
+function posixOutside(options: Pick<LocateOptions, 'exclude' | 'realpath'>): (file: string) => boolean {
+  const excluded = (options.exclude ?? []).filter((dir) => posix.isAbsolute(dir));
+  if (excluded.length === 0) return () => true;
+  const realpath = options.realpath ?? ((path: string) => realpathSync.native(path));
+  const resolveOrUndef = (path: string): string | undefined => {
+    try { return posix.normalize(realpath(path)); } catch { return undefined; }
+  };
+  const norm = (path: string): string => posix.normalize(path).replace(/\/+$/, '') || '/';
+  const roots = excluded.flatMap((dir) => {
+    const resolved = resolveOrUndef(dir);
+    return resolved === undefined ? [norm(dir)] : [norm(dir), norm(resolved)];
+  });
+  const inside = (path: string): boolean => {
+    const p = norm(path);
+    return roots.some((root) => p === root || (root === '/' ? p.startsWith('/') : p.startsWith(`${root}/`)));
+  };
+  return (file: string): boolean => {
+    const dir = posix.dirname(file);
+    const real = resolveOrUndef(file);
+    const places = [dir, resolveOrUndef(dir), real === undefined ? undefined : posix.dirname(real)];
+    return places.every((place) => place !== undefined && !inside(place));
+  };
+}
+
 // The first executable `name` in one of PATH's absolute directories (POSIX).
-function posixPath(name: string, env: NodeJS.ProcessEnv, isFile: (path: string) => boolean): string | undefined {
-  if (name.includes('/')) return posix.isAbsolute(name) && isFile(name) ? name : undefined;
+function posixPath(name: string, env: NodeJS.ProcessEnv, take: (path: string) => boolean): string | undefined {
+  if (name.includes('/')) return posix.isAbsolute(name) && take(name) ? name : undefined;
   for (const dir of (env['PATH'] ?? '').split(':').filter((each) => posix.isAbsolute(each))) {
     const file = posix.join(dir, name);
-    if (isFile(file)) return file;
+    if (take(file)) return file;
   }
   return undefined;
 }
@@ -215,7 +241,7 @@ const UNINSTALL_KEYS = [
 ];
 
 // One value line of `reg query`: four spaces, the name, its type, its data.
-const VALUE_LINE = /^\s+(\S.*?)\s{4}(REG_SZ|REG_EXPAND_SZ)\s{4}(.*)$/;
+export const VALUE_LINE = /^\s+(\S.*?)\s{4}(REG_SZ|REG_EXPAND_SZ)\s{4}(.*)$/;
 
 // The folders the uninstall entries with this display name record, as `reg query` prints
 // them. A value of the expandable kind has its `%VARIABLE%`s filled in from `env`.
@@ -248,6 +274,24 @@ export function installLocations(displayName: string, registry: RegistryQuery, e
   return found;
 }
 
+// Where Tycho's node-local CLI updater installs user-scoped npm CLIs when the system global
+// npm prefix is read-only (e.g. root-owned /usr/local on Linux). Derived solely from the
+// machine's own lookup environment, never from host-sent round env.
+export function managedCliPrefix(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string | undefined {
+  if (platform === 'win32') {
+    const home = envOf(env, 'USERPROFILE', 'win32');
+    return home !== undefined && fullyQualified(home) ? win32.join(home, '.tycho', 'cli') : undefined;
+  }
+  const home = envOf(env, 'HOME', platform);
+  return home !== undefined && posix.isAbsolute(home) ? posix.join(home, '.tycho', 'cli') : undefined;
+}
+
+export function managedCliBinDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string | undefined {
+  const prefix = managedCliPrefix(env, platform);
+  if (prefix === undefined) return undefined;
+  return platform === 'win32' ? prefix : posix.join(prefix, 'bin');
+}
+
 // Where the command is, or every place that was looked in. Never throws.
 export function locate(name: string, options: LocateOptions): Lookup {
   const platform = options.platform ?? process.platform;
@@ -256,8 +300,24 @@ export function locate(name: string, options: LocateOptions): Lookup {
   const searched: string[] = [];
   const finder = windows ? windowsFinder(env, options) : undefined;
   const isFile = options.isFile ?? (windows ? isFileOnDisk : isExecutableOnDisk);
-  const take = (file: string): boolean => (finder === undefined ? isFile(file) : finder.isFile(file) && finder.outside(file));
-  const onPath = finder === undefined ? posixPath(name, env, isFile) : finder.find(name);
+  const outsidePosix = windows ? undefined : posixOutside(options);
+  const take = (file: string): boolean => (finder === undefined ? isFile(file) && outsidePosix!(file) : finder.isFile(file) && finder.outside(file));
+  // Prefer a Tycho-managed user-local CLI binary when present (installed by node/executor-updater.ts
+  // after a read-only system prefix prevented in-place upgrade). Only checked for bare command names
+  // and omitted from `searched` when absent so default PATH lookup diagnostics stay unchanged.
+  if (!/[\\/]/.test(name)) {
+    const managedBin = managedCliBinDir(env, platform);
+    if (managedBin !== undefined) {
+      const managed = finder === undefined
+        ? (() => {
+            const file = posix.join(managedBin, name);
+            return take(file) ? file : undefined;
+          })()
+        : finder.find(win32.join(managedBin, name));
+      if (managed !== undefined) return { path: managed, searched: [managed] };
+    }
+  }
+  const onPath = finder === undefined ? posixPath(name, env, take) : finder.find(name);
   searched.push(/[\\/]/.test(name) ? name : 'PATH');
   if (onPath !== undefined) return { path: onPath, searched };
   const join = windows ? win32.join : posix.join;

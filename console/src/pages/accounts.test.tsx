@@ -88,7 +88,7 @@ test('机器登录的空文本档位说明使用本机配置，未提供的档�
   expect(p.calls.find((call) => call.method === 'PUT')!.body).toMatchObject({ tiers: { decide: { kind: 'content', text: '' } } });
 });
 
-test('confirmed subscription surfaces freshest quota directly on the centralized account and separates machine login into its own rail group', async () => {
+test('confirmed subscription surfaces freshest quota directly on the centralized account and folds duplicate machine login inline', async () => {
   const at = '2026-11-12T12:34:56.000Z';
   const login = own('b1', 'claude', { status: status({ usage: [{ window: 'five_hour', used: 0.75, resets_at: null, at }] }) });
   const machine = { ...nodeMachine('b1', { connected: true }), logins: [login] };
@@ -98,10 +98,12 @@ test('confirmed subscription surfaces freshest quota directly on the centralized
   expect(accountCard).toHaveAttribute('id', 'gpu');
   expect(within(accountCard).getByText(/5 小时窗口 75%/)).toBeVisible();
   expect(within(accountCard).getByRole('button', { name: '修改' })).toBeEnabled();
-  selectOwn('b1', 'claude');
-  const ownCard = screen.getByRole('region', { name: /机器 b1.*claude/ });
-  expect(ownCard).toHaveAttribute('id', login.id);
-  expect(within(ownCard).getByRole('button', { name: '修改' })).toBeEnabled();
+  // Same-identity machine login is NOT duplicated as an independent entry in the left rail
+  expect(screen.queryByRole('button', { name: /选择单机登录 b1 · claude/ })).toBeNull();
+  // Instead, it is surfaced inline under the centralized account with a cleanup button
+  expect(within(accountCard).getByText(/同账号本机冗余登录（1 台）/)).toBeVisible();
+  expect(within(accountCard).getByText('b1/claude')).toBeVisible();
+  expect(within(accountCard).getByRole('button', { name: '删除冗余登录' })).toBeEnabled();
   selectAccount('cx');
   expect(screen.getByRole('region', { name: 'cx' })).toBeInTheDocument();
 });

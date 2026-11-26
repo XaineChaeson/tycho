@@ -83,8 +83,8 @@ export const DISPATCH_ORDER_KEYS: readonly DispatchOrderKey[] = TIERS.map((tier)
 
 export const SETTINGS = {
   'router.cli': {
-    group: ROUTER, title: 'Claude Code 路径', type: 'file', empty: '自动找 claude：先 PATH，再 Windows 桌面应用自带的',
-    help: '负责人用哪个 Claude Code 可执行文件。留空时自动找：先找 PATH 里的，再找 Windows 桌面应用自己装的那一份（取最新的版本）。填的路径不在了也一样找，自检里会说明改用哪一个。下次启动负责人时生效：改完点下面的“重启负责人”。',
+    group: ROUTER, title: '负责人 CLI 路径', type: 'file', empty: '自动找执行器 CLI：先 PATH，再桌面/用户安装目录',
+    help: '负责人未绑定自定义路径时自动定位对应执行器（支持 Claude / Codex / Gemini）。留空时优先 PATH，再查找常见安装位置；填的路径不在了也一样回退并由自检提示。下次启动负责人时生效：改完点下面的“重启负责人”。',
     default: '',
   },
   'router.account': {

@@ -155,7 +155,7 @@ test('the answers recorded from a real account read as models with their own str
   assert.ok(models.length > 0);
   for (const model of models) {
     assert.ok(model.id && !model.id.includes(' '), `不是 id：${model.id}`);
-    assert.ok(model.efforts === undefined || model.efforts.length > 0);
+    assert.ok(model.efforts === undefined || Array.isArray(model.efforts));
   }
   assert.ok(models.some(({ efforts }) => efforts?.includes('high')));
   // The answer writes a flag of its own beside the strengths.
@@ -166,7 +166,7 @@ test('the answers recorded from a real account read as models with their own str
   assert.ok(aliases.every(({ efforts }) => efforts?.includes('high')));
 });
 
-test('gemini parses agy models TSV recording and ignores unparseable lines', async () => {
+test('gemini parses agy models TSV recording and dynamic --help efforts, ignoring unparseable lines', async () => {
   const { readFileSync } = await import('node:fs');
   const { join } = await import('node:path');
   const { geminiAdapter } = await import('../adapters/gemini.ts');
@@ -174,11 +174,19 @@ test('gemini parses agy models TSV recording and ignores unparseable lines', asy
   assert.equal(query.kind, 'command');
   if (query.kind !== 'command') return;
   assert.deepEqual(query.argv, ['agy', 'models']);
+  assert.deepEqual(query.extraArgv, ['agy', '--help']);
   const stdout = readFileSync(join(import.meta.dirname, 'fixtures', 'gemini', '1.5.9-win', 'models.stdout'), 'utf8');
   const models = query.parse(stdout);
   assert.equal(models.length, 22);
   assert.deepEqual(models[0], { id: 'gemini-4-carbon-medium', name: 'Gemini 4 Carbon (Medium)' });
   assert.deepEqual(models.at(-1), { id: 'gpt-oss-120b-medium', name: 'GPT-OSS 120B (Medium)' });
+  const helpOut = 'Usage of agy:\n  --effort  Reasoning effort for the current CLI session (low|medium|high|xhigh|max)\n';
+  const withEfforts = query.parse(stdout, helpOut);
+  assert.deepEqual(withEfforts[0], {
+    id: 'gemini-4-carbon-medium',
+    name: 'Gemini 4 Carbon (Medium)',
+    efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+  });
   assert.deepEqual(query.parse(''), []);
   assert.deepEqual(query.parse('\n  \n\tmissing-id\n'), []);
 });

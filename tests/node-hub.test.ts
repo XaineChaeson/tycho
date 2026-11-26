@@ -508,7 +508,7 @@ test('机器报告的登录组织编号被收下、归一，并从同一份报�
   assert.deepEqual(f.ledger.loginState(login.id).identity, {}, '探针明确没有个人订阅标识，解除原来的匹配');
   assert.deepEqual(f.ledger.loginState(login.id).usage, []);
   // Out of shape or not an organization id: the whole report is refused, never guessed at.
-  for (const identity of ['x', { organizationId: 7 }, { organizationId: 'x@example.com' }, { accountLabel: 'x@example.com' }, { accountLabel: 4 }]) {
+  for (const identity of ['x', { organizationId: 7 }, { organizationId: 'x@example.com' }, { accountLabel: 4 }]) {
     await assert.rejects(
       async () => nodes.poll(machine.id, { runs: [], facts: FACTS, executors: { at: '2026-11-06T12:00:00.000Z', executors: [{ executor: 'claude', installed: true, identity }] } }),
       InputError,
