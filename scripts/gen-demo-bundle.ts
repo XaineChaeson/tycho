@@ -6,6 +6,7 @@
 //    knowledge self-evolution promotion, priority slots, and swimlane/blueprint switching).
 // 3. Copies the built real Console SPA (`console/dist`, built with TYCHO_CONSOLE_BASE=./) into
 //    `docs-site/demo/` and injects `demo-engine.js` ahead of the React bundle.
+import { execFileSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -210,7 +211,8 @@ async function collectSeed(): Promise<{ projectId: string; workId: string; seedM
       options: ['自动合入并播报 #eng-ops 群（推荐）', '仅合入代码，暂不外发群播报'],
     }], USER);
 
-    // Log in via real HTTP signIn() and snapshot every real Console API endpoint
+    // Log in via real HTTP signIn() — ALL Demo entities (triggers, inbound, IM groups, knowledge)
+    // are created via REAL ledger & HTTP APIs so the Demo can NEVER drift from source schemas!
     const client = await signIn(service);
     const apiGet = async (path: string, required = false): Promise<unknown> => {
       const r = await client.get(path);
@@ -220,8 +222,218 @@ async function collectSeed(): Promise<{ projectId: string; workId: string; seedM
       }
       return await r.json();
     };
+    const apiPost = async (path: string, body: unknown): Promise<Record<string, unknown>> => {
+      const r = await client.post(path, body);
+      if (!r.ok) {
+        const text = await r.text();
+        throw new Error(`Demo seed POST ${path} failed (${r.status}): ${text}`);
+      }
+      return (await r.json()) as Record<string, unknown>;
+    };
 
+    // 1. Seed REAL IM broadcast group (#eng-ops 研发值班群)
+    const groupRes = await apiPost('/api/im/groups', {
+      channel: 'wecom',
+      chat_id: 'eng-ops-duty',
+      chat_name: '#eng-ops 研发值班群',
+      project_id: p1,
+      trigger_mode: 'mention_or_rules',
+      rule_keywords: ['线上告警', '灰度发布', '回滚'],
+      cooldown_seconds: 30,
+      notify_events: true,
+    });
+    const opsGroupId = (groupRes.group as { id: string }).id;
+
+    // 2. Seed REAL Inbound Sources (tycho-v1 Feishu bridge + GitHub PR webhook) with real rotating keys
+    const feishuSrc = await apiPost('/api/inbound', {
+      name: '飞书研发值班群桥接',
+      kind: 'tycho-v1',
+      note: '研发值班群快慢分流桥接，仅回读总控公开答复',
+      project_ids: [p1],
+      broadcast_groups: true,
+      broadcast_group_ids: [opsGroupId],
+    });
+    const feishuSrcId = (feishuSrc.source as { id: string }).id;
+    await apiPost(`/api/inbound/${encodeURIComponent(feishuSrcId)}/key`, {});
+
+    const ghSrc = await apiPost('/api/inbound', {
+      name: 'GitHub PR 自动审阅 Webhook',
+      kind: 'github',
+      note: 'PR 打开自动派发跨模型安全审阅并播报值班群',
+      project_ids: [p1, p2],
+      broadcast_groups: true,
+      broadcast_group_ids: [opsGroupId],
+    });
+    const ghSrcId = (ghSrc.source as { id: string }).id;
+    await apiPost(`/api/inbound/${encodeURIComponent(ghSrcId)}/key`, {});
+
+    // 3. Seed REAL Project Triggers across Cron / Every / Once / Event kinds so the 24h Schedule Timeline shines!
     const nowDate = new Date();
+    const in2h30m = new Date(nowDate.getTime() + 150 * 60_000).toISOString();
+    const anchor2h = new Date(nowDate.getTime() + 45 * 60_000).toISOString();
+
+    await apiPost(`/api/projects/${p1}/triggers`, {
+      name: '晨间回归与 Webhook 队列巡检',
+      instruction: '拉取最新 main 分支运行核心回归测试，核查 EU 集群 Webhook 重试队列积压并输出晨报。',
+      schedule: { kind: 'cron', expr: '0 9 * * 1-5', zone: 'Asia/Shanghai' },
+      missed: 'skip',
+      push_final: true,
+      broadcast_groups: true,
+      broadcast_group_ids: [opsGroupId],
+    });
+    await apiPost(`/api/projects/${p1}/triggers`, {
+      name: '每 4 小时健康度与延迟采样',
+      instruction: '采样最近 4 小时 Webhook P99 延迟与失败重试分布，异常超过 60ms 自动建单定位。',
+      schedule: { kind: 'every', every_ms: 4 * 3600_000, anchor: anchor2h },
+      missed: 'skip',
+      push_final: false,
+    });
+    await apiPost(`/api/projects/${p1}/triggers`, {
+      name: '午后慢查询与接口基线核查',
+      instruction: '核对支付回调与幂等键写入路径的慢 SQL 与连接池水位，必要时给出索引建议。',
+      schedule: { kind: 'cron', expr: '30 14 * * 1-5', zone: 'Asia/Shanghai' },
+      missed: 'skip',
+      push_final: false,
+    });
+    await apiPost(`/api/projects/${p1}/triggers`, {
+      name: '晚间依赖安全扫描与夜间压测',
+      instruction: '执行依赖漏洞审计与 10k 并发回归压测，生成夜间质量报告并播报值班群。',
+      schedule: { kind: 'cron', expr: '0 21 * * 1-5', zone: 'Asia/Shanghai' },
+      missed: 'latest',
+      push_final: true,
+      broadcast_groups: true,
+      broadcast_group_ids: [opsGroupId],
+    });
+    await apiPost(`/api/projects/${p1}/triggers`, {
+      name: '单次灰度放量 2 小时后复盘',
+      instruction: '检查 EU 集群灰度放量后错误率与内存曲线，确认无回退后总结上线结论。',
+      schedule: { kind: 'once', at: in2h30m },
+      missed: 'latest',
+      push_final: true,
+      broadcast_groups: true,
+      broadcast_group_ids: [opsGroupId],
+    });
+    await apiPost(`/api/projects/${p1}/triggers`, {
+      name: '工作就绪自动串联跨模型审阅',
+      instruction: '收到 {{task_id}} 就绪事件后，优先用不同厂商模型核对边界单测与回滚方案。',
+      source: 'event',
+      event: { kind: 'work_ready' },
+      push_final: true,
+    });
+    await apiPost(`/api/projects/${p1}/triggers`, {
+      name: '合入后自动触发预发回归并播报',
+      instruction: '任务 {{task_id}} 合入主干后自动在 linux-gpu-01 跑预发验证并向 #eng-ops 播报摘要。',
+      source: 'event',
+      event: { kind: 'merged' },
+      push_final: true,
+      broadcast_groups: true,
+      broadcast_group_ids: [opsGroupId],
+    });
+
+    // Also add 2 triggers on tycho-core
+    await apiPost(`/api/projects/${p2}/triggers`, {
+      name: '每日凌晨零依赖全量单测巡检',
+      instruction: '运行 npm run typecheck && npm test 与 OSS 合规体检，发现失败自动定位。',
+      schedule: { kind: 'cron', expr: '0 3 * * *', zone: 'Asia/Shanghai' },
+      missed: 'skip',
+      push_final: true,
+    });
+    await apiPost(`/api/projects/${p2}/triggers`, {
+      name: '验收后自动汇总发版说明草稿',
+      instruction: '任务 {{task_id}} 验收通过后整理变更摘要并更新 CHANGELOG 草稿。',
+      source: 'event',
+      event: { kind: 'accepted' },
+      push_final: false,
+    });
+
+    // Fire one recent trigger occurrence cleanly in ledger so `最近触发记录` is also populated!
+    const pastT = new Date(nowDate.getTime() - 25 * 60_000);
+    const recentDemoTrig = ledger.createTrigger(p1, {
+      name: '盘前回调通道连通性快检',
+      instruction: '快速探活 EU 集群 Webhook 签名与出站超时参数，确认正常。',
+      schedule: { kind: 'once', at: new Date(pastT.getTime() + 60_000).toISOString() },
+      push_final: false,
+    }, USER, pastT);
+    ledger.fireDue(new Date(pastT.getTime() + 120_000));
+    const takenTurn = ledger.takeNextTurn(p1);
+    if (takenTurn) ledger.finishMessage(takenTurn.message.id, 'processed');
+
+    // 4. Seed REAL Knowledge Entries & Self-Evolution Proposals via REAL ledger.propose()!
+    // Zero hand-crafted JSON: sha256, digest, impact forecast, effective brief & overview badge are 100% real!
+    const OWNER_CTX = { actor: 'console' };
+    const OWNER_PROPOSER = { source: 'console' as const, by: 'console', client: 'console', writers: [] };
+    const WORKER_PROPOSER = { source: 'mcp' as const, by: 'codex @ linux-gpu-01', client: 'mcp:codex', writers: ['codex'] };
+
+    ledger.propose({
+      outputs: [{
+        title: '跨模型审阅前必须附带可复现测试命令与退出码',
+        when_to_use: '提交写入类任务 ready 回执前',
+        body: '所有写入类任务提交回执前，必须附带精确测试命令、通过数及 commit SHA，以便独立审阅轮次直接核对。',
+        project_ids: null, loading: 'resident', roles: ['implement', 'review'],
+      }],
+      why: { when: '提交代码改动等待验收前', changes: '统一附带可复现测试命令与 commit SHA', generalizes: '全团队所有研发项目通用' },
+      evidence: [{ source: 'run', ref: run1.id, location: '交付报告', excerpt: '18 / 18 边界单测通过，commit e4a91bc' }],
+    }, OWNER_PROPOSER, OWNER_CTX);
+
+    ledger.propose({
+      outputs: [{
+        title: 'atlas-payments 入站幂等键必须按 (source_id, event_id) 联合唯一',
+        when_to_use: '新增支付回调或 Webhook 接入点时',
+        body: '外部支付回调与入站 Webhook 统一使用复合唯一键防重放，严禁仅依赖时间戳去重。',
+        project_ids: [p1], loading: 'resident', roles: ['implement'],
+      }],
+      why: { when: '接入新的外部支付或 Webhook 回调时', changes: '强制按 (source_id, event_id) 建联合唯一键', generalizes: '适用于 atlas-payments 全部外部入站入口' },
+      evidence: [{ source: 'run', ref: runDone.id, location: 'tests/retry-backoff.test.ts', excerpt: '10k 并发压测通过（P99 42ms），重复回调 0 穿透' }],
+    }, OWNER_PROPOSER, OWNER_CTX);
+
+    ledger.propose({
+      kind: 'skill',
+      outputs: [{
+        title: '公网 HTTPS 反代 SSE 必配排查清单',
+        when_to_use: '部署或排查公网 Nginx / Caddy 反代 Tycho 主机时',
+        body: '## 在哪里做\n公网 VPS 的 Nginx / Caddy 反向代理配置。\n\n## 按什么顺序\n1. 设置 `proxy_buffering off` 与 `proxy_http_version 1.1`\n2. 设置 `proxy_read_timeout 3600s` 防止 SSE 长连静默断流\n3. 运行 `tycho doctor` 核验公网入口与实时事件流',
+        project_ids: null, loading: 'on_demand', roles: [],
+      }],
+      why: { when: '配置或排障公网反代时', changes: '按三步标准清单核对 SSE 缓冲与超时参数', generalizes: '所有公网 VPS 托管场景适用' },
+      evidence: [{ source: 'conversation', ref: reqMsg.id, location: '部署排障记录', excerpt: '关闭 proxy_buffering 后 SSE 断流问题彻底消除' }],
+    }, OWNER_PROPOSER, OWNER_CTX);
+
+    // Real `awaiting_owner` proposals (global + resident automatically waits for owner approval!)
+    ledger.propose({
+      outputs: [{
+        title: 'Webhook 重试必须加 300s 退避上限与随机抖动',
+        when_to_use: '编写或修改外部 Webhook / HTTP 重试退避逻辑时',
+        body: '从 `atlas-payments` #e4a91bc 事故提炼：指数退避在 `attempt > 12` 时禁止无上限增长，必须截断至 `300_000ms` 并叠加随机抖动，防止下游恢复瞬间被重试洪峰击穿。',
+        project_ids: null, loading: 'resident', roles: ['implement', 'review'],
+      }],
+      why: {
+        when: '任何 Webhook 或外部 HTTP 重试逻辑',
+        changes: '强制添加 300s 退避上限与 0.85~1.15 随机抖动',
+        generalizes: '适用于全部跨机微服务项目，避免重试雪崩',
+      },
+      evidence: [
+        { source: 'run', ref: run1.id, location: 'src/webhooks/retry.ts:84', excerpt: 'const raw = Math.min(MAX_BACKOFF_MS, 1000 * 2 ** Math.min(attempt, 16));' },
+        { source: 'run', ref: runDone.id, location: '压测交付报告', excerpt: '18 / 18 边界单测通过，10k 并发 P99 延迟恢复至 42ms。' },
+      ],
+    }, WORKER_PROPOSER, USER);
+
+    ledger.propose({
+      outputs: [{
+        title: '无头远程节点密钥落盘必须收紧仅当前用户可读写权限',
+        when_to_use: '新增或修改节点令牌、OAuth 凭据或通道密钥落盘逻辑时',
+        body: '所有落盘凭据必须统一复用属主 ACL 工具（POSIX `0600` / Windows `icacls`），严禁将凭据明文暴露给同机其他用户或写入工作区目录。',
+        project_ids: null, loading: 'resident', roles: ['implement', 'review'],
+      }],
+      why: {
+        when: '新增或改动凭据落盘与安全边界代码时',
+        changes: '统一通过 secrets 封装写入并校验属主 ACL',
+        generalizes: '覆盖 Linux / macOS / Windows 全平台主机与节点',
+      },
+      evidence: [
+        { source: 'run', ref: run1.id, location: 'service/secrets.ts', excerpt: 'putSecret 落盘自动执行 POSIX 0600 / Windows icacls 收紧权限' },
+      ],
+    }, WORKER_PROPOSER, USER);
+
     const from30d = new Date(nowDate.getTime() - 30 * 86400_000).toISOString();
     const toNow = nowDate.toISOString();
     const tzOffset = nowDate.getTimezoneOffset();
@@ -329,11 +541,28 @@ async function collectSeed(): Promise<{ projectId: string; workId: string; seedM
     }
     seedMap[`/api/messages/${reqMsg.id}/changes`] = await apiGet(`/api/messages/${reqMsg.id}/changes`);
 
-    // Enrich online nodes, knowledge self-evolution proposals & entries, inbound sources, and triggers cleanly
-    const now = new Date().toISOString();
-    const in2h = new Date(Date.now() + 2 * 3600_000).toISOString();
-    const in4d = new Date(Date.now() + 4 * 86400_000).toISOString();
+    // Dynamically snapshot EVERY Knowledge Proposal & Entry from the REAL GET /api/knowledge response!
+    const knPage = seedMap['/api/knowledge'] as {
+      awaiting?: { id: string }[];
+      proposals?: { id: string }[];
+      entries?: { id: string }[];
+    } | undefined;
+    const allPropIds = new Set<string>([
+      ...(knPage?.awaiting ?? []).map((p) => p.id),
+      ...(knPage?.proposals ?? []).map((p) => p.id),
+    ]);
+    for (const pid of allPropIds) {
+      const detail = await apiGet(`/api/knowledge/proposals/${pid}`, false);
+      if (detail !== null) seedMap[`/api/knowledge/proposals/${pid}`] = detail;
+    }
+    for (const entry of knPage?.entries ?? []) {
+      const detail = await apiGet(`/api/knowledge/entries/${entry.id}`, false);
+      if (detail !== null) seedMap[`/api/knowledge/entries/${entry.id}`] = detail;
+    }
 
+    // Minimal environment-only polish: fakeRemote does not hold real node WebSockets or public VPS reverse-proxy,
+    // so we mark the 3 seeded machines online and inbound reach ready while keeping 100% of real ledger rows intact.
+    const now = new Date().toISOString();
     const machPage = seedMap['/api/machines'] as { machines?: Record<string, unknown>[] } | undefined;
     if (machPage?.machines) {
       machPage.machines = machPage.machines.map((m) => {
@@ -370,165 +599,9 @@ async function collectSeed(): Promise<{ projectId: string; workId: string; seedM
       });
     }
 
-    const knPage = seedMap['/api/knowledge'] as Record<string, unknown> | undefined;
-    if (knPage) {
-      const prop1 = {
-        id: '01J9KP0001EVOLVE0000000001',
-        created_at: now,
-        kind: 'knowledge',
-        state: 'awaiting_owner',
-        state_reason: null,
-        owner_reasons: ['global_resident'],
-        source: 'worker',
-        proposed_by: 'codex @ linux-gpu-01',
-        request_id: null, task_id: readyTask.id, run_id: run1.id,
-        amended_from: null, next_id: null, digest: 'a'.repeat(64), final_digest: 'a'.repeat(64),
-        prior_rejection: null, gate_task_id: null,
-        gate: { result: 'pass', reason: '独立把关已核实 3 条证据与 18/18 单测结果；因属全局常驻规范，等待主人点头生效。', modified: false, task_id: readyTask.id, run_id: run1.id },
-        decided_at: null, decided_by: null, decided_via: null, decision_note: null,
-        published_at: null, reviewed_at: null, reviewed_by: null,
-        evidence_count: 3, verified_count: 3,
-        why: { when: '任何 Webhook 或外部 HTTP 重试逻辑', changes: '强制添加 300s 退避上限与随机抖动', generalizes: '适用于全部跨机微服务项目，避免重试雪崩' },
-        change: {
-          kind: 'knowledge',
-          inputs: [],
-          outputs: [{
-            key: 'out-1', revises: null, title: 'Webhook 重试必须加 300s 退避上限与随机抖动',
-            when_to_use: '编写或修改外部 Webhook / HTTP 重试退避逻辑时',
-            body: '从 atlas-payments #e4a91bc 事故提炼：指数退避在 attempt > 12 时禁止无上限增长，必须截断至 300s 并叠加随机抖动，防止下游恢复瞬间被重试洪峰击穿。',
-            project_ids: null, loading: 'resident', roles: ['implement', 'review'],
-          }],
-        },
-        final: null,
-      };
-      const prop2 = {
-        id: '01J9KP0002EVOLVE0000000002',
-        created_at: now,
-        kind: 'skill',
-        state: 'awaiting_owner',
-        state_reason: null,
-        owner_reasons: ['owner_entry'],
-        source: 'router',
-        proposed_by: 'project-router · atlas-payments',
-        request_id: null, task_id: null, run_id: null,
-        amended_from: null, next_id: null, digest: 'b'.repeat(64), final_digest: 'b'.repeat(64),
-        prior_rejection: null, gate_task_id: null,
-        gate: { result: 'pass', reason: '已核对 Nginx SSE 反代实测日志，建议沉淀为项目标准排障技能。', modified: false, task_id: readyTask.id, run_id: run1.id },
-        decided_at: null, decided_by: null, decided_via: null, decision_note: null,
-        published_at: null, reviewed_at: null, reviewed_by: null,
-        evidence_count: 2, verified_count: 2,
-        why: { when: '配置公网 Nginx / Caddy 反代 Tycho 主机', changes: '必须声明 proxy_buffering off 与长超时', generalizes: '防止公网控制台与出站节点 SSE 静默断流' },
-        change: {
-          kind: 'skill',
-          inputs: [],
-          outputs: [{
-            key: 'out-2', revises: null, title: '公网 HTTPS 反代 SSE 必配清单',
-            when_to_use: '部署或排查公网 HTTPS 反向代理时',
-            body: '## 在哪里做\n公网 VPS 的 Nginx / Caddy 配置。\n\n## 按什么顺序\n1. 设置 proxy_buffering off 与 proxy_http_version 1.1\n2. 设置 proxy_read_timeout 3600s\n3. 用 tycho doctor 验证 SSE 实时流正常',
-            project_ids: [p1], loading: 'catalog', roles: [],
-          }],
-        },
-        final: null,
-      };
-      const entries = [
-        {
-          id: '01J9KE0001ENTRY00000000001',
-          created_at: now, updated_at: now,
-          title: '跨模型审阅前必须附带可复现测试命令与退出码',
-          when_to_use: '提交写入类任务 ready 回执前',
-          kind: 'knowledge', project_ids: null, loading: 'resident', roles: ['implement', 'review'],
-          revision: 3, state: 'active', reviewed: true,
-          body: '所有写入类任务提交回执前，必须附带精确测试命令、通过数及 commit SHA，以便独立审阅轮次直接核对。',
-        },
-        {
-          id: '01J9KE0002ENTRY00000000002',
-          created_at: now, updated_at: now,
-          title: 'atlas-payments 入站幂等键必须按 (source_id, event_id) 联合唯一',
-          when_to_use: '新增支付回调或 Webhook 接入点时',
-          kind: 'knowledge', project_ids: [p1], loading: 'resident', roles: ['implement'],
-          revision: 2, state: 'active', reviewed: true,
-          body: '外部支付回调与入站 Webhook 统一使用复合唯一键防重放，严禁仅依赖时间戳。',
-        },
-        {
-          id: '01J9KE0003ENTRY00000000003',
-          created_at: now, updated_at: now,
-          title: 'Windows 节点密钥落盘必须复用 icacls 仅当前用户读写',
-          when_to_use: '修改凭据或节点令牌落盘逻辑时',
-          kind: 'skill', project_ids: null, loading: 'catalog', roles: [],
-          revision: 1, state: 'active', reviewed: true,
-          body: 'Node token 与托管密钥写入后立即收紧 ACL，避免同机其他账户读取。',
-        },
-      ];
-      knPage.awaiting = [prop1, prop2];
-      knPage.proposals = [prop1, prop2];
-      knPage.entries = entries;
-
-      // Seed detail pages for both proposals & entries so clicking them in Demo works seamlessly!
-      for (const prop of [prop1, prop2]) {
-        seedMap[`/api/knowledge/proposals/${prop.id}`] = {
-          proposal: {
-            ...prop,
-            evidence: [
-              {
-                id: `${prop.id}-ev-1`, seq: 1, source: 'task_run', ref: readyTask.id,
-                location: 'src/webhooks/retry.ts:84',
-                excerpt: 'const raw = Math.min(MAX_BACKOFF_MS, 1000 * 2 ** Math.min(attempt, 16));',
-                captured_at: now, sha256: 'e4a91bc048f3d219a77c50d912c8e0f104a891bc048f3d219a77c50d912c8e0f',
-                submitted_by: 'codex @ linux-gpu-01', verified: true,
-              },
-              {
-                id: `${prop.id}-ev-2`, seq: 2, source: 'report', ref: run1.id,
-                location: '交付报告',
-                excerpt: '18 / 18 边界单测通过，10k 并发 P99 延迟恢复至 42ms。',
-                captured_at: now, sha256: '7c210ef9a8345b2019c4d1187e2f90ab7c210ef9a8345b2019c4d1187e2f90ab',
-                submitted_by: 'codex @ linux-gpu-01', verified: true,
-              },
-            ],
-          },
-          inputs: [],
-          impact: {
-            kind: 'forecast',
-            dropped: [],
-            combos: [{ project_id: p1, project: 'atlas-payments', role_id: 'implement', role: '实现', before: { brief: 1420, files: 1 }, after: { brief: 1790, files: 2 } }],
-          },
-        };
-      }
-      for (const entry of entries) {
-        seedMap[`/api/knowledge/entries/${entry.id}`] = {
-          entry,
-          revisions: [{
-            revision: entry.revision, created_at: now, title: entry.title, when_to_use: entry.when_to_use,
-            body: entry.body, project_ids: entry.project_ids, loading: entry.loading, roles: entry.roles,
-            proposed_by: 'codex @ linux-gpu-01', source: 'worker', evidence: [],
-          }],
-        };
-      }
-    }
-
     const inbPage = seedMap['/api/inbound'] as Record<string, unknown> | undefined;
     if (inbPage) {
       inbPage.reach = { reach: 'ready', reach_text: '已就绪 · 公网 HTTPS 入口可用', public_url: 'https://tycho.example.com' };
-      inbPage.sources = [
-        {
-          id: 'feishu-ops', name: '飞书研发值班群桥接', kind: 'tycho-v1', kind_label: 'tycho-v1 双向签名',
-          path: '/inbound/feishu-ops', enabled: true, ready: true, problem: null, rejected: 0,
-          note: '研发值班群快慢分流桥接，仅回读总控公开答复',
-          project_ids: [p1], projects: [p1], broadcast_groups: true, broadcast_group_ids: [],
-          keys: [{ id: '01J9KY00000000000000000001', created_at: now, retires_at: null }],
-        },
-        {
-          id: 'github-pr-guard', name: 'GitHub PR 自动审阅 Webhook', kind: 'github', kind_label: 'GitHub Webhook',
-          path: '/inbound/github-pr-guard', enabled: true, ready: true, problem: null, rejected: 0,
-          note: 'PR 打开自动派发跨模型安全审阅并播报群聊',
-          project_ids: [p1], projects: [p1], broadcast_groups: true, broadcast_group_ids: [],
-          keys: [{ id: '01J9KY00000000000000000002', created_at: now, retires_at: null }],
-        },
-      ];
-    }
-
-    const ovPage = seedMap['/api/overview'] as { counts?: Record<string, number> } | undefined;
-    if (ovPage?.counts) {
-      ovPage.counts.knowledge_awaiting = 2;
     }
 
     const statePage = seedMap['/api/state'] as Record<string, unknown> | undefined;
@@ -560,12 +633,6 @@ async function collectSeed(): Promise<{ projectId: string; workId: string; seedM
         if (reqRow) reqRow.state = 'processed';
         box.messages.push(replyMsg);
       }
-    }
-
-    // Add realistic quota telemetry timestamps
-    const accPage = seedMap['/api/accounts'] as Record<string, unknown> | undefined;
-    if (accPage) {
-      accPage.demo_quotas = { in2h, in4d };
     }
 
     return { projectId: p1, workId: work.id, seedMap };
@@ -607,6 +674,7 @@ function buildDemoEngineSource(projectId: string, workId: string, seedMap: Recor
     else if (go === 'knowledge') window.location.hash = '#/knowledge';
     else if (go === 'accounts') window.location.hash = '#/accounts';
     else if (go === 'machines') window.location.hash = '#/machines';
+    else if (go === 'triggers') window.location.hash = '#/projects/' + DEFAULT_PROJECT + '/triggers';
     else if (go === 'inbound') window.location.hash = '#/inbound';
     else if (go === 'hud') {
       try { localStorage.setItem('tycho.projectWorkView', 'hud'); } catch {}
@@ -629,6 +697,7 @@ function buildDemoEngineSource(projectId: string, workId: string, seedMap: Recor
         : d.route === 'knowledge' ? '#/knowledge'
         : d.route === 'accounts' ? '#/accounts'
         : d.route === 'machines' ? '#/machines'
+        : d.route === 'triggers' ? '#/projects/' + DEFAULT_PROJECT + '/triggers'
         : d.route === 'inbound' ? '#/inbound'
         : '#/';
       const prev = window.location.hash;
@@ -892,6 +961,21 @@ function buildDemoEngineSource(projectId: string, workId: string, seedMap: Recor
       emitSSE('changed', { at: Date.now() });
       return jsonRes({ task: t || { id: tid, state: 'done' } });
     }
+    const trigToggleMatch = method === 'POST' && /^\\/api\\/triggers\\/([^/]+)\\/enabled$/.exec(parsed.pathname);
+    if (trigToggleMatch) {
+      const tid = decodeURIComponent(trigToggleMatch[1]);
+      for (const key of Object.keys(db)) {
+        if (!key.endsWith('/triggers')) continue;
+        const page = db[key];
+        const found = (page?.triggers || []).find(t => t.id === tid);
+        if (found) {
+          found.enabled = Boolean(body.enabled);
+          emitSSE('changed', { at: Date.now() });
+          return jsonRes({ trigger: deepClone(found) });
+        }
+      }
+      return jsonRes({ ok: true });
+    }
     const decMatch = method === 'POST' && /^\\/api\\/knowledge\\/proposals\\/([^/]+)\\/decide$/.exec(parsed.pathname);
     if (decMatch) {
       const pid = decodeURIComponent(decMatch[1]);
@@ -995,14 +1079,24 @@ function buildDemoEngineSource(projectId: string, workId: string, seedMap: Recor
 
 export async function buildInteractiveDemo(outDemoDir: string): Promise<{ projectId: string; workId: string }> {
   const consoleDist = join(ROOT, 'console', 'dist');
-  if (!existsSync(join(consoleDist, 'index.html'))) {
-    throw new Error('console/dist not found — run `TYCHO_CONSOLE_BASE=./ npm --prefix console run build` first');
-  }
+  const distHtmlPath = join(consoleDist, 'index.html');
+  const hasRelativeDist = existsSync(distHtmlPath) && readFileSync(distHtmlPath, 'utf8').includes('./assets/');
 
   const { projectId, workId, seedMap } = await collectSeed();
   rmSync(outDemoDir, { recursive: true, force: true });
   mkdirSync(outDemoDir, { recursive: true });
-  cpSync(consoleDist, outDemoDir, { recursive: true });
+
+  if (hasRelativeDist) {
+    cpSync(consoleDist, outDemoDir, { recursive: true });
+  } else {
+    // Build a fresh relative-path Console SPA straight into docs-site/demo without touching console/dist!
+    const viteBin = join(ROOT, 'console', 'node_modules', 'vite', 'bin', 'vite.js');
+    execFileSync(process.execPath, [viteBin, 'build', '--base=./', `--outDir=${outDemoDir}`, '--emptyOutDir'], {
+      cwd: join(ROOT, 'console'),
+      stdio: 'inherit',
+      env: { ...process.env, TYCHO_CONSOLE_BASE: './' },
+    });
+  }
 
   const engineJs = buildDemoEngineSource(projectId, workId, seedMap);
   writeFileSync(join(outDemoDir, 'demo-engine.js'), engineJs, 'utf8');
@@ -1012,6 +1106,7 @@ export async function buildInteractiveDemo(outDemoDir: string): Promise<{ projec
   let html = readFileSync(htmlPath, 'utf8');
   html = html.replace('<head>', '<head>\n  <script src="./demo-engine.js"></script>');
   html = html.replace(/<link rel="manifest"[^>]*>/i, '');
+  html = html.replace(/href="\/icons\//g, 'href="./icons/');
   writeFileSync(htmlPath, html, 'utf8');
   rmSync(join(outDemoDir, 'sw.js'), { force: true });
 
