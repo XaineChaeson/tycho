@@ -72,4 +72,11 @@ jobs:
           name: Tycho ${{ github.ref_name }}
           generate_release_notes: true
           make_latest: "true"
+          body: |
+            ## Tycho Server ${{ github.ref_name }}
+
+            - **One-line install (macOS / Linux)**: `curl -fsSL https://github.com/XaineChaeson/tycho/releases/latest/download/install.sh | bash`
+            - **One-line install (Windows PowerShell)**: `irm https://github.com/XaineChaeson/tycho/releases/latest/download/install.ps1 | iex`
+            - **Desktop Thin-Shell Client (`.exe` / `.dmg` / `.deb` / `.AppImage`)**: Published separately under [`app-v*` Desktop Releases](https://github.com/XaineChaeson/tycho/releases) so desktop releases never override the server `Latest` installer pointer.
+            - **Website & Docs**: https://xainechaeson.github.io/tycho/
           files: release-artifacts/*

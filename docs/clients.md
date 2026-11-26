@@ -6,15 +6,20 @@ Tycho 采用 **「服务端统一承载 UI + 3.6 MB 原生薄壳 / 手机全屏 
   <img src="./assets/preview-clients.png" alt="Tycho 3.6 MB Desktop, Mobile PWA, JSON Themes and SKILL.md Mirror" width="100%" />
 </p>
 
-## 平台支持矩阵
+> [!TIP]
+> **找不到 `.exe` / `.dmg` 安装包？** GitHub 仓库右侧默认的 **Latest (`v*`)** 仅包含服务端包（`tycho.tar.gz`，供一键安装脚本自动拉取）；**桌面客户端独立发布在 [`app-v0.2.0`](https://github.com/XaineChaeson/tycho/releases/tag/app-v0.2.0)**（或查看 [全部 Releases 列表](https://github.com/XaineChaeson/tycho/releases)）。
 
-| 平台 | 推荐形态 | 获取方式 | 特点 |
+## 平台支持矩阵与直接下载
+
+| 平台 | 推荐形态 | 直接下载（[`app-v0.2.0`](https://github.com/XaineChaeson/tycho/releases/tag/app-v0.2.0)） | 特点 |
 | --- | --- | --- | --- |
-| **Windows 10/11** | **Portable 单文件 `.exe`** 或 **NSIS 安装包** | GitHub Releases (`app-v*`) | Tauri v2 薄壳，复用系统 WebView2，支持系统托盘、单实例、`Alt+Shift+T` 全局呼出与后台告警通知 |
-| **macOS (M 系列 / Intel)** | **Universal `.dmg`** | GitHub Releases (`app-v*`) | 通用二进制，复用系统 WKWebView |
-| **Linux (x64)** | **`.AppImage`** 或 **`.deb`** | GitHub Releases (`app-v*`) | 复用系统 WebKitGTK；AppImage 免安装即点即用 |
-| **iOS / iPadOS** | **PWA（添加到主屏幕）** | Safari 打开 Tycho 控制台 | 全屏独立窗口、适配刘海/灵动岛安全区、免 App Store 审核、随服务端实时更新 |
-| **Android** | **PWA（安装应用）** | Chrome / Edge 打开 Tycho 控制台 | 独立图标与全屏窗口、零安装包维护、随服务端实时更新 |
+| **Windows 10/11** | **Portable 单文件 `.exe`**（3.67 MB）或 **NSIS 安装包**（1.32 MB） | [Portable `.exe`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.0/Tycho-0.2.0-windows-x64-portable.exe) · [Setup `.exe`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.0/Tycho-0.2.0-windows-x64-setup.exe) | Tauri v2 薄壳，复用系统 WebView2，支持系统托盘、单实例、`Alt+Shift+T` 全局呼出与后台告警通知 |
+| **macOS (M 系列 / Intel)** | **Universal `.dmg`**（3.60 MB） | [macOS Universal `.dmg`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.0/Tycho-0.2.0-macos-universal.dmg) | 通用二进制，复用系统 WKWebView |
+| **Linux (x64)** | **`.deb`**（2.41 MB）或 **`.AppImage`** | [Ubuntu/Debian `.deb`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.0/Tycho-0.2.0-linux-amd64.deb) · [`.AppImage`](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.0/Tycho-0.2.0-linux-x86_64.AppImage) | 复用系统 WebKitGTK；AppImage 免安装即点即用 |
+| **iOS / iPadOS** | **PWA（添加到主屏幕）** | Safari 打开你的 Tycho 控制台 | 全屏独立窗口、适配刘海/灵动岛安全区、免 App Store 审核、随服务端实时更新 |
+| **Android** | **PWA（安装应用）** | Chrome / Edge 打开你的 Tycho 控制台 | 独立图标与全屏窗口、零安装包维护、随服务端实时更新 |
+
+校验文件：[SHA256SUMS.txt](https://github.com/XaineChaeson/tycho/releases/download/app-v0.2.0/SHA256SUMS.txt)
 
 ## 桌面端安装说明
 
