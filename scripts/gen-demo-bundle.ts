@@ -221,6 +221,11 @@ async function collectSeed(): Promise<{ projectId: string; workId: string; seedM
       return await r.json();
     };
 
+    const nowDate = new Date();
+    const from30d = new Date(nowDate.getTime() - 30 * 86400_000).toISOString();
+    const toNow = nowDate.toISOString();
+    const tzOffset = nowDate.getTimezoneOffset();
+
     const seedMap: Record<string, unknown> = {};
     const paths: [string, boolean][] = [
       ['/api/state', true],
@@ -228,19 +233,31 @@ async function collectSeed(): Promise<{ projectId: string; workId: string; seedM
       ['/api/overview', true],
       ['/api/doctor', true],
       ['/api/tasks?top=1', true],
+      ['/api/tasks/ended?limit=20&offset=0', false],
+      [`/api/tasks/ended?limit=20&offset=0&project=${p1}`, false],
+      [`/api/tasks/ended?limit=20&offset=0&project=${p2}`, false],
       ['/api/approvals', true],
       ['/api/projects', true],
+      ['/api/project-directory', false],
       ['/api/accounts', true],
       ['/api/machines', true],
       ['/api/node/joins', false],
       ['/api/executors/updates', false],
       ['/api/roles', true],
       ['/api/knowledge', true],
+      ['/api/knowledge/effective', false],
       ['/api/inbound', true],
       ['/api/im/groups', false],
       ['/api/settings', true],
-      ['/api/usage', false],
+      ['/api/quota', false],
+      [`/api/usage?from=${encodeURIComponent(from30d)}&to=${encodeURIComponent(toNow)}&tz=${tzOffset}`, false],
+      [`/api/usage/competence?from=${encodeURIComponent(from30d)}&to=${encodeURIComponent(toNow)}`, false],
       ['/api/themes', false],
+      ['/api/console-sessions', false],
+      ['/api/auth/passphrase', false],
+      ['/api/github', false],
+      ['/api/weixin', false],
+      ['/api/replay/cases', false],
       ['/api/messages/unassigned', false],
       [`/api/projects/${p1}/conversation`, true],
       [`/api/projects/${p2}/conversation`, false],
@@ -250,24 +267,59 @@ async function collectSeed(): Promise<{ projectId: string; workId: string; seedM
       [`/api/projects/${p2}/files`, false],
       [`/api/projects/${p1}/groups`, false],
       [`/api/projects/${p2}/groups`, false],
+      [`/api/projects/${p1}/history-evidence?limit=20`, false],
+      [`/api/projects/${p2}/history-evidence?limit=20`, false],
       [`/api/messages?project=${p1}&limit=50`, true],
       [`/api/messages?project=${p2}&limit=50`, false],
       [`/api/messages?limit=50`, true],
-      [`/api/tasks/${work.id}`, true],
-      [`/api/tasks/${readyTask.id}`, true],
-      [`/api/tasks/${doneTask.id}`, true],
-      [`/api/tasks/${runTask.id}`, true],
-      [`/api/tasks/${askTask.id}`, true],
-      [`/api/runs/${run1.id}/events`, false],
-      [`/api/runs/${run1.id}/snapshot`, false],
-      [`/api/runs/${runDone.id}/events`, false],
-      [`/api/runs/${runDone.id}/snapshot`, false],
-      [`/api/runs/${runRev.id}/events`, false],
-      [`/api/runs/${runRev.id}/snapshot`, false],
     ];
     for (const [p, req] of paths) {
       const val = await apiGet(p, req);
       if (val !== null) seedMap[p] = val;
+    }
+
+    // Store canonical aliases for query-parametrized endpoints so ANY date/filter query resolves cleanly
+    const usageKey = `/api/usage?from=${encodeURIComponent(from30d)}&to=${encodeURIComponent(toNow)}&tz=${tzOffset}`;
+    if (seedMap[usageKey]) seedMap['/api/usage'] = seedMap[usageKey];
+    const compKey = `/api/usage/competence?from=${encodeURIComponent(from30d)}&to=${encodeURIComponent(toNow)}`;
+    if (seedMap[compKey]) seedMap['/api/usage/competence'] = seedMap[compKey];
+    if (seedMap['/api/tasks/ended?limit=20&offset=0']) {
+      seedMap['/api/tasks/ended'] = seedMap['/api/tasks/ended?limit=20&offset=0'];
+    }
+
+    // Dynamically snapshot EVERY task (including auto-spawned independent review tasks!) and ALL their runs
+    const tasksListing = seedMap['/api/tasks?top=1'] as { tasks?: { id: string }[]; children?: { id: string }[] } | undefined;
+    const allTaskIds = new Set<string>([
+      work.id, readyTask.id, doneTask.id, runTask.id, askTask.id,
+      ...(tasksListing?.tasks ?? []).map((t) => t.id),
+      ...(tasksListing?.children ?? []).map((t) => t.id),
+    ]);
+    const allRunIds = new Set<string>([run1.id, runDone.id, runRev.id]);
+    for (const tid of allTaskIds) {
+      const detail = await apiGet(`/api/tasks/${tid}`, false) as { runs?: { id: string; artifacts?: { kind?: string; ref?: string }[] }[] } | null;
+      if (detail) {
+        seedMap[`/api/tasks/${tid}`] = detail;
+        for (const r of detail.runs ?? []) {
+          allRunIds.add(r.id);
+          for (const a of r.artifacts ?? []) {
+            if (a.kind === 'report' && a.ref) {
+              const repPath = `/api/runs/${r.id}/report?ref=${encodeURIComponent(a.ref)}`;
+              const rep = await apiGet(repPath, false);
+              if (rep !== null) seedMap[repPath] = rep;
+            }
+          }
+        }
+      }
+      for (const suffix of ['feedback', 'facts', 'diff', 'deliverables']) {
+        const sub = await apiGet(`/api/tasks/${tid}/${suffix}`, false);
+        if (sub !== null) seedMap[`/api/tasks/${tid}/${suffix}`] = sub;
+      }
+    }
+    for (const rid of allRunIds) {
+      for (const suffix of ['events', 'snapshot', 'diagnostics', 'trace']) {
+        const sub = await apiGet(`/api/runs/${rid}/${suffix}`, false);
+        if (sub !== null) seedMap[`/api/runs/${rid}/${suffix}`] = sub;
+      }
     }
 
     // Also snapshot segment messages & turn changes for p1
@@ -703,16 +755,19 @@ function buildDemoEngineSource(projectId: string, workId: string, seedMap: Recor
         summary: { dot: 'running', line: 'Codex @ linux-gpu-01 正在执行…' },
       };
       listing.children = [...(listing.children || []), newTask];
-      db['/api/tasks/' + newTaskId] = {
-        task: newTask,
-        work: findTaskListing(DEFAULT_WORK) || newTask,
-        children: [],
-        runs: [{
-          id: uid('run'), task_id: newTaskId, state: 'running', created_at: new Date().toISOString(),
-          machine_id: 'linux-gpu-01', login_id: 'work-codex', role_id: 'implement',
-        }],
-        approvals: [],
-      };
+      const templateDetailKey = Object.keys(db).find((k) => /^\\/api\\/tasks\\/[^/?]+$/.test(k) && db[k]?.task);
+      const templateDetail = templateDetailKey ? deepClone(db[templateDetailKey]) : { task: newTask, work: findTaskListing(DEFAULT_WORK) || newTask, children: [], runs: [], approvals: [] };
+      const newRunId = uid('run');
+      templateDetail.task = newTask;
+      templateDetail.work = findTaskListing(DEFAULT_WORK) || newTask;
+      templateDetail.children = [];
+      templateDetail.approvals = [];
+      if (Array.isArray(templateDetail.runs) && templateDetail.runs.length) {
+        templateDetail.runs = [{ ...templateDetail.runs[0], id: newRunId, task_id: newTaskId, state: 'running', created_at: new Date().toISOString() }];
+      } else {
+        templateDetail.runs = [];
+      }
+      db['/api/tasks/' + newTaskId] = templateDetail;
       db['/api/messages/' + inId + '/changes'] = {
         changes: [{ id: uid('chg'), kind: 'create_task', title: shortTitle }],
         tasks: [{ id: newTaskId, title: shortTitle, state: 'running', role_id: 'implement' }],
@@ -803,6 +858,12 @@ function buildDemoEngineSource(projectId: string, workId: string, seedMap: Recor
     if (method === 'POST' && parsed.pathname === '/api/messages') {
       return handleSendMessage(body);
     }
+    if (method === 'POST' && parsed.pathname === '/api/quota/refresh') {
+      return jsonRes(deepClone(db['/api/quota'] || { logins: [], refreshed_at: new Date().toISOString() }));
+    }
+    if (method === 'POST' && parsed.pathname === '/api/executors/updates/check') {
+      return jsonRes(deepClone(db['/api/executors/updates'] || { machines: [], checked_at: new Date().toISOString() }));
+    }
     const apMatch = method === 'POST' && /^\\/api\\/approvals\\/([^/]+)\\/answer$/.exec(parsed.pathname);
     if (apMatch) {
       const apId = decodeURIComponent(apMatch[1]);
@@ -868,19 +929,43 @@ function buildDemoEngineSource(projectId: string, workId: string, seedMap: Recor
       return jsonRes({ ok: true });
     }
 
-    // Serve GET snapshots (exact match, then pathname match, then graceful empty fallback)
+    // Serve GET snapshots (exact match, then pathname match, then schema-exact fallbacks — never empty {})
     if (method === 'GET') {
       if (pathWithQuery in db) return jsonRes(deepClone(db[pathWithQuery]));
       if (parsed.pathname in db) return jsonRes(deepClone(db[parsed.pathname]));
+      if (parsed.pathname === '/api/project-directory') return jsonRes({ peers: [] });
+      if (parsed.pathname === '/api/quota') return jsonRes({ logins: [], refreshed_at: new Date().toISOString() });
+      if (parsed.pathname === '/api/usage') return jsonRes(deepClone(db['/api/usage'] || { total: { tokens: 0, cost_usd: 0, rounds: 0 }, days: [], by_project: [], by_login: [], by_machine: [], tasks: [] }));
+      if (parsed.pathname === '/api/usage/competence') return jsonRes(deepClone(db['/api/usage/competence'] || { rows: [], totals: { rounds: 0, total_tokens: 0, list_cost_usd: 0 } }));
+      if (parsed.pathname === '/api/tasks/ended') return jsonRes(deepClone(db['/api/tasks/ended'] || { total: 0, tasks: [], children: [] }));
+      if (parsed.pathname === '/api/knowledge/effective') return jsonRes(deepClone(db['/api/knowledge/effective'] || { brief: '', brief_bytes: 0, files: [], entries: [] }));
+      if (parsed.pathname === '/api/console-sessions') return jsonRes(deepClone(db['/api/console-sessions'] || { sessions: [], durations: [] }));
+      if (parsed.pathname === '/api/auth/passphrase') return jsonRes(deepClone(db['/api/auth/passphrase'] || { configured: false }));
+      if (parsed.pathname === '/api/github') return jsonRes(deepClone(db['/api/github'] || { connected: false, connection: null }));
+      if (parsed.pathname === '/api/weixin') return jsonRes(deepClone(db['/api/weixin'] || { state: 'disconnected' }));
+      if (parsed.pathname === '/api/replay/cases') return jsonRes({ cases: [] });
       if (parsed.pathname.startsWith('/api/messages/') && parsed.pathname.endsWith('/changes')) {
         return jsonRes({ changes: [], tasks: [] });
+      }
+      if (parsed.pathname.startsWith('/api/messages/') && parsed.pathname.endsWith('/trajectory')) {
+        return jsonRes({ calls: [], events: [], has_more: false });
       }
       if (parsed.pathname.startsWith('/api/messages')) {
         return jsonRes({ messages: [], changes: {} });
       }
+      if (parsed.pathname.endsWith('/feedback')) return jsonRes({ feedback: [] });
+      if (parsed.pathname.endsWith('/facts')) return jsonRes({ facts: [], runs: [] });
+      if (parsed.pathname.endsWith('/diff')) return jsonRes({ files: [], stat: '', diff: '', empty: true });
+      if (parsed.pathname.endsWith('/deliverables')) return jsonRes({ deliverables: [] });
+      if (parsed.pathname.includes('/history-evidence')) return jsonRes({ items: [], total: 0 });
       if (parsed.pathname.includes('/files')) return jsonRes({ files: [] });
       if (parsed.pathname.includes('/groups')) return jsonRes({ bindings: [], discovered: [] });
       if (parsed.pathname.includes('/triggers')) return jsonRes({ triggers: [], recent: [], groups: [] });
+      if (parsed.pathname.includes('/runs/') && parsed.pathname.endsWith('/events')) return jsonRes({ events: [], finished: true });
+      if (parsed.pathname.includes('/runs/') && parsed.pathname.endsWith('/snapshot')) return jsonRes({ snapshot: null });
+      if (parsed.pathname.includes('/runs/') && parsed.pathname.endsWith('/diagnostics')) return jsonRes({ checks: [], notes: [] });
+      if (parsed.pathname.includes('/runs/') && parsed.pathname.endsWith('/trace')) return jsonRes({ events: [] });
+      if (parsed.pathname.includes('/runs/') && parsed.pathname.endsWith('/report')) return jsonRes({ content: '# 交付报告\\n\\n任务已通过验证。', ref: 'report' });
       if (parsed.pathname.includes('/runs/')) return jsonRes({ events: [], text: '', report: null });
       return jsonRes({});
     }
