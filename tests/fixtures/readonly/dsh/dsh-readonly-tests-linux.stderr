@@ -1,0 +1,8 @@
+dsh: warning: 1 entry did not activate
+permission (@deepseek-ai/dsh-permission-presets): Error: permission: composed sandbox and approval defaults match no preset; configure defaultPreset explicitly
+    at new PermissionPresetService (file:///home/owner/.local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-permission-presets/lib/index.js:180:42)
+    at Fiber.execute (file:///home/owner/.local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:1068:24)
+    at file:///home/owner/.local/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/lib/index.js:1142:34
+    at file:///home/owner/.dsh/profiles/headless/#permission
+    at file:///home/owner/.dsh/profiles/headless/#include
+[llm-deepseek-api-key] model listing from https://api.deepseek.com/models loaded 2 model(s), skipped 0 row(s)

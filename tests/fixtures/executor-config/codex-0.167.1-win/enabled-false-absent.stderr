@@ -1,0 +1,6 @@
+Error: failed to load bootstrap configuration
+
+Caused by:
+    invalid transport
+    in `mcp_servers.tycho-knowledge`
+    

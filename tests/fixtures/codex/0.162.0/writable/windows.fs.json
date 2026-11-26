@@ -1,0 +1,24 @@
+{
+  "argv": [
+    "codex",
+    "exec",
+    "--json",
+    "-c",
+    "model=\"<模型名>\"",
+    "-c",
+    "model_reasoning_effort=\"low\"",
+    "--sandbox",
+    "workspace-write",
+    "--disable",
+    "memories",
+    "--skip-git-repo-check",
+    "-C",
+    "C:\\work\\probe\\codex-writable",
+    "Create a file named proof.txt in the current directory containing exactly the text tycho-writable (no newline needed), using a shell command. Then reply done."
+  ],
+  "exit": 0,
+  "changes": [
+    "proof.txt"
+  ],
+  "proof": "tycho-writable"
+}

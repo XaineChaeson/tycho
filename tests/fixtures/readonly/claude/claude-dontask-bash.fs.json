@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "-p",
+    "<brief>",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--include-partial-messages",
+    "--settings",
+    "C:\\Users\\owner\\.claude\\tiers\\execute.json",
+    "--permission-mode",
+    "dontAsk",
+    "--add-dir",
+    "C:\\work\\probe\\claude-dontask-bash\\repo",
+    "--tools",
+    "Read,Grep,Glob,Bash",
+    "--allowedTools",
+    "Bash(node --test:*)",
+    "Bash(git diff:*)",
+    "Bash(git log:*)"
+  ],
+  "exit": 0,
+  "changes": [
+    "+ repo/from-test.txt"
+  ],
+  "gitLogAfter": "bdece7c init"
+}

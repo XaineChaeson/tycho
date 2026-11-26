@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "claude",
+    "-p",
+    "<brief>",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--include-partial-messages",
+    "--settings",
+    "/home/owner/.claude/tiers/execute.json",
+    "--permission-mode",
+    "bypassPermissions",
+    "--add-dir",
+    "/work/probe/claude-tools-strict-linux/repo",
+    "--tools",
+    "Read,Grep,Glob",
+    "--strict-mcp-config"
+  ],
+  "exit": 0,
+  "changes": [],
+  "gitLogAfter": "b5c8810 init",
+  "gitStatusAfter": "M sum.mjs",
+  "looseObjects": [
+    6,
+    6
+  ]
+}

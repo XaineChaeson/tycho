@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { ulid } from '../service/ids.ts';
+import type { Tools } from '../service/tools.ts';
+import { consoleApp, TOOL_TOKEN } from './console-helpers.ts';
+import type { RouterTurnTrace } from '../shared/trajectory.ts';
+
+test('owner trajectory returns the stored trusted tool schema while tool bearer and anonymous access are refused', async (t) => {
+  const app = await consoleApp(t);
+  const headers = { Authorization: 'Bearer ' + TOOL_TOKEN };
+  const offered = await app.post('/tools/list', {}, headers);
+  assert.equal(offered.status, 200);
+  const { tools } = await offered.json() as { tools: ReturnType<Tools['list']> };
+  const ledger = app.f.ledger, projectId = app.f.projectId;
+  const message = ledger.receiveMessage({ channel: 'console', externalId: ulid(), actor: 'console', text: '目录核对', projectId });
+  ledger.takeNextTurn(projectId);
+  const context = ledger.openContext({ projectId, segmentId: ledger.ensureSegment(projectId).id, marker: 'catalog-http', launch: {}, knowledge: [] });
+  const id = ulid();
+  ledger.startRouterExchange({ id, messageId: message.id, contextId: context.id, phase: 'request', template: '固定模板保持原样', input: '输入保持原样', tools });
+  ledger.finishRouterExchange(id, 'completed', '完成');
+  const path = '/api/messages/' + message.id + '/trajectory';
+  const response = await app.get(path);
+  assert.equal(response.status, 200);
+  const trace = await response.json() as RouterTurnTrace;
+  assert.equal(trace.exchanges[0]!.template, '固定模板保持原样');
+  assert.deepEqual(trace.exchanges[0]!.tool_catalog, { basis: 'service_available', tools });
+  assert.equal(trace.calls.length, 0);
+  assert.equal((await app.get(path, headers)).status, 401);
+  assert.equal((await fetch(app.url + path)).status, 401);
+});

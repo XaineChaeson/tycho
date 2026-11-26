@@ -1,0 +1,6 @@
+{"type":"session","sessionId":"session-00000000-0000-0000-0000-000000000000","cwd":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\965eeb88ead62d40\\4aa12c73-94b6-4000-82ed-520cf84f580f\\scratchpad\\line-official"}
+{"type":"status","phase":"turn_start","turn":1}
+{"type":"status","phase":"step_start","turn":1,"step":1}
+{"type":"status","phase":"step_end","turn":1,"step":1}
+{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"error","error":{"message":"Authentication Fails, Your api key: ****-000 is invalid (request_id: 00000000-0000-0000-0000-000000000000)","code":"AUTH","status":401}}}
+{"type":"final","sessionId":"session-00000000-0000-0000-0000-000000000000","reason":{"kind":"error","error":{"message":"Authentication Fails, Your api key: ****-000 is invalid (request_id: 00000000-0000-0000-0000-000000000000)","code":"AUTH","status":401}},"text":""}

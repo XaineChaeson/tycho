@@ -1,0 +1,7 @@
+{"type":"session","sessionId":"session-00000000-0000-0000-0000-000000000000","cwd":"C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\965eeb88ead62d40\\4aa12c73-94b6-4000-82ed-520cf84f580f\\scratchpad\\line-custom"}
+{"type":"status","phase":"turn_start","turn":1}
+{"type":"status","phase":"step_start","turn":1,"step":1}
+{"type":"text","text":"ok"}
+{"type":"status","phase":"step_end","turn":1,"step":1,"usage":{"inputTokens":3,"outputTokens":1,"totalTokens":4}}
+{"type":"status","phase":"turn_end","turn":1,"reason":{"kind":"completed"}}
+{"type":"final","sessionId":"session-00000000-0000-0000-0000-000000000000","reason":{"kind":"completed"},"text":"ok"}

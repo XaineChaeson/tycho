@@ -1,0 +1,5 @@
+default: memories                                 stable             false
+config.toml memories=true: memories                                 stable             true
+config.toml memories=true, --disable memories: memories                                 stable             false
+config.toml memories=true, -c features.memories=true --disable memories: memories                                 stable             false
+config.toml memories=true, --disable memories -c features.memories=true: memories                                 stable             false

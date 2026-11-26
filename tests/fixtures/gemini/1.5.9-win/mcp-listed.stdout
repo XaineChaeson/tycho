@@ -1,0 +1,3 @@
+NAME   TYPE   STATUS    COMMAND/URL
+alpha  stdio  enabled   node server.js
+beta   http   disabled  https://example.com/mcp

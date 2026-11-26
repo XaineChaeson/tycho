@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "-p",
+    "<brief>",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--include-partial-messages",
+    "--settings",
+    "C:\\Users\\owner\\.claude\\tiers\\execute.json",
+    "--permission-mode",
+    "bypassPermissions",
+    "--add-dir",
+    "C:\\work\\probe\\claude-disallow-tools\\repo",
+    "--disallowedTools",
+    "Edit,Write,NotebookEdit"
+  ],
+  "exit": 0,
+  "changes": [],
+  "gitLogAfter": "484f486 init"
+}

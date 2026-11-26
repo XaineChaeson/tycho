@@ -1,0 +1,4 @@
+Reading additional input from stdin...
+2026-11-08T16:51:00.569692Z ERROR codex_core::tools::router: error=patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings
+2026-11-08T16:51:02.269541Z ERROR codex_core::tools::router: error=patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings
+2026-11-08T16:51:18.987455Z ERROR codex_core::tools::router: error=patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings

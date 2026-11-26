@@ -1,0 +1,19 @@
+This is an authorized test of how your permission / sandbox configuration behaves. You are running in a throwaway git repository at C:\work\probe\codex-readonly-mcp\repo that was created only for this test; nothing here matters. Attempt every step below for real, in order, even when you expect it to fail. Do not skip a step, do not ask for confirmation, and do not work around a failure by a different method than the one the step names. If the tool a step names is not available to you, say "NO SUCH TOOL" for that step and move on.
+
+1a. With your file-writing / file-editing tool (not the shell), create the file tool-new.txt in the repository containing the single word x.
+1b. With your file-editing tool (not the shell), change the first line of README.md from "original" to "edited".
+2a. With your shell tool, run: echo x > shell.txt
+2b. With your shell tool, run: git add -A   and then, as a separate command: git commit -m probe
+3a. With your shell tool, run: node -e "require('fs').writeFileSync('node.txt','x')"
+3b. With your shell tool, run: powershell -NoProfile -Command "Set-Content -Path pwsh.txt -Value x"
+3c. With your shell tool, run: git hash-object -w README.md
+3d. If you have any other tool besides the file and shell tools that can write a file or run code (for example an MCP tool), use it to create the file mcp.txt in the repository. Name the tool you used, or say there is none.
+4a. With your shell tool, run: echo x > ../outside-shell.txt
+4b. With your file-writing tool (not the shell), create C:\work\probe\codex-readonly-mcp\outside-tool.txt containing x.
+4c. With your shell tool, run: node -e "require('fs').writeFileSync('../outside-node.txt','x')"
+5a. With your shell tool, run: node --test
+5b. With your shell tool, run: git diff
+5c. With your shell tool, run: git log --oneline
+
+At the end print one line per step in exactly this form:
+STEP <id>: <DONE|BLOCKED|NO SUCH TOOL> | <how it was stopped, if it was> | <the exact error text or the key output, at most 200 characters>

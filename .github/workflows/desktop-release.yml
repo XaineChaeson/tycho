@@ -1,0 +1,198 @@
+name: Desktop Release
+
+on:
+  push:
+    tags:
+      - 'app-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Desktop app semver (e.g. 0.1.0). Defaults to desktop/src-tauri/tauri.conf.json.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows-x64
+            os: windows-latest
+            platform: windows
+          - label: macos-universal
+            os: macos-latest
+            platform: macos
+          - label: linux-x64
+            os: ubuntu-22.04
+            platform: linux
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Cache Rust build artifacts
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+
+      - name: Install Linux Tauri dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libwebkit2gtk-4.1-dev \
+            patchelf
+
+      - name: Resolve and sync desktop version
+        id: version
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("node:fs");
+            const confPath = "desktop/src-tauri/tauri.conf.json";
+            const cargoPath = "desktop/src-tauri/Cargo.toml";
+            const conf = JSON.parse(fs.readFileSync(confPath, "utf8"));
+            let ver = process.env.INPUT_VERSION || "";
+            if (!ver && process.env.GITHUB_REF_NAME && process.env.GITHUB_REF_NAME.startsWith("app-v")) {
+              ver = process.env.GITHUB_REF_NAME.slice("app-v".length);
+            }
+            if (!ver) ver = conf.version;
+            if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(ver)) {
+              throw new Error(`Invalid desktop version: ${ver}`);
+            }
+            conf.version = ver;
+            fs.writeFileSync(confPath, JSON.stringify(conf, null, 2) + "\n");
+            const cargo = fs.readFileSync(cargoPath, "utf8");
+            const updatedCargo = cargo.replace(/^version\s*=\s*"[^"]+"/m, `version = "${ver}"`);
+            fs.writeFileSync(cargoPath, updatedCargo);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `value=${ver}\n`);
+            console.log(`Synced desktop version to ${ver}`);
+          '
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+
+      - name: Run Rust unit tests
+        working-directory: desktop/src-tauri
+        run: cargo test
+
+      - name: Build Windows portable & NSIS installer
+        if: matrix.platform == 'windows'
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          npx --yes @tauri-apps/cli@2.5.0 build --bundles nsis
+          $ver = "${{ steps.version.outputs.value }}"
+          $out = "../release-artifacts"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item "src-tauri/target/release/tycho-desktop.exe" "$out/Tycho-$ver-windows-x64-portable.exe"
+          $nsis = Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe" | Select-Object -First 1
+          if (-not $nsis) { throw "NSIS installer not found" }
+          Copy-Item $nsis.FullName "$out/Tycho-$ver-windows-x64-setup.exe"
+          Get-ChildItem $out
+
+      - name: Build macOS universal DMG
+        if: matrix.platform == 'macos'
+        working-directory: desktop
+        shell: bash
+        run: |
+          npx --yes @tauri-apps/cli@2.5.0 build --target universal-apple-darwin --bundles dmg
+          ver="${{ steps.version.outputs.value }}"
+          out="../release-artifacts"
+          mkdir -p "$out"
+          dmg=$(ls src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg | head -n 1)
+          test -n "$dmg"
+          cp "$dmg" "$out/Tycho-${ver}-macos-universal.dmg"
+          ls -lh "$out"
+
+      - name: Build Linux AppImage & deb
+        if: matrix.platform == 'linux'
+        working-directory: desktop
+        shell: bash
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          npx --yes @tauri-apps/cli@2.5.0 build --bundles appimage,deb
+          ver="${{ steps.version.outputs.value }}"
+          out="../release-artifacts"
+          mkdir -p "$out"
+          appimage=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -n 1)
+          deb=$(ls src-tauri/target/release/bundle/deb/*.deb | head -n 1)
+          test -n "$appimage"
+          test -n "$deb"
+          cp "$appimage" "$out/Tycho-${ver}-linux-x86_64.AppImage"
+          cp "$deb" "$out/Tycho-${ver}-linux-amd64.deb"
+          ls -lh "$out"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.label }}
+          path: release-artifacts/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/app-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-release
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS.txt
+        working-directory: dist-release
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Tycho Desktop ${{ github.ref_name }}
+          generate_release_notes: true
+          make_latest: "false"
+          body: |
+            ## Tycho Desktop ${{ github.ref_name }}
+
+            Lightweight Tauri v2 thin-shell client for Tycho. Console UI is always served live from your Tycho host, so you only need to upgrade the desktop wrapper when native features change.
+
+            ### Downloads
+            - **Windows (Portable, zero install)**: `Tycho-*-windows-x64-portable.exe` — double-click to run directly.
+            - **Windows (Installer)**: `Tycho-*-windows-x64-setup.exe` — Start Menu shortcut & standard uninstaller.
+            - **macOS (Apple Silicon & Intel Universal)**: `Tycho-*-macos-universal.dmg` — drag `Tycho.app` into `/Applications`.
+              > Unsigned build note: if macOS Gatekeeper warns the app is damaged or from an unidentified developer, run `xattr -cr /Applications/Tycho.app` once.
+            - **Linux**: `Tycho-*-linux-x86_64.AppImage` (`chmod +x` and run) or `Tycho-*-linux-amd64.deb` (`sudo apt install ./Tycho-*.deb`).
+            - **iOS & Android**: No installer needed — open your Tycho URL in Safari (iOS) or Chrome (Android) and select **Add to Home Screen / Install App** for full-screen standalone PWA mode.
+
+            ### Checksums
+            Verify downloads against `SHA256SUMS.txt`.
+          files: dist-release/*

@@ -1,0 +1,51 @@
+import './guard.ts';
+import assert from 'node:assert/strict';
+import { mkdtempSync,rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import { openLedger } from '../service/ledger.ts';
+import { createProjectHome } from '../service/project-home.ts';
+import { exportProjectHandoff,stageProjectHandoff,freezeProjectHandoff,importProjectHandoff } from '../service/project-home-transfer.ts';
+import { holdMachine, MACHINE, LOGIN, USER, DONE } from './helpers.ts';
+
+const receipt={...DONE,artifacts:[{kind:'report',ref:'最后一条消息'}]};
+
+test('project handoff carries the sole formal report with stable identity; frozen source reads saved text but cannot recover a missing body',t=>{
+  const dir=mkdtempSync(join(tmpdir(),'tycho-report-transfer-'));
+  const opened:{close():void}[]=[];
+  t.after(()=>{for(const item of opened)item.close();rmSync(dir,{recursive:true,force:true});});
+  const a=join(dir,'source'),b=join(dir,'target');
+  const sourceHome=createProjectHome(a),targetHome=createProjectHome(b);opened.push(sourceHome,targetHome);
+  const source=openLedger(join(a,'ledger.db'),{projectHome:sourceHome}),target=openLedger(join(b,'ledger.db'),{projectHome:targetHome});opened.push(source,target);
+  source.setWhitelist({console:['user']},USER);
+  const project=source.createProject({name:'报告项目',loginMode:'all'},USER);
+  const other=source.createProject({name:'私有另一项目',loginMode:'all'},USER);
+  holdMachine(source,MACHINE);
+  const login={id:'account',name:'account',executor:'claude',tiers:LOGIN.login.tiers};
+  source.putAccount(login,USER,'test-reference');
+  source.putRole({...source.getRole('analyse')!,default_tier:'execute'},USER);
+  target.putRole({...target.getRole('analyse')!,default_tier:'execute'},USER);
+  const make=(body?:string)=>{
+    const task=source.createTask({projectId:project,title:'报告',goal:'分析',acceptance:'报告齐全',roleId:'analyse'},USER);source.queueTask(task.id,USER);
+    const run=source.createRun(task.id,{...LOGIN,snapshot:{...LOGIN.snapshot,access:{permission:'read',layer:'tools',args:[]}},login,machine:source.getMachine(MACHINE.id)!},USER);source.markRunRunning(run.id);
+    source.settleRun(run.id,0,receipt,{...(body?{finalReply:body}:{}),codeCheck:{result:'same'}});return run;
+  };
+  const saved=make('可移交的唯一正式正文'),legacy=make();
+  const report=source.runReport(saved.id)!;
+  source.acceptTask(saved.task_id,'测试报告已核对',{actor:'console'},{withoutReview:true});
+  source.acceptTask(legacy.task_id,'测试旧轮已核对',{actor:'console'},{withoutReview:true});
+  source.pushTick(new Date('2099-01-01T00:00:00Z'));
+  for(const row of source.outbox.takeDue(new Date('2099-01-01T00:00:00Z'))) source.outbox.markSent(row.id);
+  source.setProjectPaused(project,true,USER);
+  source.close();target.close();
+  const bundle=exportProjectHandoff(a,project),stage=stageProjectHandoff(b,bundle,sourceHome.identity);
+  const claim=freezeProjectHandoff(a,bundle,stage.id);importProjectHandoff(b,bundle,claim);
+  const imported=openLedger(join(b,'ledger.db'),{projectHome:targetHome}),frozen=openLedger(join(a,'ledger.db'),{projectHome:sourceHome});opened.push(imported,frozen);
+  assert.deepEqual(imported.runReport(saved.id),report);
+  assert.deepEqual(frozen.runReport(saved.id),report);
+  assert.throws(()=>frozen.recordRecoveredRunReport(legacy.id,receipt,'冻结后不得偷偷写入'),/冻结|归属/);
+  assert.equal(frozen.runReport(legacy.id),undefined);
+  assert.throws(()=>imported.runReport(saved.id,other),/项目/);
+  assert.equal(imported.listProjects().some(item=>item.id===other),false);
+});

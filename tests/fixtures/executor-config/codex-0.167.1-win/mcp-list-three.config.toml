@@ -1,0 +1,10 @@
+[mcp_servers.tycho-knowledge]
+command = "tycho"
+args = ["knowledge-mcp"]
+
+[mcp_servers.github]
+command = "github-mcp"
+
+[mcp_servers.old]
+command = "old-mcp"
+enabled = false

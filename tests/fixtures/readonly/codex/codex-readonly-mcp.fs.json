@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "codex",
+    "exec",
+    "--json",
+    "--profile",
+    "execute",
+    "--sandbox",
+    "read-only",
+    "--skip-git-repo-check",
+    "-C",
+    "C:\\work\\probe\\codex-readonly-mcp\\repo",
+    "<brief>"
+  ],
+  "exit": 0,
+  "changes": [],
+  "gitLogAfter": "23297af init"
+}

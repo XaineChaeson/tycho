@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"01a1a67b-b924-7f10-9ae1-58a952c778af"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"好的。"}}
+{"type":"turn.completed","usage":{"input_tokens":15093,"cached_input_tokens":12160,"cache_write_input_tokens":0,"output_tokens":6,"reasoning_output_tokens":0}}

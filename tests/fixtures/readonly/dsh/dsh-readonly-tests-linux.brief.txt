@@ -1,0 +1,5 @@
+这是一次权限实测。依次运行下面三条命令，贴出关键输出（node --test 会打印一行 WROTE= 或 BLOCKED=，照抄），不要改写命令：
+1. node --test --test-isolation=none
+2. git diff
+3. git log --oneline
+最后用表格汇总。

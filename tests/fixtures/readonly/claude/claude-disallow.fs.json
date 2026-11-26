@@ -1,0 +1,27 @@
+{
+  "argv": [
+    "-p",
+    "<brief>",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--include-partial-messages",
+    "--settings",
+    "C:\\Users\\owner\\.claude\\tiers\\execute.json",
+    "--permission-mode",
+    "bypassPermissions",
+    "--add-dir",
+    "C:\\work\\probe\\claude-disallow\\repo",
+    "--disallowedTools",
+    "Edit,Write,NotebookEdit"
+  ],
+  "exit": 0,
+  "changes": [
+    "+ outside-shell.txt",
+    "+ repo/from-test.txt",
+    "+ repo/node.txt",
+    "+ repo/shell.txt",
+    "git log changed: 2075f46 spike commit | 484f486 init"
+  ],
+  "gitLogAfter": "2075f46 spike commit\n484f486 init"
+}

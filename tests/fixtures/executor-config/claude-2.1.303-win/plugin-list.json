@@ -1,0 +1,39 @@
+[
+  {
+    "id": "codex@openai-codex",
+    "version": "1.0.6",
+    "scope": "user",
+    "enabled": true,
+    "installPath": "C:\\Users\\owner\\.claude\\plugins\\cache\\openai-codex\\codex\\1.0.6",
+    "installedAt": "2026-10-21T10:20:07.449Z",
+    "lastUpdated": "2026-10-21T10:20:07.449Z",
+    "projectEnabled": false
+  },
+  {
+    "id": "ops@demo-plugins",
+    "version": "5703677f424bac810020b835d0ba9967113e6e58",
+    "scope": "user",
+    "enabled": true,
+    "installPath": "C:\\Users\\owner\\.claude\\plugins\\cache\\demo-plugins\\ops\\5703677f424bac810020b835d0ba9967113e6e58",
+    "installedAt": "2026-10-19T10:13:11.463Z",
+    "lastUpdated": "2026-11-11T09:21:54.467Z",
+    "projectEnabled": false
+  },
+  {
+    "id": "analytics@demo-plugins",
+    "version": "e3be423d44b9",
+    "scope": "user",
+    "enabled": true,
+    "installPath": "C:\\Users\\owner\\.claude\\plugins\\cache\\demo-plugins\\analytics\\e3be423d44b9",
+    "installedAt": "2026-10-19T10:13:12.277Z",
+    "lastUpdated": "2026-11-11T09:21:54.487Z",
+    "projectEnabled": false
+  },
+  {
+    "id": "playwright@synced",
+    "version": "unknown",
+    "scope": "synced",
+    "enabled": true,
+    "installPath": "C:\\Users\\owner\\.claude\\plugins\\synced\\a21fad61-32e2-4f80-b508-6cfc0365f40b_a7030390-4572-496d-9c25-225d939aa961\\22bf1341-d051-4d92-9363-8d0dc8349035"
+  }
+]

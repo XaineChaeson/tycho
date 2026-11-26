@@ -1,0 +1,102 @@
+===== interrupt2 watcher log
+turn.started seen at 12:14:50
+no item/delta event within 15s of turn.started; stopping now (12:15:05)
+lines in stdout before stop: 2
+{"type":"thread.started","thread_id":"01a1a67b-b924-74c3-804f-95e69f5ef4b5"}
+{"type":"turn.started"}
+pid=252056 pgid=252056
+### group before (ps --forest -g 252056)
+    PID    PPID    PGID     SID STAT ELAPSED CMD
+ 252056      15  252056  252056 Ss        17 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:interrupt2 /home/dev/.orchestrator-spike/runs/interrupt2 codex exec --profile cheap --sandbox read-only --skip-git-repo-check --json -o /home/dev/.orchestrator-spike/runs/interrupt2/last.txt ??? 1 ?????? 2000??????????????????????????????????????????
+ 252069  252056  252056  252056 Sl        17  \_ node /home/dev/.local/bin/codex exec --profile cheap --sandbox read-only --skip-git-repo-check --json -o /home/dev/.orchestrator-spike/runs/interrupt2/last.txt ??? 1 ?????? 2000??????????????????????????????????????????
+ 252080  252069  252056  252056 Sl        17      \_ /home/dev/.local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex exec --profile cheap --sandbox read-only --skip-git-repo-check --json -o /home/dev/.orchestrator-spike/runs/interrupt2/last.txt ??? 1 ?????? 2000??????????????????????????????????????????
+kill -INT -- -252056 rc=0
+group gone after 848 ms; sigkill_used=no
+### group after: pgrep -g 252056
+(rc=1)
+### pgrep -af orchestrator-run:interrupt2
+(rc=1)
+### pgrep -af codex exec (any codex left?)
+(rc=1)
+### exit file (sleep 1 first)
+total 3
+drwxr-xr-x  3 root root   5 Nov  4 12:15 .
+drwxr-xr-x 10 root root   8 Nov  4 12:14 ..
+-rw-r--r--  1 root root   2 Nov  4 12:15 exit
+drwxr-xr-x  2 root root   1 Nov  4 12:14 started
+-rw-r--r--  1 root root  39 Nov  4 12:14 stderr.log
+-rw-r--r--  1 root root 101 Nov  4 12:14 stdout.ndjson
+-rw-r--r--  1 root root   0 Nov  4 12:14 wrapper.log
+1
+### stderr tail
+Reading additional input from stdin...
+
+===== resume
+total 3
+drwxr-xr-x  3 root root   5 Nov  4 12:14 .
+drwxr-xr-x 10 root root   8 Nov  4 12:14 ..
+-rw-r--r--  1 root root   2 Nov  4 12:14 exit
+drwxr-xr-x  2 root root   1 Nov  4 12:14 started
+-rw-r--r--  1 root root 120 Nov  4 12:14 stderr.log
+-rw-r--r--  1 root root   0 Nov  4 12:14 stdout.ndjson
+-rw-r--r--  1 root root   0 Nov  4 12:14 wrapper.log
+exit=1
+--- stdout
+--- stderr
+Error: legacy `profile = "cheap"` config is no longer supported; use `--profile cheap` with `cheap.config.toml` instead
+--- last.txt
+cat: /home/dev/.orchestrator-spike/runs/resume/last.txt: No such file or directory
+
+===== fail-url
+total 4
+drwxr-xr-x  3 root root   6 Nov  4 12:14 .
+drwxr-xr-x 10 root root   8 Nov  4 12:14 ..
+-rw-r--r--  1 root root   2 Nov  4 12:14 exit
+-rw-r--r--  1 root root   9 Nov  4 12:14 last.txt
+drwxr-xr-x  2 root root   1 Nov  4 12:14 started
+-rw-r--r--  1 root root  39 Nov  4 12:14 stderr.log
+-rw-r--r--  1 root root 352 Nov  4 12:14 stdout.ndjson
+-rw-r--r--  1 root root   0 Nov  4 12:14 wrapper.log
+exit=0
+--- stdout
+{"type":"thread.started","thread_id":"01a1a67b-b924-7f10-9ae1-58a952c778af"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"好的。"}}
+{"type":"turn.completed","usage":{"input_tokens":15093,"cached_input_tokens":12160,"cache_write_input_tokens":0,"output_tokens":6,"reasoning_output_tokens":0}}
+--- stderr
+Reading additional input from stdin...
+--- last.txt
+好的。
+===== fail-profile
+total 4
+drwxr-xr-x  3 root root   6 Nov  4 12:14 .
+drwxr-xr-x 10 root root   8 Nov  4 12:14 ..
+-rw-r--r--  1 root root   2 Nov  4 12:14 exit
+-rw-r--r--  1 root root   6 Nov  4 12:14 last.txt
+drwxr-xr-x  2 root root   1 Nov  4 12:14 started
+-rw-r--r--  1 root root  39 Nov  4 12:14 stderr.log
+-rw-r--r--  1 root root 349 Nov  4 12:14 stdout.ndjson
+-rw-r--r--  1 root root   0 Nov  4 12:14 wrapper.log
+exit=0
+--- stdout
+{"type":"thread.started","thread_id":"01a1a67b-b922-7503-b9b7-8885b80e2ea3"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"好的"}}
+{"type":"turn.completed","usage":{"input_tokens":15093,"cached_input_tokens":12160,"cache_write_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}
+--- stderr
+Reading additional input from stdin...
+--- last.txt
+好的
+===== interrupt2 run dir
+total 3
+drwxr-xr-x  3 root root   5 Nov  4 12:15 .
+drwxr-xr-x 10 root root   8 Nov  4 12:14 ..
+-rw-r--r--  1 root root   2 Nov  4 12:15 exit
+drwxr-xr-x  2 root root   1 Nov  4 12:14 started
+-rw-r--r--  1 root root  39 Nov  4 12:14 stderr.log
+-rw-r--r--  1 root root 101 Nov  4 12:14 stdout.ndjson
+-rw-r--r--  1 root root   0 Nov  4 12:14 wrapper.log
+1
+===== leftover
+252604 bash -lc R=~/.orchestrator-spike/runs; sleep 20; echo ===== int
+252604 bash -lc R=~/.orchestrator-spike/runs; sleep 20; echo ===== int

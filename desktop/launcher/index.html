@@ -1,0 +1,607 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Tycho</title>
+    <style>
+      :root {
+        --bg: #f5f7fb;
+        --bg-accent: radial-gradient(circle at 20% 15%, rgba(99, 102, 241, 0.14), transparent 55%),
+          radial-gradient(circle at 80% 85%, rgba(14, 165, 233, 0.12), transparent 50%);
+        --card-bg: rgba(255, 255, 255, 0.9);
+        --card-border: rgba(15, 23, 42, 0.08);
+        --card-shadow: 0 20px 50px -20px rgba(15, 23, 42, 0.18), 0 2px 8px rgba(15, 23, 42, 0.04);
+        --text: #0f172a;
+        --text-muted: #64748b;
+        --input-bg: #ffffff;
+        --input-border: #cbd5e1;
+        --input-focus: #4f46e5;
+        --primary: #4f46e5;
+        --primary-hover: #4338ca;
+        --primary-text: #ffffff;
+        --secondary-bg: #f1f5f9;
+        --secondary-hover: #e2e8f0;
+        --secondary-text: #334155;
+        --danger: #dc2626;
+        --danger-bg: rgba(220, 38, 38, 0.08);
+        --kbd-bg: #f1f5f9;
+        --kbd-border: #cbd5e1;
+        --divider: rgba(15, 23, 42, 0.08);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b1020;
+          --bg-accent: radial-gradient(circle at 20% 15%, rgba(99, 102, 241, 0.22), transparent 55%),
+            radial-gradient(circle at 80% 85%, rgba(56, 189, 248, 0.14), transparent 50%);
+          --card-bg: rgba(17, 24, 39, 0.86);
+          --card-border: rgba(148, 163, 184, 0.14);
+          --card-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.65), 0 2px 10px rgba(0, 0, 0, 0.35);
+          --text: #f8fafc;
+          --text-muted: #94a3b8;
+          --input-bg: rgba(15, 23, 42, 0.78);
+          --input-border: rgba(148, 163, 184, 0.24);
+          --input-focus: #818cf8;
+          --primary: #6366f1;
+          --primary-hover: #4f46e5;
+          --primary-text: #ffffff;
+          --secondary-bg: rgba(30, 41, 59, 0.8);
+          --secondary-hover: rgba(51, 65, 85, 0.9);
+          --secondary-text: #e2e8f0;
+          --danger: #f87171;
+          --danger-bg: rgba(248, 113, 113, 0.12);
+          --kbd-bg: rgba(30, 41, 59, 0.9);
+          --kbd-border: rgba(148, 163, 184, 0.28);
+          --divider: rgba(148, 163, 184, 0.12);
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+          sans-serif;
+        background-color: var(--bg);
+        background-image: var(--bg-accent);
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+      }
+
+      .card {
+        width: 100%;
+        max-width: 460px;
+        background: var(--card-bg);
+        border: 1px solid var(--card-border);
+        border-radius: 18px;
+        box-shadow: var(--card-shadow);
+        backdrop-filter: blur(16px);
+        padding: 32px 28px 24px;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 24px;
+      }
+
+      .brand-logo {
+        width: 44px;
+        height: 44px;
+        border-radius: 11px;
+        object-fit: cover;
+        box-shadow: 0 4px 12px rgba(79, 70, 229, 0.2);
+      }
+
+      .brand-title {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+      }
+
+      .brand-subtitle {
+        margin: 3px 0 0;
+        font-size: 13px;
+        color: var(--text-muted);
+      }
+
+      .field-label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+
+      .input-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      .url-input {
+        flex: 1;
+        min-width: 0;
+        height: 42px;
+        padding: 0 13px;
+        font-size: 14px;
+        color: var(--text);
+        background: var(--input-bg);
+        border: 1px solid var(--input-border);
+        border-radius: 10px;
+        outline: none;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      .url-input:focus {
+        border-color: var(--input-focus);
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.18);
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        border: none;
+        border-radius: 10px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background-color 0.15s ease, opacity 0.15s ease, transform 0.08s ease;
+      }
+
+      .btn:active:not(:disabled) {
+        transform: translateY(1px);
+      }
+
+      .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .btn-primary {
+        height: 42px;
+        padding: 0 18px;
+        background: var(--primary);
+        color: var(--primary-text);
+        white-space: nowrap;
+      }
+
+      .btn-primary:hover:not(:disabled) {
+        background: var(--primary-hover);
+      }
+
+      .btn-secondary {
+        width: 100%;
+        height: 38px;
+        margin-top: 10px;
+        background: var(--secondary-bg);
+        color: var(--secondary-text);
+        font-size: 13px;
+        font-weight: 500;
+      }
+
+      .btn-secondary:hover:not(:disabled) {
+        background: var(--secondary-hover);
+      }
+
+      .error-box {
+        margin-top: 12px;
+        padding: 9px 12px;
+        border-radius: 9px;
+        background: var(--danger-bg);
+        color: var(--danger);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .recent-section {
+        margin-top: 22px;
+        padding-top: 18px;
+        border-top: 1px solid var(--divider);
+      }
+
+      .recent-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-muted);
+        margin: 0 0 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .recent-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .recent-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .recent-connect {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 11px;
+        border: 1px solid transparent;
+        border-radius: 9px;
+        background: var(--secondary-bg);
+        color: var(--text);
+        font-size: 13px;
+        text-align: left;
+        cursor: pointer;
+        transition: background-color 0.15s ease, border-color 0.15s ease;
+      }
+
+      .recent-connect:hover {
+        background: var(--secondary-hover);
+        border-color: var(--card-border);
+      }
+
+      .recent-url {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .recent-arrow {
+        color: var(--text-muted);
+        font-size: 12px;
+        flex-shrink: 0;
+      }
+
+      .recent-remove {
+        width: 30px;
+        height: 32px;
+        flex-shrink: 0;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-muted);
+        font-size: 16px;
+        line-height: 1;
+        cursor: pointer;
+        transition: background-color 0.15s ease, color 0.15s ease;
+      }
+
+      .recent-remove:hover {
+        background: var(--danger-bg);
+        color: var(--danger);
+      }
+
+      .footer-hint {
+        margin-top: 22px;
+        padding-top: 16px;
+        border-top: 1px solid var(--divider);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      .hint-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+
+      kbd {
+        display: inline-block;
+        padding: 2px 6px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text);
+        background: var(--kbd-bg);
+        border: 1px solid var(--kbd-border);
+        border-radius: 5px;
+      }
+
+      .connecting-view {
+        text-align: center;
+        padding: 20px 8px 12px;
+      }
+
+      .connecting-view .brand-logo {
+        width: 56px;
+        height: 56px;
+        margin-bottom: 16px;
+      }
+
+      .connecting-title {
+        margin: 0 0 6px;
+        font-size: 17px;
+        font-weight: 600;
+      }
+
+      .connecting-url {
+        margin: 0 0 20px;
+        font-size: 13px;
+        color: var(--text-muted);
+        word-break: break-all;
+      }
+
+      .spinner {
+        width: 24px;
+        height: 24px;
+        margin: 0 auto 18px;
+        border: 2.5px solid var(--divider);
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 0.75s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card" aria-live="polite">
+      <section id="connecting-view" class="connecting-view hidden">
+        <img class="brand-logo" src="./logo.png" alt="Tycho" />
+        <div class="spinner" aria-hidden="true"></div>
+        <h1 class="connecting-title">正在连接 Tycho 服务器…</h1>
+        <p id="connecting-url" class="connecting-url"></p>
+        <button id="cancel-auto-btn" type="button" class="btn btn-secondary">
+          切换服务器地址
+        </button>
+      </section>
+
+      <section id="launcher-view" class="hidden">
+        <header class="brand">
+          <img class="brand-logo" src="./logo.png" alt="Tycho" />
+          <div>
+            <h1 class="brand-title">Tycho Desktop</h1>
+            <p class="brand-subtitle">输入 Tycho 控制台地址以连接</p>
+          </div>
+        </header>
+
+        <form id="connect-form" novalidate>
+          <label class="field-label" for="server-url">服务器地址</label>
+          <div class="input-row">
+            <input
+              id="server-url"
+              class="url-input"
+              type="url"
+              inputmode="url"
+              autocomplete="url"
+              spellcheck="false"
+              placeholder="https://your-tycho-server"
+              required
+            />
+            <button id="connect-btn" class="btn btn-primary" type="submit">连接</button>
+          </div>
+          <button id="local-btn" class="btn btn-secondary" type="button">
+            连接本机 (http://127.0.0.1:8787)
+          </button>
+          <div id="error-box" class="error-box hidden" role="alert"></div>
+        </form>
+
+        <section id="recent-section" class="recent-section hidden">
+          <h2 class="recent-title">最近连接</h2>
+          <ul id="recent-list" class="recent-list"></ul>
+        </section>
+
+        <footer class="footer-hint">
+          <div class="hint-row">
+            <span>全局快捷键</span>
+            <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>
+            <span>一键呼出 / 隐藏窗口</span>
+          </div>
+          <div class="hint-row">
+            <span>关闭窗口将保持后台托盘运行，右键托盘可随时切换服务器</span>
+          </div>
+        </footer>
+      </section>
+    </main>
+
+    <script>
+      (() => {
+        const LOCAL_URL = "http://127.0.0.1:8787";
+
+        const connectingView = document.getElementById("connecting-view");
+        const connectingUrlEl = document.getElementById("connecting-url");
+        const cancelAutoBtn = document.getElementById("cancel-auto-btn");
+        const launcherView = document.getElementById("launcher-view");
+        const connectForm = document.getElementById("connect-form");
+        const serverUrlInput = document.getElementById("server-url");
+        const connectBtn = document.getElementById("connect-btn");
+        const localBtn = document.getElementById("local-btn");
+        const errorBox = document.getElementById("error-box");
+        const recentSection = document.getElementById("recent-section");
+        const recentList = document.getElementById("recent-list");
+
+        let currentConfig = { server_url: null, recent_urls: [] };
+        let autoCanceled = false;
+
+        function invoke(cmd, args) {
+          const core = window.__TAURI__ && window.__TAURI__.core;
+          if (!core || typeof core.invoke !== "function") {
+            return Promise.reject(new Error("当前环境未检测到 Tauri 运行时"));
+          }
+          return core.invoke(cmd, args || {});
+        }
+
+        function showError(message) {
+          if (!message) {
+            errorBox.textContent = "";
+            errorBox.classList.add("hidden");
+            return;
+          }
+          errorBox.textContent = String(message);
+          errorBox.classList.remove("hidden");
+        }
+
+        function setBusy(busy) {
+          connectBtn.disabled = busy;
+          localBtn.disabled = busy;
+          serverUrlInput.disabled = busy;
+          connectBtn.textContent = busy ? "连接中…" : "连接";
+        }
+
+        function renderRecentUrls(urls) {
+          recentList.innerHTML = "";
+          if (!Array.isArray(urls) || urls.length === 0) {
+            recentSection.classList.add("hidden");
+            return;
+          }
+          recentSection.classList.remove("hidden");
+          for (const url of urls) {
+            const li = document.createElement("li");
+            li.className = "recent-item";
+
+            const connectItemBtn = document.createElement("button");
+            connectItemBtn.type = "button";
+            connectItemBtn.className = "recent-connect";
+            connectItemBtn.title = url;
+            connectItemBtn.addEventListener("click", () => {
+              serverUrlInput.value = url;
+              connectTo(url);
+            });
+
+            const urlSpan = document.createElement("span");
+            urlSpan.className = "recent-url";
+            urlSpan.textContent = url;
+
+            const arrowSpan = document.createElement("span");
+            arrowSpan.className = "recent-arrow";
+            arrowSpan.textContent = "→";
+
+            connectItemBtn.appendChild(urlSpan);
+            connectItemBtn.appendChild(arrowSpan);
+
+            const removeBtn = document.createElement("button");
+            removeBtn.type = "button";
+            removeBtn.className = "recent-remove";
+            removeBtn.title = "从最近列表移除";
+            removeBtn.setAttribute("aria-label", `移除 ${url}`);
+            removeBtn.textContent = "×";
+            removeBtn.addEventListener("click", async () => {
+              try {
+                currentConfig = await invoke("remove_recent_url", { url });
+                renderRecentUrls(currentConfig.recent_urls);
+              } catch (err) {
+                showError(err && err.message ? err.message : String(err));
+              }
+            });
+
+            li.appendChild(connectItemBtn);
+            li.appendChild(removeBtn);
+            recentList.appendChild(li);
+          }
+        }
+
+        function showLauncher(prefillUrl) {
+          connectingView.classList.add("hidden");
+          launcherView.classList.remove("hidden");
+          if (prefillUrl) {
+            serverUrlInput.value = prefillUrl;
+          }
+          renderRecentUrls(currentConfig.recent_urls);
+          requestAnimationFrame(() => {
+            serverUrlInput.focus();
+            serverUrlInput.select();
+          });
+        }
+
+        async function connectTo(rawUrl) {
+          const trimmed = String(rawUrl || "").trim();
+          if (!trimmed) {
+            showError("请输入有效的 Tycho 服务器地址");
+            serverUrlInput.focus();
+            return;
+          }
+          showError("");
+          setBusy(true);
+          try {
+            currentConfig = await invoke("connect_server", { url: trimmed });
+          } catch (err) {
+            setBusy(false);
+            showLauncher(trimmed);
+            showError(err && err.message ? err.message : String(err));
+          }
+        }
+
+        connectForm.addEventListener("submit", (event) => {
+          event.preventDefault();
+          connectTo(serverUrlInput.value);
+        });
+
+        localBtn.addEventListener("click", () => {
+          serverUrlInput.value = LOCAL_URL;
+          connectTo(LOCAL_URL);
+        });
+
+        cancelAutoBtn.addEventListener("click", () => {
+          autoCanceled = true;
+          showLauncher(currentConfig.server_url || "");
+        });
+
+        async function init() {
+          const params = new URLSearchParams(window.location.search);
+          const isSwitchMode = params.get("switch") === "1";
+
+          try {
+            currentConfig = await invoke("get_config");
+          } catch (err) {
+            showLauncher("");
+            showError(err && err.message ? err.message : String(err));
+            return;
+          }
+
+          if (currentConfig.server_url && !isSwitchMode) {
+            connectingUrlEl.textContent = currentConfig.server_url;
+            connectingView.classList.remove("hidden");
+            try {
+              if (!autoCanceled) {
+                await invoke("connect_server", { url: currentConfig.server_url });
+              }
+            } catch (err) {
+              if (!autoCanceled) {
+                showLauncher(currentConfig.server_url);
+                showError(err && err.message ? err.message : String(err));
+              }
+            }
+          } else {
+            showLauncher(currentConfig.server_url || "");
+          }
+        }
+
+        init();
+      })();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,1 @@
+{"method":"POST","url":"/v1/chat/completions","authorization":"Bearer <the key>","x-api-key":null,"model":"fake-model"}

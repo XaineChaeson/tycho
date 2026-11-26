@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "-p",
+    "<brief>",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--include-partial-messages",
+    "--settings",
+    "C:\\Users\\owner\\.claude\\tiers\\execute.json",
+    "--permission-mode",
+    "plan",
+    "--add-dir",
+    "C:\\work\\probe\\claude-plan\\repo"
+  ],
+  "exit": 0,
+  "changes": [],
+  "gitLogAfter": "bdece7c init"
+}

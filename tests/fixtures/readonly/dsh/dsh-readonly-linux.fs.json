@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "dsh",
+    "--profile",
+    "headless",
+    "--patch",
+    "/home/owner/.dsh/tiers/execute.patch.yml",
+    "--patch",
+    "/work/probe/readonly.patch.yml",
+    "--json",
+    "<brief>"
+  ],
+  "exit": 0,
+  "changes": [],
+  "gitLogAfter": "4e8ece1 init",
+  "gitStatusAfter": "M sum.mjs",
+  "looseObjects": [
+    6,
+    6
+  ]
+}

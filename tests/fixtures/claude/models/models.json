@@ -1,0 +1,67 @@
+{
+  "data": [
+    {
+      "type": "model",
+      "id": "<模型甲>",
+      "display_name": "<模型甲>",
+      "created_at": "2025-02-19T00:00:00Z",
+      "capabilities": {
+        "batch": { "supported": true },
+        "citations": { "supported": true },
+        "code_execution": { "supported": true },
+        "effort": {
+          "low": { "supported": true },
+          "medium": { "supported": true },
+          "high": { "supported": true },
+          "xhigh": { "supported": true },
+          "max": { "supported": true }
+        },
+        "image_input": { "supported": true },
+        "pdf_input": { "supported": true },
+        "structured_outputs": { "supported": true },
+        "thinking": { "supported": true }
+      }
+    },
+    {
+      "type": "model",
+      "id": "<模型乙>",
+      "display_name": "<模型乙>",
+      "created_at": "2025-05-14T00:00:00Z",
+      "capabilities": {
+        "batch": { "supported": true },
+        "citations": { "supported": true },
+        "code_execution": { "supported": true },
+        "effort": {
+          "low": { "supported": true },
+          "medium": { "supported": true },
+          "high": { "supported": true },
+          "xhigh": { "supported": false },
+          "max": { "supported": false }
+        },
+        "image_input": { "supported": true },
+        "pdf_input": { "supported": true },
+        "structured_outputs": { "supported": true },
+        "thinking": { "supported": true }
+      }
+    },
+    {
+      "type": "model",
+      "id": "<模型丙>",
+      "display_name": "<模型丙>",
+      "created_at": "2025-08-05T00:00:00Z",
+      "capabilities": {
+        "batch": { "supported": false },
+        "citations": { "supported": true },
+        "effort": {
+          "medium": { "supported": true },
+          "high": { "supported": true }
+        },
+        "image_input": { "supported": false },
+        "thinking": { "supported": true }
+      }
+    }
+  ],
+  "has_more": false,
+  "first_id": "<模型甲>",
+  "last_id": "<模型丙>"
+}

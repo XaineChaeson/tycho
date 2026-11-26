@@ -1,0 +1,50 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in Tycho Host, Node, Console, or Desktop
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug! Please remove any personal tokens, private URLs, or sensitive paths from logs before submitting.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component
+      options:
+        - Host Service (`tycho run` / `service/`)
+        - Worker Node (`tycho node` / `node/`)
+        - Web Console / Mobile PWA (`console/`)
+        - Desktop App (`desktop/`)
+        - Installer / Updater (`install/` / `cli/`)
+        - Executor Adapter (`claude` / `codex` / `gemini` / `dsh`)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Tycho Version & Environment
+      placeholder: "e.g. tycho 0.1.872, Windows 11 / Ubuntu 24.04 / macOS 15, Node 24.x"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the issue and what you expected to happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Run ...
+        2. Open ...
+        3. See error ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted `tycho doctor` or Log Output
+      render: text

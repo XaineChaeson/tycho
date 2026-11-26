@@ -1,0 +1,13 @@
+# Written by tycho from the account's line. The key is not here: the round is handed it
+# in its environment, and the stored-credential services stay off so nothing kept on this
+# machine is used instead.
+- id: credentials
+  disabled: true
+- id: authorization
+  disabled: true
+- id: deepseek-account
+  disabled: true
+- id: llm-deepseek
+  config:
+    apiKeyEnv: DEEPSEEK_API_KEY
+    baseURL: "https://api.deepseek.com/anthropic"

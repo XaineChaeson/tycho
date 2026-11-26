@@ -1,0 +1,80 @@
+12:18:47
+started
+launch rc=0
+timeout after 240s
+12:22:48
+total 4
+drwxr-xr-x  3 root root    4 Nov  4 12:18 .
+drwxr-xr-x 18 root root   18 Nov  4 12:18 ..
+drwxr-xr-x  2 root root    1 Nov  4 12:18 started
+-rw-r--r--  1 root root  323 Nov  4 12:18 stderr.log
+-rw-r--r--  1 root root 1059 Nov  4 12:22 stdout.ndjson
+-rw-r--r--  1 root root    0 Nov  4 12:18 wrapper.log
+exit=cat: /home/dev/.orchestrator-spike/runs/fail-provider/exit: No such file or directory
+--- stdout
+{"type":"thread.started","thread_id":"01a1a67f-630e-77f0-b7ac-356bbe41c2cc"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for `gpt-6.1-terra` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}
+{"type":"turn.started"}
+{"type":"error","message":"Reconnecting... waiting for network (Connection failed: error sending request)"}
+{"type":"error","message":"Reconnecting... waiting for network (Connection failed: error sending request)"}
+{"type":"error","message":"Reconnecting... waiting for network (Connection failed: error sending request)"}
+{"type":"error","message":"Reconnecting... waiting for network (Connection failed: error sending request)"}
+{"type":"error","message":"Reconnecting... waiting for network (Connection failed: error sending request)"}
+{"type":"error","message":"Reconnecting... waiting for network (Connection failed: error sending request)"}
+{"type":"error","message":"Reconnecting... waiting for network (Connection failed: error sending request)"}
+--- stderr
+Reading additional input from stdin...
+2026-11-04T12:18:51.617158Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request
+2026-11-04T12:18:51.834652Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request
+--- last.txt
+cat: /home/dev/.orchestrator-spike/runs/fail-provider/last.txt: No such file or directory
+===== leftover
+252964 bash -lc B=~/.orchestrator-spike/bin; R=~/.orchestrator-spike/r
+252981 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; 
+252964 bash -lc B=~/.orchestrator-spike/bin; R=~/.orchestrator-spike/r
+252981 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; 
+252985 node /home/dev/.local/bin/codex exec --profile cheap -
+252992 /home/dev/.local/lib/node_modules/@openai/codex/node_m
+timeout after 150s
+12:26:07
+13 /home/dev/.orchestrator-spike/runs/fail-provider/stdout.ndjson
+10
+===== still running after ~7 min, stopping via stop.sh
+pid=252981 pgid=252981
+### group before (ps --forest -g 252981)
+    PID    PPID    PGID     SID STAT ELAPSED CMD
+ 252981      15  252981  252981 Ss       439 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:fail-provider /home/dev/.orchestrator-spike/runs/fail-provider codex exec --profile cheap --sandbox read-only --skip-git-repo-check --json -c model_provider=spikefail -c model_providers.spikefail.name=spikefail -c model_providers.spikefail.base_url=http://127.0.0.1:9/v1 -c model_providers.spikefail.wire_api=responses -o /home/dev/.orchestrator-spike/runs/fail-provider/last.txt ????????????????????????
+ 252985  252981  252981  252981 Sl       439  \_ node /home/dev/.local/bin/codex exec --profile cheap --sandbox read-only --skip-git-repo-check --json -c model_provider=spikefail -c model_providers.spikefail.name=spikefail -c model_providers.spikefail.base_url=http://127.0.0.1:9/v1 -c model_providers.spikefail.wire_api=responses -o /home/dev/.orchestrator-spike/runs/fail-provider/last.txt ????????????????????????
+ 252992  252985  252981  252981 Sl       439      \_ /home/dev/.local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex exec --profile cheap --sandbox read-only --skip-git-repo-check --json -c model_provider=spikefail -c model_providers.spikefail.name=spikefail -c model_providers.spikefail.base_url=http://127.0.0.1:9/v1 -c model_providers.spikefail.wire_api=responses -o /home/dev/.orchestrator-spike/runs/fail-provider/last.txt ????????????????????????
+kill -INT -- -252981 rc=0
+group gone after 744 ms; sigkill_used=no
+### group after: pgrep -g 252981
+(rc=1)
+### pgrep -af orchestrator-run:fail-provider
+(rc=1)
+### pgrep -af codex exec (any codex left?)
+(rc=1)
+### exit file (sleep 1 first)
+total 4
+drwxr-xr-x  3 root root    4 Nov  4 12:26 .
+drwxr-xr-x 18 root root   18 Nov  4 12:18 ..
+-rw-r--r--  1 root root    2 Nov  4 12:26 exit
+drwxr-xr-x  2 root root    1 Nov  4 12:18 started
+-rw-r--r--  1 root root  465 Nov  4 12:23 stderr.log
+-rw-r--r--  1 root root 1383 Nov  4 12:25 stdout.ndjson
+-rw-r--r--  1 root root    0 Nov  4 12:18 wrapper.log
+1
+### stderr tail
+Reading additional input from stdin...
+2026-11-04T12:18:51.617158Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request
+2026-11-04T12:18:51.834652Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request
+2026-11-04T12:23:24.837532Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request
+--- stdout tail
+{"type":"error","message":"Reconnecting... waiting for network (Connection failed: error sending request)"}
+{"type":"error","message":"Reconnecting... waiting for network (Connection failed: error sending request)"}
+{"type":"error","message":"Reconnecting... waiting for network (Connection failed: error sending request)"}
+--- stderr
+Reading additional input from stdin...
+2026-11-04T12:18:51.617158Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request
+2026-11-04T12:18:51.834652Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request
+2026-11-04T12:23:24.837532Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request

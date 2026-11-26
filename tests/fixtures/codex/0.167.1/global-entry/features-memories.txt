@@ -1,0 +1,2 @@
+external_agent_memory_import             under development  false
+memories                                 stable             false

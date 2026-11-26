@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "--expose-internals",
+    "D:/software/dsh/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js",
+    "--profile",
+    "headless",
+    "--patch",
+    "C:\\Users\\owner\\.dsh\\tiers\\machine.patch.yml",
+    "--patch",
+    "C:\\Users\\owner\\.dsh\\tiers\\machine-execute.patch.yml",
+    "--json",
+    "--permission-mode",
+    "read-only",
+    "--approval-policy",
+    "never",
+    "<brief>"
+  ],
+  "exit": 0,
+  "changes": [],
+  "gitLogAfter": "f67fb7b init"
+}

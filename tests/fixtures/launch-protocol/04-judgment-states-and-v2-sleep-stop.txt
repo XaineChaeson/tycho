@@ -1,0 +1,288 @@
+started
+launch rc=0
+unknown case
+
+################ (i) no started/
+## state of S1  (12:17:23)
+### ls -la /home/dev/.orchestrator-spike/runs/S1
+total 1
+drwxr-xr-x  2 root root 0 Nov  4 12:17 .
+drwxr-xr-x 10 root root 8 Nov  4 12:17 ..
+### ls -la /home/dev/.orchestrator-spike/runs/S1/started
+ls: cannot access '/home/dev/.orchestrator-spike/runs/S1/started': No such file or directory
+### pid file
+cat: /home/dev/.orchestrator-spike/runs/S1/started/pid: No such file or directory
+### exit file
+cat: /home/dev/.orchestrator-spike/runs/S1/exit: No such file or directory
+### pgrep -af orchestrator-run:S1
+(pgrep rc=1)
+################ (ii) started/ present, no pid, launcher still running (ORCH_LAUNCH_DELAY=20)
+launcher pid 252680:
+    PID    PPID    PGID     SID STAT CMD
+ 252680  252665  252680  252680 Ss   bash /home/dev/.orchestrator-spike/bin/start.sh S2 sleep 300
+ 252686  252680  252680  252680 S     \_ sleep 20
+## state of S2  (12:17:25)
+### ls -la /home/dev/.orchestrator-spike/runs/S2
+total 1
+drwxr-xr-x  3 root root  4 Nov  4 12:17 .
+drwxr-xr-x 13 root root 12 Nov  4 12:17 ..
+drwxr-xr-x  2 root root  0 Nov  4 12:17 started
+-rw-r--r--  1 root root  0 Nov  4 12:17 stderr.log
+-rw-r--r--  1 root root  0 Nov  4 12:17 stdout.ndjson
+-rw-r--r--  1 root root  0 Nov  4 12:17 wrapper.log
+### ls -la /home/dev/.orchestrator-spike/runs/S2/started
+total 1
+drwxr-xr-x 2 root root 0 Nov  4 12:17 .
+drwxr-xr-x 3 root root 4 Nov  4 12:17 ..
+### pid file
+cat: /home/dev/.orchestrator-spike/runs/S2/started/pid: No such file or directory
+### exit file
+cat: /home/dev/.orchestrator-spike/runs/S2/exit: No such file or directory
+### pgrep -af orchestrator-run:S2
+252685 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:S2 /home/dev/.orchestrator-spike/runs/S2 sleep 300
+(pgrep rc=0)
+################ (iii) started/ present, no pid, nothing running (launcher killed during its sleep)
+kill -KILL launcher 252808 rc=0
+--- after killing the launcher only:
+/home/dev/.orchestrator-spike/bin/states.sh: line 11: 252808 Killed                  ORCH_LAUNCH_DELAY=20 setsid bash $B/start.sh S3 sleep 300 > $R/S3.launcher.out 2>&1 < /dev/null
+## state of S3  (12:17:27)
+### ls -la /home/dev/.orchestrator-spike/runs/S3
+total 1
+drwxr-xr-x  3 root root  4 Nov  4 12:17 .
+drwxr-xr-x 14 root root 14 Nov  4 12:17 ..
+drwxr-xr-x  2 root root  0 Nov  4 12:17 started
+-rw-r--r--  1 root root  0 Nov  4 12:17 stderr.log
+-rw-r--r--  1 root root  0 Nov  4 12:17 stdout.ndjson
+-rw-r--r--  1 root root  0 Nov  4 12:17 wrapper.log
+### ls -la /home/dev/.orchestrator-spike/runs/S3/started
+total 1
+drwxr-xr-x 2 root root 0 Nov  4 12:17 .
+drwxr-xr-x 3 root root 4 Nov  4 12:17 ..
+### pid file
+cat: /home/dev/.orchestrator-spike/runs/S3/started/pid: No such file or directory
+### exit file
+cat: /home/dev/.orchestrator-spike/runs/S3/exit: No such file or directory
+### pgrep -af orchestrator-run:S3
+252812 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:S3 /home/dev/.orchestrator-spike/runs/S3 sleep 300
+(pgrep rc=0)
+pkill orphaned worker rc=0
+--- after also killing the orphaned worker (found only via marker):
+## state of S3  (12:17:28)
+### ls -la /home/dev/.orchestrator-spike/runs/S3
+total 1
+drwxr-xr-x  3 root root  4 Nov  4 12:17 .
+drwxr-xr-x 14 root root 14 Nov  4 12:17 ..
+drwxr-xr-x  2 root root  0 Nov  4 12:17 started
+-rw-r--r--  1 root root  0 Nov  4 12:17 stderr.log
+-rw-r--r--  1 root root  0 Nov  4 12:17 stdout.ndjson
+-rw-r--r--  1 root root  0 Nov  4 12:17 wrapper.log
+### ls -la /home/dev/.orchestrator-spike/runs/S3/started
+total 1
+drwxr-xr-x 2 root root 0 Nov  4 12:17 .
+drwxr-xr-x 3 root root 4 Nov  4 12:17 ..
+### pid file
+cat: /home/dev/.orchestrator-spike/runs/S3/started/pid: No such file or directory
+### exit file
+cat: /home/dev/.orchestrator-spike/runs/S3/exit: No such file or directory
+### pgrep -af orchestrator-run:S3
+(pgrep rc=1)
+################ (iv) started/pid present, process alive, no exit
+started
+## state of S4  (12:17:28)
+### ls -la /home/dev/.orchestrator-spike/runs/S4
+total 1
+drwxr-xr-x  2 root root  0 Nov  4 12:17 .
+drwxr-xr-x 14 root root 14 Nov  4 12:17 ..
+drwxr-xr-x  2 root root  0 Nov  4 12:17 started
+-rw-r--r--  1 root root  0 Nov  4 12:17 stderr.log
+-rw-r--r--  1 root root  0 Nov  4 12:17 stdout.ndjson
+-rw-r--r--  1 root root  0 Nov  4 12:17 wrapper.log
+### ls -la /home/dev/.orchestrator-spike/runs/S4/started
+total 1
+drwxr-xr-x 2 root root 0 Nov  4 12:17 .
+drwxr-xr-x 2 root root 0 Nov  4 12:17 ..
+-rw-r--r-- 1 root root 7 Nov  4 12:17 pid
+### pid file
+252835
+### exit file
+cat: /home/dev/.orchestrator-spike/runs/S4/exit: No such file or directory
+### pgrep -af orchestrator-run:S4
+252835 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:S4 /home/dev/.orchestrator-spike/runs/S4 sleep 300
+(pgrep rc=0)
+### ps -o pid,ppid,pgid,sid,stat,etimes,cmd -p 252835
+    PID    PPID    PGID     SID STAT ELAPSED CMD
+ 252835      15  252835  252835 Ss         0 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:S4 /home/dev/.orchestrator-spike/runs/S4 sleep 300
+### members of pgid 252835 (pgrep -g)
+252835 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:S4 /home/dev/.orchestrator-spike/runs/S4 sleep 300
+252837 sleep 300
+### ps --forest -o pid,ppid,pgid,sid,stat,cmd -g 252835
+    PID    PPID    PGID     SID STAT CMD
+ 252835      15  252835  252835 Ss   bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:S4 /home/dev/.orchestrator-spike/runs/S4 sleep 300
+ 252837  252835  252835  252835 S     \_ sleep 300
+################ (v) exit present (worker: true)
+started
+## state of S5  (12:17:29)
+### ls -la /home/dev/.orchestrator-spike/runs/S5
+total 1
+drwxr-xr-x  2 root root  0 Nov  4 12:17 .
+drwxr-xr-x 16 root root 16 Nov  4 12:17 ..
+-rw-r--r--  1 root root  2 Nov  4 12:17 exit
+drwxr-xr-x  2 root root  0 Nov  4 12:17 started
+-rw-r--r--  1 root root  0 Nov  4 12:17 stderr.log
+-rw-r--r--  1 root root  0 Nov  4 12:17 stdout.ndjson
+-rw-r--r--  1 root root  0 Nov  4 12:17 wrapper.log
+### ls -la /home/dev/.orchestrator-spike/runs/S5/started
+total 1
+drwxr-xr-x 2 root root 0 Nov  4 12:17 .
+drwxr-xr-x 2 root root 0 Nov  4 12:17 ..
+-rw-r--r-- 1 root root 7 Nov  4 12:17 pid
+### pid file
+252855
+### exit file
+0
+### pgrep -af orchestrator-run:S5
+(pgrep rc=1)
+### ps -o pid,ppid,pgid,sid,stat,etimes,cmd -p 252855
+    PID    PPID    PGID     SID STAT ELAPSED CMD
+wrapper.log:
+################ (vi) started/pid present, process gone, no exit (kill -9 whole group)
+started
+kill -KILL -- -252874 rc=0
+## state of S6  (12:17:30)
+### ls -la /home/dev/.orchestrator-spike/runs/S6
+total 1
+drwxr-xr-x  2 root root  0 Nov  4 12:17 .
+drwxr-xr-x 16 root root 16 Nov  4 12:17 ..
+drwxr-xr-x  2 root root  0 Nov  4 12:17 started
+-rw-r--r--  1 root root  0 Nov  4 12:17 stderr.log
+-rw-r--r--  1 root root  0 Nov  4 12:17 stdout.ndjson
+-rw-r--r--  1 root root  0 Nov  4 12:17 wrapper.log
+### ls -la /home/dev/.orchestrator-spike/runs/S6/started
+total 1
+drwxr-xr-x 2 root root 0 Nov  4 12:17 .
+drwxr-xr-x 2 root root 0 Nov  4 12:17 ..
+-rw-r--r-- 1 root root 7 Nov  4 12:17 pid
+### pid file
+252874
+### exit file
+cat: /home/dev/.orchestrator-spike/runs/S6/exit: No such file or directory
+### pgrep -af orchestrator-run:S6
+(pgrep rc=1)
+### ps -o pid,ppid,pgid,sid,stat,etimes,cmd -p 252874
+    PID    PPID    PGID     SID STAT ELAPSED CMD
+################ (ii) follow-up: S2 after launcher finished its delay
+## state of S2  (12:17:49)
+### ls -la /home/dev/.orchestrator-spike/runs/S2
+total 2
+drwxr-xr-x  3 root root  4 Nov  4 12:17 .
+drwxr-xr-x 17 root root 17 Nov  4 12:17 ..
+drwxr-xr-x  2 root root  1 Nov  4 12:17 started
+-rw-r--r--  1 root root  0 Nov  4 12:17 stderr.log
+-rw-r--r--  1 root root  0 Nov  4 12:17 stdout.ndjson
+-rw-r--r--  1 root root  0 Nov  4 12:17 wrapper.log
+### ls -la /home/dev/.orchestrator-spike/runs/S2/started
+total 2
+drwxr-xr-x 2 root root 1 Nov  4 12:17 .
+drwxr-xr-x 3 root root 4 Nov  4 12:17 ..
+-rw-r--r-- 1 root root 7 Nov  4 12:17 pid
+### pid file
+252685
+### exit file
+cat: /home/dev/.orchestrator-spike/runs/S2/exit: No such file or directory
+### pgrep -af orchestrator-run:S2
+252685 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:S2 /home/dev/.orchestrator-spike/runs/S2 sleep 300
+(pgrep rc=0)
+### ps -o pid,ppid,pgid,sid,stat,etimes,cmd -p 252685
+    PID    PPID    PGID     SID STAT ELAPSED CMD
+ 252685      15  252685  252685 Ss        26 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:S2 /home/dev/.orchestrator-spike/runs/S2 sleep 300
+### members of pgid 252685 (pgrep -g)
+252685 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:S2 /home/dev/.orchestrator-spike/runs/S2 sleep 300
+252687 sleep 300
+### ps --forest -o pid,ppid,pgid,sid,stat,cmd -g 252685
+    PID    PPID    PGID     SID STAT CMD
+ 252685      15  252685  252685 Ss   bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:S2 /home/dev/.orchestrator-spike/runs/S2 sleep 300
+ 252687  252685  252685  252685 S     \_ sleep 300
+launcher out:
+started
+################ A3a redo with v2 launcher: stop.sh S4 (sleep worker, SIGINT)
+pid=252835 pgid=252835
+### group before (ps --forest -g 252835)
+    PID    PPID    PGID     SID STAT ELAPSED CMD
+ 252835      15  252835  252835 Ss        21 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:S4 /home/dev/.orchestrator-spike/runs/S4 sleep 300
+ 252837  252835  252835  252835 S         21  \_ sleep 300
+kill -INT -- -252835 rc=0
+group gone after 9 ms; sigkill_used=no
+### group after: pgrep -g 252835
+(rc=1)
+### pgrep -af orchestrator-run:S4
+(rc=1)
+### pgrep -af codex exec (any codex left?)
+252647 bash -lc B=~/.orchestrator-spike/bin; R=~/.orchestrator-spike/runs; bash $B/codex-case.sh resume-plain 01a1a679-2a95-76d2-ab19-b7b85e95871b; bash $B/codex-case.sh fail-provider; echo; bash $B/states.sh; for c in resume-plain fail-provider; do echo; echo ===== $c; ls -la $R/$c; echo exit=$(cat $R/$c/exit 2>&1); echo --- stdout; cat $R/$c/stdout.ndjson; echo --- stderr; cat $R/$c/stderr.log; echo --- last.txt; cat $R/$c/last.txt 2>&1; done; echo ===== leftover; pgrep -af orchestrator-run: | cut -c1-70; pgrep -af "codex exec" | cut -c1-70
+(rc=0)
+### exit file (sleep 1 first)
+total 2
+drwxr-xr-x  3 root root  4 Nov  4 12:17 .
+drwxr-xr-x 17 root root 17 Nov  4 12:17 ..
+drwxr-xr-x  2 root root  1 Nov  4 12:17 started
+-rw-r--r--  1 root root  0 Nov  4 12:17 stderr.log
+-rw-r--r--  1 root root  0 Nov  4 12:17 stdout.ndjson
+-rw-r--r--  1 root root  0 Nov  4 12:17 wrapper.log
+cat: /home/dev/.orchestrator-spike/runs/S4/exit: No such file or directory
+### stderr tail
+################ stop S2 too
+pid=252685 pgid=252685
+### group before (ps --forest -g 252685)
+    PID    PPID    PGID     SID STAT ELAPSED CMD
+ 252685      15  252685  252685 Ss        27 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:S2 /home/dev/.orchestrator-spike/runs/S2 sleep 300
+ 252687  252685  252685  252685 S         27  \_ sleep 300
+kill -INT -- -252685 rc=0
+group gone after 9 ms; sigkill_used=no
+### group after: pgrep -g 252685
+(rc=1)
+### pgrep -af orchestrator-run:S2
+(rc=1)
+### pgrep -af codex exec (any codex left?)
+252647 bash -lc B=~/.orchestrator-spike/bin; R=~/.orchestrator-spike/runs; bash $B/codex-case.sh resume-plain 01a1a679-2a95-76d2-ab19-b7b85e95871b; bash $B/codex-case.sh fail-provider; echo; bash $B/states.sh; for c in resume-plain fail-provider; do echo; echo ===== $c; ls -la $R/$c; echo exit=$(cat $R/$c/exit 2>&1); echo --- stdout; cat $R/$c/stdout.ndjson; echo --- stderr; cat $R/$c/stderr.log; echo --- last.txt; cat $R/$c/last.txt 2>&1; done; echo ===== leftover; pgrep -af orchestrator-run: | cut -c1-70; pgrep -af "codex exec" | cut -c1-70
+(rc=0)
+### exit file (sleep 1 first)
+total 2
+drwxr-xr-x  3 root root  4 Nov  4 12:17 .
+drwxr-xr-x 17 root root 17 Nov  4 12:17 ..
+drwxr-xr-x  2 root root  1 Nov  4 12:17 started
+-rw-r--r--  1 root root  0 Nov  4 12:17 stderr.log
+-rw-r--r--  1 root root  0 Nov  4 12:17 stdout.ndjson
+-rw-r--r--  1 root root  0 Nov  4 12:17 wrapper.log
+cat: /home/dev/.orchestrator-spike/runs/S2/exit: No such file or directory
+### stderr tail
+
+===== resume-plain
+total 3
+drwxr-xr-x  3 root root   6 Nov  4 12:17 .
+drwxr-xr-x 17 root root  17 Nov  4 12:17 ..
+-rw-r--r--  1 root root   2 Nov  4 12:17 exit
+-rw-r--r--  1 root root  11 Nov  4 12:17 last.txt
+drwxr-xr-x  2 root root   1 Nov  4 12:17 started
+-rw-r--r--  1 root root   0 Nov  4 12:17 stderr.log
+-rw-r--r--  1 root root 355 Nov  4 12:17 stdout.ndjson
+-rw-r--r--  1 root root   0 Nov  4 12:17 wrapper.log
+exit=0
+--- stdout
+{"type":"thread.started","thread_id":"01a1a679-2a95-76d2-ab19-b7b85e95871b"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"青松-7429"}}
+{"type":"turn.completed","usage":{"input_tokens":30231,"cached_input_tokens":27136,"cache_write_input_tokens":0,"output_tokens":14,"reasoning_output_tokens":0}}
+--- stderr
+--- last.txt
+青松-7429
+===== fail-provider
+ls: cannot access '/home/dev/.orchestrator-spike/runs/fail-provider': No such file or directory
+exit=cat: /home/dev/.orchestrator-spike/runs/fail-provider/exit: No such file or directory
+--- stdout
+cat: /home/dev/.orchestrator-spike/runs/fail-provider/stdout.ndjson: No such file or directory
+--- stderr
+cat: /home/dev/.orchestrator-spike/runs/fail-provider/stderr.log: No such file or directory
+--- last.txt
+cat: /home/dev/.orchestrator-spike/runs/fail-provider/last.txt: No such file or directory
+===== leftover
+252647 bash -lc B=~/.orchestrator-spike/bin; R=~/.orchestrator-spike/r
+252647 bash -lc B=~/.orchestrator-spike/bin; R=~/.orchestrator-spike/r

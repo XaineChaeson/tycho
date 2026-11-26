@@ -1,0 +1,1 @@
+Error: legacy `profile = "cheap"` config is no longer supported; use `--profile cheap` with `cheap.config.toml` instead

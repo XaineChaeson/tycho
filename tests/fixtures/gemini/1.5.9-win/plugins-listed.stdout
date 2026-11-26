@@ -1,0 +1,9 @@
+[
+  {
+    "name": "sample-plugin",
+    "enabled": true,
+    "version": "0.1.0",
+    "source": "claude-code",
+    "path": "C:\\work\\probe\\.gemini\\config\\plugins\\sample-plugin"
+  }
+]

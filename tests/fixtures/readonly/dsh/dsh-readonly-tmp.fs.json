@@ -1,0 +1,22 @@
+{
+  "argv": [
+    "DeepSeek Harness.exe",
+    "--expose-internals",
+    "<dsh cli.js>",
+    "--profile",
+    "headless",
+    "--patch",
+    "C:\\Users\\owner\\.dsh\\tiers\\machine.patch.yml",
+    "--patch",
+    "C:\\Users\\owner\\.dsh\\tiers\\machine-execute.patch.yml",
+    "--json",
+    "--permission-mode",
+    "read-only",
+    "--approval-policy",
+    "never",
+    "<brief>"
+  ],
+  "exit": 0,
+  "changes": [],
+  "gitLogAfter": "2738152 init"
+}

@@ -1,0 +1,4 @@
+Reading additional input from stdin...
+2026-11-04T12:18:51.617158Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request
+2026-11-04T12:18:51.834652Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request
+2026-11-04T12:23:24.837532Z ERROR codex_models_manager::manager: failed to refresh available models: Connection failed: error sending request

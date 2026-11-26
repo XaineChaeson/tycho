@@ -1,0 +1,19 @@
+node_modules/
+data/
+*.log
+.DS_Store
+.local/
+dist/
+.claude/
+console/e2e/.results/
+
+# A PowerShell cache a tool once wrote into the working tree; never part of the project.
+/Microsoft/
+
+# Tycho desktop shell build artifacts
+desktop/src-tauri/target/
+desktop/src-tauri/gen/schemas/
+desktop/dist/
+
+# Generated static docs website
+docs-site/

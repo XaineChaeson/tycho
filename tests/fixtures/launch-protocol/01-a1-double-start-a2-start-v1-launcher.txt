@@ -1,0 +1,90 @@
++ B=/home/dev/.orchestrator-spike/bin
++ bash /home/dev/.orchestrator-spike/bin/start.sh A1 sleep 300
+started
++ echo rc=0
+rc=0
++ bash /home/dev/.orchestrator-spike/bin/state.sh A1
+## state of A1  (12:08:28)
+### ls -la /home/dev/.orchestrator-spike/runs/A1
+total 0
+drwxr-xr-x 2 root root 0 Nov  4 12:08 .
+drwxr-xr-x 2 root root 0 Nov  4 12:08 ..
+drwxr-xr-x 2 root root 0 Nov  4 12:08 started
+-rw-r--r-- 1 root root 0 Nov  4 12:08 stderr.log
+-rw-r--r-- 1 root root 0 Nov  4 12:08 stdout.ndjson
+### ls -la /home/dev/.orchestrator-spike/runs/A1/started
+total 1
+drwxr-xr-x 2 root root 0 Nov  4 12:08 .
+drwxr-xr-x 2 root root 0 Nov  4 12:08 ..
+-rw-r--r-- 1 root root 7 Nov  4 12:08 pid
+### pid file
+250894
+### exit file
+cat: /home/dev/.orchestrator-spike/runs/A1/exit: No such file or directory
+### pgrep -af orchestrator-run:A1
+250894 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:A1 /home/dev/.orchestrator-spike/runs/A1 sleep 300
+(pgrep rc=0)
+### ps -o pid,ppid,pgid,sid,stat,etimes,cmd -p 250894
+    PID    PPID    PGID     SID STAT ELAPSED CMD
+ 250894      15  250894  250894 Ss         0 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:A1 /home/dev/.orchestrator-spike/runs/A1 sleep 300
+### members of pgid 250894 (pgrep -g)
+250894 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:A1 /home/dev/.orchestrator-spike/runs/A1 sleep 300
+250896 sleep 300
+### ps --forest -o pid,ppid,pgid,sid,stat,cmd -g 250894
+    PID    PPID    PGID     SID STAT CMD
+ 250894      15  250894  250894 Ss   bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:A1 /home/dev/.orchestrator-spike/runs/A1 sleep 300
+ 250896  250894  250894  250894 S     \_ sleep 300
++ echo ===== SECOND CALL
+===== SECOND CALL
++ bash /home/dev/.orchestrator-spike/bin/start.sh A1 sleep 300
++ echo rc=3
+rc=3
++ bash /home/dev/.orchestrator-spike/bin/state.sh A1
+## state of A1  (12:08:28)
+### ls -la /home/dev/.orchestrator-spike/runs/A1
+total 0
+drwxr-xr-x 2 root root 0 Nov  4 12:08 .
+drwxr-xr-x 2 root root 0 Nov  4 12:08 ..
+drwxr-xr-x 2 root root 0 Nov  4 12:08 started
+-rw-r--r-- 1 root root 0 Nov  4 12:08 stderr.log
+-rw-r--r-- 1 root root 0 Nov  4 12:08 stdout.ndjson
+### ls -la /home/dev/.orchestrator-spike/runs/A1/started
+total 1
+drwxr-xr-x 2 root root 0 Nov  4 12:08 .
+drwxr-xr-x 2 root root 0 Nov  4 12:08 ..
+-rw-r--r-- 1 root root 7 Nov  4 12:08 pid
+### pid file
+250894
+### exit file
+cat: /home/dev/.orchestrator-spike/runs/A1/exit: No such file or directory
+### pgrep -af orchestrator-run:A1
+250894 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:A1 /home/dev/.orchestrator-spike/runs/A1 sleep 300
+(pgrep rc=0)
+### ps -o pid,ppid,pgid,sid,stat,etimes,cmd -p 250894
+    PID    PPID    PGID     SID STAT ELAPSED CMD
+ 250894      15  250894  250894 Ss         0 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:A1 /home/dev/.orchestrator-spike/runs/A1 sleep 300
+### members of pgid 250894 (pgrep -g)
+250894 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:A1 /home/dev/.orchestrator-spike/runs/A1 sleep 300
+250896 sleep 300
+### ps --forest -o pid,ppid,pgid,sid,stat,cmd -g 250894
+    PID    PPID    PGID     SID STAT CMD
+ 250894      15  250894  250894 Ss   bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:A1 /home/dev/.orchestrator-spike/runs/A1 sleep 300
+ 250896  250894  250894  250894 S     \_ sleep 300
++ echo ===== A2 survival
+===== A2 survival
++ bash /home/dev/.orchestrator-spike/bin/start.sh A2 sleep 300
+started
++ echo rc=0
+rc=0
++ cat /home/dev/.orchestrator-spike/runs/A2/started/pid
+250930
+++ cat /home/dev/.orchestrator-spike/runs/A2/started/pid
++ ps -o pid,ppid,pgid,sid,cmd -p 250930
+    PID    PPID    PGID     SID CMD
+ 250930      15  250930  250930 bash -c dir="$1"; shift; [ -n "$ORCH_CWD" ] && cd "$ORCH_CWD"; "$@" > "$dir/stdout.ndjson" 2> "$dir/stderr.log"; echo $? > "$dir/exit.tmp"; mv "$dir/exit.tmp" "$dir/exit" orchestrator-run:A2 /home/dev/.orchestrator-spike/runs/A2 sleep 300
+++ ps -o pgid= -p 250879
+++ ps -o sid= -p 250879
++ echo launcher-shell pid=250879 pgid= 250878 sid= 250878
+launcher-shell pid=250879 pgid= 250878 sid= 250878
+
+[killed]

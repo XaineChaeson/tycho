@@ -1,0 +1,6 @@
+# AGENTS.md instructions
+
+<INSTRUCTIONS>
+<!-- tycho:generated -->
+MARKER-CODEX-GLOBAL
+</INSTRUCTIONS>

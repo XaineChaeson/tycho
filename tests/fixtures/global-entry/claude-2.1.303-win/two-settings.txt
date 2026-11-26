@@ -1,0 +1,11 @@
+claude 2.1.303, CLAUDE_CONFIG_DIR an empty directory (no login), no ANTHROPIC_API_KEY.
+first.json:  {"apiKeyHelper":"node -e \"require('fs').writeFileSync('C:/work/probe/first.marker','');console.log('sk-ant-invalid')\""}
+second.json: {"apiKeyHelper":"node -e \"require('fs').writeFileSync('C:/work/probe/second.marker','');console.log('sk-ant-invalid')\""}
+
+$ claude -p hi --settings first.json --settings second.json
+Invalid API key · Fix external API key
+markers written: second.marker
+
+$ claude -p hi --settings second.json --settings first.json
+Invalid API key · Fix external API key
+markers written: first.marker
