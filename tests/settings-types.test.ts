@@ -181,7 +181,7 @@ test('the listing says which items take a restart, what a choice offers and what
   );
   assert.deepEqual(byKey['http.host']!.choices, ['127.0.0.1', '0.0.0.0']);
   assert.equal(byKey['http.publicUrl']!.restart, false);
-  assert.equal(byKey['router.cli']!.empty, '自动找 claude：先 PATH，再 Windows 桌面应用自带的');
+  assert.equal(byKey['router.cli']!.empty, '自动找执行器 CLI：先 PATH，再桌面/用户安装目录');
   assert.equal(byKey['router.account']!.empty, '不绑定：用这台电脑自己的登录和默认档位');
   assert.equal(byKey['wecom.botId']!.empty, '不启用企业微信');
   for (const key of ['router.cli', 'router.account', 'router.tier'] as const) {

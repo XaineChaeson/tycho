@@ -18,7 +18,7 @@ test('ordinary service restart retains a pending private reply while loading the
   writeOwnerOnly(file, JSON.stringify({ version: 1, auth: { token: 'synthetic-private-token', botId: 'bot', userId: 'owner', baseUrl: 'https://ilinkai.weixin.qq.com' }, cursor: '', context: '', pending: [], sends: {}, seen: [], controls: {} }));
   const seed = openLedger(join(root, 'ledger.db'));
   seed.setChannels(['console', 'weixin']);
-  const row = seed.outbox.enqueue('weixin', 'markdown', { target: { chatid: 'weixin:bot:owner', chat_type: 1 }, content: 'pending owner reply' });
+  const row = seed.outbox.enqueue('weixin', 'markdown', { external_id: 'front:pending-reply', target: { chatid: 'weixin:bot:owner', chat_type: 1 }, content: 'pending owner reply' });
   seed.close();
   t.mock.method(globalThis, 'fetch', async (_url: unknown, init?: RequestInit) => {
     return new Promise<Response>((_resolve, reject) => {

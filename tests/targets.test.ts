@@ -113,12 +113,13 @@ test('the tier map holds only the fixed names, and has no prototype to read one 
   assert.deepEqual(Object.keys(tiers), ['execute']);
 });
 
-// What a permission mode may be is the executor's own declaration: Claude's modes are not
-// dsh's presets, and Codex has neither.
+// What a permission mode may be is the executor's own declaration: Claude's, Codex's, and
+// dsh's modes each come from their own adapter.
 test('a permission mode is one the account\'s own executor declares', () => {
   assert.equal(checkAccount({ ...VALID, permissionMode: 'acceptEdits' }, EXECUTORS).permissionMode, 'acceptEdits');
   assert.match(refusal({ ...VALID, permissionMode: 'anything' }), /权限模式应为 bypassPermissions、acceptEdits、default、plan 之一/);
-  assert.match(refusal({ ...VALID, executor: 'codex', tiers: { execute: codexTier('m') }, permissionMode: 'acceptEdits' }), /^权限模式只对 claude、dsh 执行器有意义$/);
+  assert.equal(checkAccount({ ...VALID, executor: 'codex', tiers: { execute: codexTier('m') }, permissionMode: 'workspace-write' }, EXECUTORS).permissionMode, 'workspace-write');
+  assert.match(refusal({ ...VALID, executor: 'codex', tiers: { execute: codexTier('m') }, permissionMode: 'acceptEdits' }), /权限模式应为 danger-full-access、workspace-write、read-only、inherit-machine 之一/);
   // A dsh account is a line; its tier names a model on that line.
   const dsh = { executor: 'dsh', provider: { line: 'official' }, tiers: { execute: { kind: 'content', text: '- id: agent-default-model\n  config:\n    provider: deepseek-official\n    model: m\n' } } };
   assert.equal(checkAccount({ ...dsh, permissionMode: 'workspace-write' }, EXECUTORS).permissionMode, 'workspace-write');
@@ -359,6 +360,7 @@ test('GET /api/accounts lists each account with what is known of the machines it
   // By executor, from the adapters: the console offers the field only where one is declared.
   assert.deepEqual(body.permission_modes, {
     claude: ['bypassPermissions', 'acceptEdits', 'default', 'plan'],
+    codex: ['danger-full-access', 'workspace-write', 'read-only', 'inherit-machine'],
     dsh: ['read-only', 'workspace-write', 'danger-full-access'],
     gemini: ['dangerously-skip-permissions', 'accept-edits', 'auto', 'plan'],
   });
@@ -379,7 +381,7 @@ test('GET /api/accounts lists each account with what is known of the machines it
   assert.ok(credentialAt && !Number.isNaN(Date.parse(credentialAt)));
   assert.equal(expectedExpiryAt, expectedExpiry(credentialAt, claudeAdapter.credentialLifetimeDays));
   assert.deepEqual(account, {
-    id: 't1', name: 't1', executor: 'claude', credential: 'missing', signed_in: true, can_route: true, tiers: { execute: claudeTier('/tiers/execute.json') },
+    id: 't1', name: 't1', executor: 'claude', account_label: null, plan_label: null, credential: 'missing', signed_in: true, can_route: true, tiers: { execute: claudeTier('/tiers/execute.json') },
     permission_mode: null, timeout_ms: 60_000, max_runs: null, provider: null,
     // Nothing has run on it yet: no rest, no usage, and the Runs the ledger counts.
     status: { active_runs: 0, max_runs: null, rest: null, usage: [] },

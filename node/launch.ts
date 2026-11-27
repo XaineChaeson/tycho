@@ -31,7 +31,7 @@
 //         `%cd%` that leaves the `%` standing and stops cmd from expanding `%NAME%`. A newline
 //         cannot be carried at all and is refused rather than cut.
 import { readFileSync } from 'node:fs';
-import { join, win32 } from 'node:path';
+import { join, posix, win32 } from 'node:path';
 import type { InstallPlace } from '../adapters/types.ts';
 import { CommandMissing, envOf, fullyQualified, locate, windowsFinder } from './locate.ts';
 import type { RegistryQuery, WindowsFinder } from './locate.ts';
@@ -69,19 +69,60 @@ export function roundDirs(dataDir: string, taskDir?: string): string[] {
 
 const DIRECT = new Set(['.exe', '.com']);
 const MAX_WIN_CMD_LINE = 8000;
+const POSIX_ANCHOR_DIRS = ['/usr', '/usr/local', '/opt', '/bin', '/sbin', '/nix', '/Applications', '/Library'];
+const WIN_ANCHOR_VARS = ['USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)', 'PROGRAMDATA', 'SYSTEMROOT'];
+
+// A process launched by systemd --user, Task Scheduler, or a login shell often inherits `$HOME`,
+// `/` or `C:\Users\<user>` as its working directory. Recursively excluding such a broad root
+// would block every user-installed CLI under `~/.local/bin`, `~/.tycho/cli`, or `%APPDATA%\npm`.
+// Keep those directories in exact-directory exclusion (`excludeDirs`) so executables planted
+// directly in `cwd` are still blocked while subdirectories remain searchable.
+function isBroadRoot(dir: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): boolean {
+  if (platform === 'win32') {
+    if (!fullyQualified(dir)) return false;
+    const fold = (value: string): string => win32.normalize(value).replace(/[\\/]+$/, '').toLowerCase();
+    const target = fold(dir);
+    if (/^[a-z]:$/.test(target) || /^\\\\[^\\]+\\[^\\]+$/.test(target)) return true;
+    const envs = platform === process.platform ? [env, process.env] : [env];
+    const anchors = envs.flatMap((source) =>
+      WIN_ANCHOR_VARS.map((name) => envOf(source, name, 'win32')).filter((each): each is string => each !== undefined && fullyQualified(each)).map(fold));
+    return anchors.some((anchor) => anchor === target || anchor.startsWith(`${target}\\`));
+  }
+  if (!posix.isAbsolute(dir)) return false;
+  const norm = (value: string): string => posix.normalize(value).replace(/\/+$/, '') || '/';
+  const target = norm(dir);
+  if (target === '/') return true;
+  const homeEnvs = platform === process.platform ? [env['HOME'], process.env['HOME']] : [env['HOME']];
+  const anchors = [
+    ...POSIX_ANCHOR_DIRS,
+    ...homeEnvs.filter((each): each is string => each !== undefined && posix.isAbsolute(each)),
+  ].map(norm);
+  return anchors.some((anchor) => anchor === target || anchor.startsWith(`${target}/`));
+}
 
 export function launchOf(argv: string[], env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform, options: LaunchOptions = {}): Launch {
   const [name, ...args] = argv;
   if (name === undefined || name === '') throw new Error('没有给出要运行的命令');
-  // PATH first, then the places the executor's adapter declares (node/locate.ts). Neither the
-  // round's directories nor the working directory are ever looked in.
-  const exclude = [...(options.exclude ?? []), ...(options.cwd === undefined ? [] : [options.cwd]), process.cwd()];
-  const lookup = locate(name, { ...options, env, platform, exclude });
+  // PATH first, then the places the executor's adapter declares (node/locate.ts). Explicit
+  // round directories (`options.exclude`) are always excluded recursively; implicit working
+  // directories (`options.cwd`, `process.cwd()`) fall back to exact-directory exclusion when
+  // they are `$HOME`, a filesystem root, or an ancestor of standard install roots.
+  const exclude: string[] = [...(options.exclude ?? [])];
+  const excludeDirs: string[] = [];
+  const implicitCwds = [
+    ...(options.cwd === undefined ? [] : [options.cwd]),
+    ...(platform === process.platform ? [process.cwd()] : []),
+  ];
+  for (const dir of implicitCwds) {
+    if (isBroadRoot(dir, env, platform)) excludeDirs.push(dir);
+    else exclude.push(dir);
+  }
+  const lookup = locate(name, { ...options, env, platform, exclude, excludeDirs });
   if (lookup.path === undefined) throw new CommandMissing(name, lookup.searched);
   const path = lookup.path;
   if (platform !== 'win32') return { command: path, args, verbatim: false, found: path };
   if (DIRECT.has(win32.extname(path).toLowerCase())) return { command: path, args, verbatim: false, found: path };
-  const finder = windowsFinder(env, { ...options, exclude });
+  const finder = windowsFinder(env, { ...options, exclude, excludeDirs });
   const shim = npmShim(path, finder, options.readFile ?? ((file) => readFileSync(file, 'utf8')));
   if (shim !== undefined) return { command: shim.node, args: [shim.script, ...args], verbatim: false, found: path };
   const root = envOf(env, 'SYSTEMROOT');

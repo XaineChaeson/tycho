@@ -753,3 +753,37 @@ test('project composer auto-converts >16 KiB plain-text paste into an uploaded .
   expect(await screen.findByText(uploadedNames[0]!)).toBeInTheDocument();
   expect(box()).toHaveValue('');
 });
+
+test('a project router failure from /api/state surfaces an alert banner with one-click restart', async () => {
+  const app = open('#/projects/p1', (call) => {
+    if (call.path === '/api/state') {
+      return {
+        router: {
+          alive: false,
+          error: null,
+          host_error: null,
+          restarting: false,
+          turn: null,
+          projects: [{ project_id: 'p1', alive: false, error: '负责人启动失败：找不到 agy' }],
+        },
+        dispatch: { degraded: false, recovering: false, paused: null },
+        channels: { wecom: null },
+        gateway: { state: 'off', since: null, error: null },
+        launching_runs: [],
+      };
+    }
+    if (call.path === '/api/router/restart' && call.method === 'POST') {
+      return { waiting_for_turn: null };
+    }
+    return undefined;
+  });
+
+  const alert = await screen.findByRole('alert');
+  expect(alert).toHaveTextContent('项目负责人已停摆');
+  expect(alert).toHaveTextContent('负责人启动失败：找不到 agy');
+
+  await app.user.click(within(alert).getByRole('button', { name: '重启负责人' }));
+  await waitFor(() => {
+    expect(app.calls.some((c) => c.path === '/api/router/restart' && c.method === 'POST')).toBe(true);
+  });
+});

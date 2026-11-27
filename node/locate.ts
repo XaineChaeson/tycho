@@ -30,8 +30,11 @@ export type RegistryQuery = (args: string[]) => string | undefined;
 export interface LocateOptions {
   env: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
-  // Directories, and everything under them, that are never looked in (Windows).
+  // Directories, and everything under them, that are never looked in (e.g. task checkouts).
   exclude?: string[];
+  // Exact directories (without their subdirectories) that are never looked in (e.g. when a
+  // process's working directory is $HOME or a filesystem root).
+  excludeDirs?: string[];
   // The declared places to try after PATH. By default the adapters' for this command name.
   places?: readonly InstallPlace[];
   isFile?: (path: string) => boolean;
@@ -142,21 +145,25 @@ export interface WindowsFinder {
   outside: (file: string) => boolean;
 }
 
-export function windowsFinder(env: NodeJS.ProcessEnv, options: Pick<LocateOptions, 'exclude' | 'isFile' | 'realpath'> = {}): WindowsFinder {
+export function windowsFinder(env: NodeJS.ProcessEnv, options: Pick<LocateOptions, 'exclude' | 'excludeDirs' | 'isFile' | 'realpath'> = {}): WindowsFinder {
   const isFile = options.isFile ?? isFileOnDisk;
   const realpath = options.realpath ?? ((path: string) => realpathSync.native(path));
   const exts = (envOf(env, 'PATHEXT') ?? DEFAULT_PATHEXT).split(';').map((each) => each.trim().toLowerCase()).filter((each) => each.startsWith('.'));
   // Both as written and as the disk resolves it: a root's alias may be the one PATH names.
-  const roots = (options.exclude ?? [])
+  const expand = (dirs: readonly string[] | undefined): string[] => (dirs ?? [])
     .filter(fullyQualified).flatMap((dir) => [fold(dir), located(dir, realpath)])
     .filter((each): each is string => each !== undefined);
-  const inside = (path: string): boolean => roots.some((root) => path === root || path.startsWith(`${root}\\`));
+  const roots = expand(options.exclude);
+  const exactDirs = expand(options.excludeDirs);
+  const inside = (path: string): boolean =>
+    roots.some((root) => path === root || path.startsWith(`${root}\\`))
+    || exactDirs.some((dir) => path === dir);
   // Asked only of a directory that holds the name, so a lookup does not reach out to every
   // share on PATH.
   const outside = (file: string): boolean => {
     const dir = win32.dirname(file);
     const real = located(file, realpath);
-    const places = [fold(dir), located(dir, realpath), real === undefined ? undefined : win32.dirname(real)];
+    const places = [fold(dir), located(dir, realpath), real === undefined ? undefined : fold(win32.dirname(real))];
     return places.every((place) => place !== undefined && !inside(place));
   };
   // A name that already ends in one of them is tried as it is; any other is tried with each.
@@ -180,21 +187,25 @@ export function windowsFinder(env: NodeJS.ProcessEnv, options: Pick<LocateOption
 
 // Canonical containment check for POSIX paths so a PATH entry, managed prefix, or symlink
 // resolving inside an excluded task checkout directory can never be launched as an executor.
-function posixOutside(options: Pick<LocateOptions, 'exclude' | 'realpath'>): (file: string) => boolean {
+function posixOutside(options: Pick<LocateOptions, 'exclude' | 'excludeDirs' | 'realpath'>): (file: string) => boolean {
   const excluded = (options.exclude ?? []).filter((dir) => posix.isAbsolute(dir));
-  if (excluded.length === 0) return () => true;
+  const exactExcluded = (options.excludeDirs ?? []).filter((dir) => posix.isAbsolute(dir));
+  if (excluded.length === 0 && exactExcluded.length === 0) return () => true;
   const realpath = options.realpath ?? ((path: string) => realpathSync.native(path));
   const resolveOrUndef = (path: string): string | undefined => {
     try { return posix.normalize(realpath(path)); } catch { return undefined; }
   };
   const norm = (path: string): string => posix.normalize(path).replace(/\/+$/, '') || '/';
-  const roots = excluded.flatMap((dir) => {
+  const expandDirs = (dirs: readonly string[]): string[] => dirs.flatMap((dir) => {
     const resolved = resolveOrUndef(dir);
     return resolved === undefined ? [norm(dir)] : [norm(dir), norm(resolved)];
   });
+  const roots = expandDirs(excluded);
+  const exactDirs = expandDirs(exactExcluded);
   const inside = (path: string): boolean => {
     const p = norm(path);
-    return roots.some((root) => p === root || (root === '/' ? p.startsWith('/') : p.startsWith(`${root}/`)));
+    return roots.some((root) => p === root || (root === '/' ? p.startsWith('/') : p.startsWith(`${root}/`)))
+      || exactDirs.some((dir) => p === dir);
   };
   return (file: string): boolean => {
     const dir = posix.dirname(file);

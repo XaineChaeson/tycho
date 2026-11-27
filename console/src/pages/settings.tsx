@@ -5,7 +5,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
-import { changedByText, routerLine, tierText } from '@shared/labels.ts';
+import { changedByText, projectRouterErrors, routerLine, tierText } from '@shared/labels.ts';
 import { loginName } from '@shared/logins.ts';
 import { formatTime } from '@shared/time.ts';
 import { TIER_IDS, isTierId, tierLabel, tierValueFrom, type TierId } from '@shared/tiers.ts';
@@ -325,7 +325,7 @@ function RouterPanel({ current, page, draft, busy, save }: {
       id={`setting-${RESTART}`}
       current={current}
       label="负责人进程"
-      summary={state.error && !state.restarting ? <span className="text-destructive">{routerLine(state)}</span> : <>{routerLine(state)}</>}
+      summary={(state.error || projectRouterErrors(state).length > 0) && !state.restarting ? <span className="text-destructive">{routerLine(state)}</span> : <>{routerLine(state)}</>}
       help={routerHelp(page)}
       failure={draft.error}
       control={<></>}

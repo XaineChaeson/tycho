@@ -58,3 +58,23 @@ test('a pause says what it means and what it does not reach: the Runs that may s
   expect(stopped[1]!.detail).toContain('账本写入失败');
   expect(stopped[1]!.detail).toContain('暂停前已取得启动资格、可能随后启动：探针（h1，启动未确认，仍可能迟到启动）');
 });
+
+test('a project-level router failure is surfaced instead of reporting 一切正常', () => {
+  const lines = healthLines(state({
+    router: {
+      alive: false,
+      error: null,
+      restarting: false,
+      turn: null,
+      projects: [{ project_id: 'p-alert', alive: false, error: '负责人启动失败：找不到 agy' }],
+    },
+  }));
+  expect(lines[0]).toMatchObject({
+    name: '负责人',
+    tone: 'failed',
+    text: '项目异常',
+    href: '#/projects/p-alert/settings',
+    linkLabel: '去检查',
+  });
+  expect(lines[0]!.detail).toContain('负责人启动失败：找不到 agy');
+});

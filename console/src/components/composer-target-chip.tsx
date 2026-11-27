@@ -26,6 +26,7 @@ export interface ComposerTargetChipProps {
   projectId?: string | null;
   currentLogin?: string | null;
   currentMachine?: string | null;
+  routerError?: string | null;
   compact?: boolean;
 }
 
@@ -41,6 +42,7 @@ export function ComposerTargetChip({
   projectId,
   currentLogin,
   currentMachine,
+  routerError = null,
   compact = false,
 }: ComposerTargetChipProps) {
   const client = useQueryClient();
@@ -81,10 +83,11 @@ export function ComposerTargetChip({
     const remainingSuffix = activeLogin && activeLogin.tightestRemaining !== null
       ? ` · 剩 ${activeLogin.tightestRemaining}%`
       : '';
-    const chipLabel = activeRouterId === null
+    const baseLabel = activeRouterId === null
       ? '负责人 · 服务默认'
       : `负责人 · ${activeLogin?.name ?? activeRouterId}${remainingSuffix}`;
-    const dotTone = activeLogin ? chipToneOf(activeLogin) : 'ended';
+    const chipLabel = routerError ? `${baseLabel} · 已停摆` : baseLabel;
+    const dotTone = routerError ? 'failed' : activeLogin ? chipToneOf(activeLogin) : 'ended';
     const canSwitch = Boolean(project);
 
     async function switchRouter(nextAccountId: string | null): Promise<void> {

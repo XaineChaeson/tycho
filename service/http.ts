@@ -3613,7 +3613,13 @@ export function createHttp(options: HttpOptions) {
   async function setWecomSecret(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const { secret } = await readJson(request);
     requireSteady('改企业微信的 Secret');
-    options.wecomSecret.set(secret, { actor: CONSOLE_ACTOR });
+    try {
+      options.wecomSecret.set(secret, { actor: CONSOLE_ACTOR });
+    } catch (err) {
+      if (err instanceof InputError || err instanceof DegradedError || err instanceof HttpError) throw err;
+      log(`保存企业微信 Secret 失败：${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+      throw new HttpError(500, 'Secret 没有存下来，请查看服务端日志');
+    }
     sendJson(response, 200, { secret_set: true });
   }
 

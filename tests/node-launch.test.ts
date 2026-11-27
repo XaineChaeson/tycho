@@ -128,9 +128,52 @@ function withPath(bin: string, extra: Record<string, string> = {}): NodeJS.Proce
 }
 
 test('POSIX：找到的命令连同参数原样交给 spawn，不经 shell', () => {
-  const launch = launchOf(['codex', 'exec', 'a b', '%x%'], { PATH: 'relative:/usr/bin' }, 'linux', { isFile: (path) => path === '/usr/bin/codex' || path === 'relative/codex' });
+  const launch = launchOf(['codex', 'exec', 'a b', '%x%'], { PATH: 'relative:/usr/bin' }, 'linux', {
+    isFile: (path) => path === '/usr/bin/codex' || path === 'relative/codex',
+    realpath: same,
+  });
   assert.deepEqual(launch, { command: '/usr/bin/codex', args: ['exec', 'a b', '%x%'], verbatim: false, found: '/usr/bin/codex' });
-  assert.throws(() => launchOf(['codex'], { PATH: '/usr/bin' }, 'linux', { isFile: () => false }), /找不到 codex：查过 PATH/);
+  assert.throws(() => launchOf(['codex'], { PATH: '/usr/bin' }, 'linux', { isFile: () => false, realpath: same }), /找不到 codex：查过 PATH/);
+});
+
+test('工作目录是 $HOME、根目录或用户目录祖先时：仍跳过该目录本身，但放行子目录下的用户级 CLI', () => {
+  // Linux systemd --user launches with cwd === $HOME: `~/.local/bin/agy` must remain discoverable
+  // while a binary planted directly at `$HOME/agy` is still rejected.
+  const posixFiles = new Set(['/home/u/agy', '/home/u/.local/bin/agy']);
+  const posixLaunch = launchOf(['agy', '--version'], { PATH: '/home/u:/usr/bin', HOME: '/home/u' }, 'linux', {
+    cwd: '/home/u',
+    isFile: (path) => posixFiles.has(path),
+    realpath: same,
+  });
+  assert.equal(posixLaunch.command, '/home/u/.local/bin/agy');
+
+  // Same for `/` as cwd on Linux.
+  const rootLaunch = launchOf(['agy'], { PATH: '/:/home/u/.local/bin', HOME: '/home/u' }, 'linux', {
+    cwd: '/',
+    isFile: (path) => path === '/agy' || path === '/home/u/.local/bin/agy',
+    realpath: same,
+  });
+  assert.equal(rootLaunch.command, '/home/u/.local/bin/agy');
+
+  // Same on Windows when cwd === %USERPROFILE%: `%USERPROFILE%\.local\bin\claude.exe` works,
+  // while `%USERPROFILE%\claude.exe` is skipped.
+  const winFiles = new Set(['C:\\Users\\u\\claude.exe', 'C:\\Users\\u\\.local\\bin\\claude.exe']);
+  const winLaunch = launchOf(['claude'], { PATH: 'C:\\Users\\u', USERPROFILE: 'C:\\Users\\u' }, 'win32', {
+    cwd: 'C:\\Users\\u',
+    isFile: (path) => winFiles.has(path),
+    realpath: same,
+  });
+  assert.equal(winLaunch.command, 'C:\\Users\\u\\.local\\bin\\claude.exe');
+
+  // A normal project repo cwd under `$HOME` is NOT a broad root, so its subdirectories remain
+  // recursively excluded (e.g. `repo/node_modules/.bin/codex`).
+  const repoFiles = new Set(['/home/u/work/repo/node_modules/.bin/codex', '/home/u/.local/bin/codex']);
+  const repoLaunch = launchOf(['codex'], { PATH: '/home/u/work/repo/node_modules/.bin:/home/u/.local/bin', HOME: '/home/u' }, 'linux', {
+    cwd: '/home/u/work/repo',
+    isFile: (path) => repoFiles.has(path),
+    realpath: same,
+  });
+  assert.equal(repoLaunch.command, '/home/u/.local/bin/codex');
 });
 
 test('Windows 找命令：按 PATHEXT 找到 .cmd，Path 的大小写不论，不看工作目录', () => {

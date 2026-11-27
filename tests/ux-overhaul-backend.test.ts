@@ -313,12 +313,13 @@ test('PWA manifest and console/index.html links are valid', () => {
   assert.equal(manifest.short_name, 'Tycho');
   assert.equal(manifest.display, 'standalone');
   assert.equal(manifest.start_url, '/');
-  assert.equal(manifest.theme_color, '#111827');
-  assert.equal(manifest.background_color, '#0b0f17');
+  assert.equal(manifest.theme_color, '#0D1322');
+  assert.equal(manifest.background_color, '#050811');
 
   const html = readFileSync(new URL('../console/index.html', import.meta.url), 'utf8');
-  assert.match(html, /<link\s+rel="manifest"\s+href="\/manifest\.webmanifest"\s*\/?>/);
-  assert.match(html, /<meta\s+name="theme-color"\s+content="#111827"\s*\/?>/);
+  assert.match(html, /<link\s+rel="manifest"\s+href="\/manifest\.webmanifest"[^>]*\/?>/);
+  assert.match(html, /<meta\s+name="theme-color"[^>]*content="#E9EDF4"\s*\/?>/);
+  assert.match(html, /<meta\s+name="theme-color"[^>]*content="#050811"\s*\/?>/);
 });
 
 test('readTaskDiff uses source_head.start as preferred base and reads source_head.head / remote_head for run commits', { skip: noGit }, async (t) => {

@@ -2,7 +2,7 @@
 // column. When everything is as it should be the whole thing is one line; a part that is
 // not right opens out with what it means and a way to the place where it is put right.
 import { useQuery } from '@tanstack/react-query';
-import { gatewayNote, routerLine, type GatewayNote, type RouterState } from '@shared/labels.ts';
+import { gatewayNote, projectRouterErrors, routerLine, type GatewayNote, type RouterState } from '@shared/labels.ts';
 import { Dot, HashLink, Time, type Tone } from '@/components/bits';
 import { stateQuery } from '@/lib/queries';
 import type { LaunchingRun, ServiceState, WecomState } from '@/lib/types';
@@ -37,6 +37,18 @@ function afterPause(dispatch: ServiceState['dispatch'], launching: readonly Laun
 
 function routerLineOf(router: RouterState): Line {
   if (router.error) return line({ key: 'router', name: '负责人', tone: 'failed', text: '已停摆', detail: routerLine(router), href: '#/settings/router.cli', linkLabel: '去设置' });
+  const failedProjects = projectRouterErrors(router);
+  if (failedProjects.length > 0) {
+    return line({
+      key: 'router',
+      name: '负责人',
+      tone: 'failed',
+      text: failedProjects.length === 1 ? '项目异常' : `${failedProjects.length} 项异常`,
+      detail: routerLine(router),
+      href: `#/projects/${encodeURIComponent(failedProjects[0]!.project_id)}/settings`,
+      linkLabel: '去检查',
+    });
+  }
   if (router.restarting) return line({ key: 'router', name: '负责人', tone: 'waiting', text: '重启中', detail: routerLine(router) });
   if (router.alive) return line({ key: 'router', name: '负责人', tone: 'running', text: '运行中' });
   return line({ key: 'router', name: '负责人', tone: 'ended', text: '未运行', detail: '有消息来时会自动启动。' });

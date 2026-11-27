@@ -31,7 +31,7 @@ import { api, messageOf, post, projectFileRawUrl, uploadProjectFile } from '@/li
 import { conversationItems, hasTurn } from '@/lib/conversation';
 import { EXAMPLE_ASKS, useAsk } from '@/lib/examples';
 import { useLive, useLiveState } from '@/lib/live-context';
-import { approvalsQuery, PAGE, projectFilesQuery, projectsQuery, tasksQuery } from '@/lib/queries';
+import { approvalsQuery, PAGE, projectFilesQuery, projectsQuery, stateQuery, tasksQuery } from '@/lib/queries';
 import type { Conversation, Message, Project, ProjectFileSummary, Segment, Task, TurnChanges } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { ProjectSettings } from '@/pages/project-settings';
@@ -156,7 +156,7 @@ function normalizeUploadFile(file: File): File {
 // The box holds what the console keeps as the draft, not a text of its own: the owner
 // can go and look something up on another page and find it as they left it, and a text
 // the service refused while they were away is back in it, with the reason.
-function Composer({ busy, project, dimmed = false }: { busy: boolean; project: string; dimmed?: boolean }) {
+function Composer({ busy, project, dimmed = false, routerError = null }: { busy: boolean; project: string; dimmed?: boolean; routerError?: string | null }) {
   const live = useLive();
   const client = useQueryClient();
   const { sending, draft, attachments, refused } = useLiveState();
@@ -441,7 +441,7 @@ function Composer({ busy, project, dimmed = false }: { busy: boolean; project: s
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 px-3 py-1 text-2xs text-faint">
             <span>发给项目负责人</span>
-            <ComposerTargetChip mode="project" projectId={project} compact />
+            <ComposerTargetChip mode="project" projectId={project} routerError={routerError} compact />
           </div>
         </div>
         {/* A phone sends with its keyboard's own key: the line would only take space there. */}
@@ -690,6 +690,33 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
   const busy = useMemo(() => rows.some((row) => row.state === 'processing'), [rows]);
   const canStartNewTopic = Boolean(meta.data) && writable && !archived && !busy && rows.length > 0;
 
+  const { data: serviceState } = useQuery(stateQuery);
+  const [restartingRouter, setRestartingRouter] = useState(false);
+  const [restartProblem, setRestartProblem] = useState<string | null>(null);
+  const projectRouter = serviceState?.router.projects?.find((each) => each.project_id === id);
+  const routerError = serviceState
+    ? (serviceState.router.host_error
+      ?? projectRouter?.error
+      ?? ((project?.router?.account ?? null) === null ? serviceState.router.error : null))
+    : (meta.data?.router_error ?? null);
+
+  async function restartRouter(): Promise<void> {
+    if (restartingRouter) return;
+    setRestartingRouter(true);
+    setRestartProblem(null);
+    try {
+      await post('/api/router/restart');
+      await Promise.all([
+        client.invalidateQueries({ queryKey: stateQuery.queryKey }),
+        client.invalidateQueries({ queryKey: [PAGE, 'conversation', id] }),
+      ]);
+    } catch (error) {
+      setRestartProblem(messageOf(error));
+    } finally {
+      setRestartingRouter(false);
+    }
+  }
+
   async function newTopic(): Promise<void> {
     if (!canStartNewTopic) return;
     if (!window.confirm('开启新话题会将当前对话归档为只读，确定吗？')) return;
@@ -757,7 +784,6 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
           <PageScroll follow opens="latest">
             <div className="mx-auto w-full max-w-[760px] px-4">
               {problem ? <Problem role="alert" className="mt-3">{problem}</Problem> : null}
-              {writable && meta.data?.router_error ? <Problem role="status" className="mt-3"><span>{meta.data.router_error}</span>{' '}<Link to={'/projects/' + encodeURIComponent(id) + '/settings'}>项目设置</Link></Problem> : null}
               {meta.error ? <Problem role="alert" className="mt-3">{meta.error.message}</Problem> : null}
               {!writable && meta.data ? <Note className="mt-4 rounded-lg bg-muted px-3 py-2">{ownerNotice ?? '这是之前的一段对话，只能看；新消息发在当前这一段。'}</Note> : null}
               <div role="log" aria-label="对话" className="flex flex-col gap-5 pt-6 pb-8 text-base">
@@ -807,11 +833,44 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
               ) : null}
             </div>
           ) : writable ? (
-            <Composer
-              busy={busy}
-              project={id}
-              dimmed={Boolean(selectedThreadId && wide && !threadFocused && activePane === 'thread')}
-            />
+            <>
+              {routerError ? (
+                <div className="flex-none px-4 pt-2">
+                  <Callout
+                    tone="failed"
+                    role="alert"
+                    title="项目负责人已停摆"
+                    className="mx-auto w-full max-w-[760px]"
+                    action={(
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          disabled={restartingRouter || Boolean(serviceState?.router.restarting)}
+                          onClick={() => void restartRouter()}
+                        >
+                          {restartingRouter || serviceState?.router.restarting ? '重启中…' : '重启负责人'}
+                        </Button>
+                        <Link
+                          to={projectPath(id, 'settings')}
+                          className="text-xs font-medium text-link no-underline hover:underline"
+                        >
+                          项目设置
+                        </Link>
+                      </div>
+                    )}
+                  >
+                    <p className="wrap-anywhere">{routerError}</p>
+                    {restartProblem ? <Problem role="alert" className="mt-1.5">{restartProblem}</Problem> : null}
+                  </Callout>
+                </div>
+              ) : null}
+              <Composer
+                busy={busy}
+                project={id}
+                routerError={routerError}
+                dimmed={Boolean(selectedThreadId && wide && !threadFocused && activePane === 'thread')}
+              />
+            </>
           ) : null}
         </div>
         {selectedThreadId === null ? (

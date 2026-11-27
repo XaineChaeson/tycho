@@ -247,6 +247,26 @@ test('声明的位置同样不进这一轮的目录', () => {
   assert.equal(symlinkExcluded.path, '/usr/local/bin/claude');
 });
 
+test('excludeDirs 只排除目录本身，不误杀子目录下的用户级 CLI（如 cwd=$HOME 时放行 ~/.local/bin）', () => {
+  const posixFake = disk(['/home/o/agy', '/home/o/.local/bin/agy'], posix);
+  const posixFound = locate('agy', {
+    env: { PATH: '/home/o:/home/o/.local/bin', HOME: '/home/o' },
+    platform: 'linux',
+    excludeDirs: ['/home/o'],
+    ...posixFake,
+  });
+  assert.equal(posixFound.path, '/home/o/.local/bin/agy');
+
+  const winFake = disk(['C:\\Users\\u\\claude.exe', 'C:\\Users\\u\\.local\\bin\\claude.exe']);
+  const winFound = locate('claude', {
+    env: { PATH: 'C:\\Users\\u;C:\\Users\\u\\.local\\bin', USERPROFILE: 'C:\\Users\\u' },
+    platform: 'win32',
+    excludeDirs: ['C:\\Users\\u'],
+    ...winFake,
+  });
+  assert.equal(winFound.path, 'C:\\Users\\u\\.local\\bin\\claude.exe');
+});
+
 test('查找用的环境：Windows 会合并注册表系统/用户 PATH；登录 shell 打印的东西只认标记之后的那份', async () => {
   const own = { Path: 'C:\\bin', APPDATA: 'C:\\Users\\u\\AppData\\Roaming' };
   assert.equal((await readLookupEnv({ platform: 'win32', inherited: own, registry: () => undefined })).env, own);

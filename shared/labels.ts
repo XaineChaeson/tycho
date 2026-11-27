@@ -555,16 +555,29 @@ export function quotaEndLine(quota: { login_id?: string | null; login_name?: str
   return `${loginName(quota.login_name ?? quota.login_id ?? quota.account_id ?? quota.target_id ?? '')} 的额度用完${rest}。任务已回到队列：额度恢复后，或换到项目里别的登录上，自动接续`;
 }
 
+export interface ProjectRouterState {
+  project_id: string;
+  alive: boolean;
+  error: string | null;
+  resting_until?: string | null;
+  turn?: string | null;
+}
+
 // What the service says of the Router process: `error` is why it is stopped, `turn` the
 // message it is working on, which a restart waits for, `waiting` the barrier an accepted
 // restart waits out before it starts the new process.
 export interface RouterState {
   alive: boolean;
   error: string | null;
+  host_error?: string | null;
   restarting: boolean;
   turn: string | null;
   waiting?: 'degraded' | 'recovering' | null;
+  projects?: readonly ProjectRouterState[];
 }
+
+export const projectRouterErrors = (router: RouterState): readonly ProjectRouterState[] =>
+  (router.projects ?? []).filter((each) => Boolean(each.error));
 
 // What an accepted restart waits out before it starts the new process: `waiting` names it.
 const RESTART_WAITS: Record<string, string> = {
@@ -580,6 +593,12 @@ const restartLine = ({ turn, waiting }: RouterState): string => (waiting && REST
 export function routerLine(router: RouterState): string {
   if (router.restarting) return restartLine(router);
   if (router.error) return `负责人已停摆：${router.error}`;
+  const failed = projectRouterErrors(router);
+  if (failed.length > 0) {
+    return failed.length === 1
+      ? `项目负责人已停摆：${failed[0]!.error}`
+      : `${failed.length} 个项目的负责人已停摆：${failed[0]!.error}`;
+  }
   return router.alive ? '负责人在运行' : '负责人现在没有在运行，有消息来时会自动启动';
 }
 
@@ -596,7 +615,20 @@ export function bannerNotes({ dispatch, router, channels }: {
   if (dispatch.degraded) notes.push({ text: '账本写入失败，派发已停止' });
   if (dispatch.recovering) notes.push({ text: '正在恢复清点，暂不派发、不处理消息、不发通知' });
   if (dispatch.paused) notes.push({ text: '派发已暂停' });
-  if (router.error) notes.push({ text: `负责人已停摆：${router.error}`, href: '#/settings/router.cli', label: '去设置' });
+  if (router.error) {
+    notes.push({ text: `负责人已停摆：${router.error}`, href: '#/settings/router.cli', label: '去设置' });
+  } else {
+    const failed = projectRouterErrors(router);
+    if (failed.length > 0) {
+      notes.push({
+        text: failed.length === 1
+          ? `项目负责人已停摆：${failed[0]!.error}`
+          : `${failed.length} 个项目的负责人已停摆：${failed[0]!.error}`,
+        href: `#/projects/${encodeURIComponent(failed[0]!.project_id)}/settings`,
+        label: '去检查',
+      });
+    }
+  }
   if (router.restarting) notes.push({ text: restartLine(router) });
   if (channels?.wecom?.error) notes.push({ text: `企微已停止：${channels.wecom.error}` });
   return notes;
