@@ -29,11 +29,22 @@ Tycho 采用 **「服务端统一承载 UI + 3.6 MB 原生薄壳 / 手机全屏 
 - 点击「连接本机」默认连接主机默认端口 **`http://127.0.0.1:8787`**；配置保存在 `~/.tycho/desktop.json`（仅持久化服务器 Origin，不落盘一次性登录链接），更换或更新客户端可执行文件时服务器列表不会丢失。
 
 ### macOS
-1. 下载 `Tycho-*-macos-universal.dmg`，将 `Tycho.app` 拖入「应用程序（`/Applications`）」。
-2. 若未配置 Apple 公证签名，首次打开时系统 Gatekeeper 可能提示「无法验证开发者」或「已损坏」，在终端执行一次即可：
-   ```bash
-   xattr -cr /Applications/Tycho.app
-   ```
+
+从同一个 `app-v*` 发布页下载 macOS 的 DMG 和 `SHA256SUMS.txt`，放在同一目录。在该目录运行下面的命令，确认下载的 DMG 文件名后显示 `OK`。
+
+```bash
+grep 'macos-universal\.dmg$' SHA256SUMS.txt | shasum -a 256 -c -
+```
+
+校验通过后，打开 DMG，将 `Tycho.app` 拖入「应用程序」，再从「应用程序」打开。若校验失败，请从对应发布页重新下载。如果 macOS 提示「已损坏」或「将损坏你的电脑」，请停止打开并向项目反馈版本和提示原文。
+
+未经 Apple 公证的构建首次打开时，Gatekeeper 可能提示「Apple 无法验证“Tycho”是否包含……」或「无法验证开发者」。如果你信任已校验的版本，点「完成」，在 **系统设置 → 隐私与安全性** 中找到 Tycho，点 **「仍要打开」** 并确认。[Apple 官方说明](https://support.apple.com/zh-cn/102445)
+
+遇到上述「无法验证」提示时，也可用终端移除 `Tycho.app` 的下载隔离标记，再打开应用。
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Tycho.app
+```
 
 ### Linux
 - **AppImage（便携单文件）**：

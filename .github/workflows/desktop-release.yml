@@ -189,7 +189,7 @@ jobs:
             - **Windows (Portable, zero install)**: `Tycho-*-windows-x64-portable.exe` — double-click to run directly.
             - **Windows (Installer)**: `Tycho-*-windows-x64-setup.exe` — Start Menu shortcut & standard uninstaller.
             - **macOS (Apple Silicon & Intel Universal)**: `Tycho-*-macos-universal.dmg` — drag `Tycho.app` into `/Applications`.
-              > Unsigned build note: if macOS Gatekeeper warns the app is damaged or from an unidentified developer, run `xattr -cr /Applications/Tycho.app` once.
+              > If Gatekeeper cannot verify Tycho, check the DMG against this release's `SHA256SUMS.txt`. If you trust the verified build, choose **Open Anyway** for Tycho in **System Settings → Privacy & Security**. [macOS installation guide](${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}/docs/clients.md#macos)
             - **Linux**: `Tycho-*-linux-x86_64.AppImage` (`chmod +x` and run) or `Tycho-*-linux-amd64.deb` (`sudo apt install ./Tycho-*.deb`).
             - **iOS & Android**: No installer needed — open your Tycho URL in Safari (iOS) or Chrome (Android) and select **Add to Home Screen / Install App** for full-screen standalone PWA mode.
 
