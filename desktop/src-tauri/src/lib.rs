@@ -14,7 +14,10 @@ use tauri::{AppHandle, Manager, State, WebviewWindow, WebviewWindowBuilder, Wind
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
-use updater::{apply_update_and_prepare_exit, check_for_update, DesktopUpdateInfo, CURRENT_VERSION};
+use updater::{
+    apply_update_and_prepare_exit, check_for_update, prepare_startup_after_update,
+    DesktopUpdateInfo, CURRENT_VERSION,
+};
 use url::Url;
 
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -596,7 +599,14 @@ fn trigger_install_update(app: &AppHandle) {
         Ok(should_exit) => {
             if should_exit {
                 let _ = handle.state::<AppState>().save_current_config();
+                if let Some(win) = handle.get_webview_window(MAIN_WINDOW_LABEL) {
+                    let _ = win.destroy();
+                }
                 handle.exit(0);
+                // Safety net: ensure the old process always terminates promptly so the newly
+                // spawned binary wakes from WaitForSingleObject and acquires the single-instance lock.
+                std::thread::sleep(Duration::from_secs(2));
+                std::process::exit(0);
             } else {
                 handle.state::<AppState>().updating.store(false, Ordering::SeqCst);
                 set_update_menu_label(&handle, &format!("立即更新桌面端到 v{}", info.version));
@@ -885,6 +895,7 @@ fn setup_main_window(app: &AppHandle) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let updated_from = prepare_startup_after_update();
     let app_state = AppState::new(default_config_path());
 
     tauri::Builder::default()
@@ -902,11 +913,17 @@ pub fn run() {
             connect_server,
             remove_recent_url
         ])
-        .setup(|app| {
+        .setup(move |app| {
             let handle = app.handle();
             setup_tray(handle)?;
             setup_main_window(handle)?;
             setup_global_shortcut(handle);
+            if let Some(prev_version) = updated_from.clone() {
+                notify_user(
+                    handle,
+                    &format!("Tycho 桌面端已从 v{prev_version} 自动更新到 v{CURRENT_VERSION}"),
+                );
+            }
             let startup_handle = handle.clone();
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_secs(4));

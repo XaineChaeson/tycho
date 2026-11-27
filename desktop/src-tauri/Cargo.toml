@@ -1,6 +1,6 @@
 [package]
 name = "tycho-desktop"
-version = "0.2.2"
+version = "0.2.3"
 description = "Ultra-lightweight Tauri v2 desktop thin shell for Tycho"
 edition = "2021"
 license = "MIT"
