@@ -1,7 +1,7 @@
 // A conversation with a Router as the rows it is drawn from (lib/conversation.ts): the
 // owner's messages on the right, the Router's replies as written text on the left, what
 // happened in between as one gray line, the tasks a turn made, and the questions asked.
-import { AppWindow, Download, Paperclip, Sparkles, Zap } from 'lucide-react';
+import { AppWindow, Download, Paperclip, Quote, Sparkles, Zap } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { ACTION_TEXT, taskLine } from '@shared/labels.ts';
@@ -17,6 +17,7 @@ import { Sheet, SheetContent } from '@/components/ui/dialog';
 import { taskPath } from '@/components/work-row';
 import { projectFileRawUrl } from '@/lib/api';
 import type { Item } from '@/lib/conversation';
+import { useI18n } from '@/lib/i18n';
 import type { ProjectFileSummary, Task } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
@@ -272,13 +273,15 @@ function isTaskResumable(task: Task): boolean {
   return task.resumable === true;
 }
 
-export function ItemView({ item, empty, projectId, onSelectTask, liveTasks }: {
+export function ItemView({ item, empty, projectId, onSelectTask, liveTasks, onQuote }: {
   item: Item;
   empty?: ReactNode;
   projectId?: string;
   onSelectTask?: (taskId: string) => void;
   liveTasks?: ReadonlyMap<string, Task>;
+  onQuote?: (quote: { source: string; excerpt: string }) => void;
 }) {
+  const { t } = useI18n();
   switch (item.kind) {
     case 'date':
       return <DateLine text={item.text} />;
@@ -289,13 +292,40 @@ export function ItemView({ item, empty, projectId, onSelectTask, liveTasks }: {
             <div className="flex max-w-[82%] flex-col items-end gap-1.5">
               <MineAttachments attachments={item.attachments} projectId={projectId} />
               {item.text ? (
-                <div className="rounded-2xl rounded-br-md bg-bubble px-3.5 py-2 wrap-anywhere whitespace-pre-wrap">{item.text}</div>
+                <div
+                  data-quotable
+                  data-quote-source={t('project.ownerSpeaker')}
+                  className="rounded-2xl rounded-br-md bg-bubble px-3.5 py-2 wrap-anywhere whitespace-pre-wrap"
+                >
+                  {item.text}
+                </div>
               ) : null}
             </div>
           ) : (
-            <div className="max-w-[82%] rounded-2xl rounded-br-md bg-bubble px-3.5 py-2 wrap-anywhere whitespace-pre-wrap">{item.text}</div>
+            <div
+              data-quotable
+              data-quote-source={t('project.ownerSpeaker')}
+              className="max-w-[82%] rounded-2xl rounded-br-md bg-bubble px-3.5 py-2 wrap-anywhere whitespace-pre-wrap"
+            >
+              {item.text}
+            </div>
           )}
-          <div className="flex items-center gap-2"><Stamp at={item.at} />{item.messageId ? <RouterTrajectory messageId={item.messageId} /> : null}</div>
+          <div className="flex items-center gap-2">
+            {onQuote && item.text.trim() ? (
+              <button
+                type="button"
+                aria-label={t('quote.quoteMessage')}
+                title={t('quote.action')}
+                onClick={() => onQuote({ source: t('project.ownerSpeaker'), excerpt: item.text })}
+                className="inline-flex cursor-pointer items-center gap-1 rounded-xs border-0 bg-transparent px-1 text-2xs text-faint opacity-0 transition-opacity duration-100 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
+              >
+                <Quote className="size-3" aria-hidden="true" />
+                {t('quote.action')}
+              </button>
+            ) : null}
+            <Stamp at={item.at} />
+            {item.messageId ? <RouterTrajectory messageId={item.messageId} /> : null}
+          </div>
         </div>
       );
     case 'note':
@@ -312,12 +342,31 @@ export function ItemView({ item, empty, projectId, onSelectTask, liveTasks }: {
         <div id={`reply-${item.id}`} className="group flex gap-3">
           <Speaker />
           <div className="min-w-0 flex-1">
-            <p className="flex min-h-7 items-center gap-1 text-xs font-medium text-muted-foreground">负责人<Stamp at={item.at} className="font-normal" /></p>
-            <Markdown text={item.text} projectId={projectId} files={item.attachments} />
+            <div className="flex min-h-7 items-center gap-1 text-xs font-medium text-muted-foreground">
+              <span>{t('project.routerSpeaker')}</span>
+              <Stamp at={item.at} className="font-normal" />
+            </div>
+            <div data-quotable data-quote-source={t('project.routerSpeaker')}>
+              <Markdown text={item.text} projectId={projectId} files={item.attachments} />
+            </div>
             {item.attachments?.length ? (
               <ReplyAttachments attachments={item.attachments} text={item.text} projectId={projectId} />
             ) : null}
             {item.incomplete ? <p className="mt-1 text-sm text-muted-foreground">回复没有写完</p> : null}
+            {onQuote && item.text.trim() ? (
+              <div className="mt-1 flex items-center gap-1 opacity-0 transition-opacity duration-100 group-hover:opacity-100 focus-within:opacity-100">
+                <button
+                  type="button"
+                  aria-label={t('quote.quoteMessage')}
+                  title={t('quote.action')}
+                  onClick={() => onQuote({ source: t('project.routerSpeaker'), excerpt: item.text })}
+                  className="inline-flex cursor-pointer items-center gap-1 rounded-xs border-0 bg-transparent px-1.5 py-0.5 text-2xs font-normal text-faint hover:bg-hover hover:text-foreground"
+                >
+                  <Quote className="size-3" aria-hidden="true" />
+                  {t('quote.action')}
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       );

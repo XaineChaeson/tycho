@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Confirm } from '@/components/ui/dialog';
 import { useProjectFlag } from '@/hooks/use-project-flag';
+import { useI18n } from '@/lib/i18n';
 import { activeProjects } from '@/lib/projects';
 import { projectsQuery } from '@/lib/queries';
 import type { Project } from '@/lib/types';
@@ -128,33 +129,34 @@ function ArchivedProjectRow({ project }: { project: Project }) {
 }
 
 export function ProjectsPage() {
+  const { t, bi } = useI18n();
   const { data, isPending, error } = useQuery(projectsQuery);
   const [creating, setCreating] = useState(false);
   const open = activeProjects(data ?? []);
   const archived = (data ?? []).filter((project) => project.archived_at != null);
   return (
     <Page
-      title="项目"
+      title={t('nav.projects')}
       loading={isPending}
       failure={error?.message}
-      actions={<Button variant="primary" onClick={() => setCreating(true)}><Plus />新建项目</Button>}
+      actions={<Button variant="primary" onClick={() => setCreating(true)}><Plus />{t('nav.newProject')}</Button>}
     >
-      <PageLead>任务属于项目，每个项目有自己的负责人，可限定项目允许使用的账号与执行机器。</PageLead>
+      <PageLead>{bi('任务属于项目，每个项目有自己的负责人，可限定项目允许使用的账号与执行机器。', 'Tasks belong to projects. Each project has its own Router and optional account/machine scope.')}</PageLead>
       {open.length ? (
         <Rows>
-          <ul aria-label="项目" className="divide-y divide-border">
+          <ul aria-label={t('nav.projects')} className="divide-y divide-border">
             {open.map((project) => <ActiveProjectRow key={project.id} project={project} />)}
           </ul>
         </Rows>
       ) : data ? (
-        <Empty icon={<FolderPlus />} title={archived.length ? '项目都归档了' : '还没有项目'}>
-          <p>{archived.length ? '在下面的“已归档”里直接恢复或删除，或者建一个新的。' : '建一个，就能和它的负责人说话：只要名字，代码来源可以不填。'}</p>
-          <Button variant="primary" className="mt-4" onClick={() => setCreating(true)}><Plus />新建项目</Button>
+        <Empty icon={<FolderPlus />} title={archived.length ? bi('项目都归档了', 'All projects are archived') : bi('还没有项目', 'No projects yet')}>
+          <p>{archived.length ? bi('在下面的“已归档”里直接恢复或删除，或者建一个新的。', 'Restore or delete archived projects below, or create a new one.') : bi('建一个，就能和它的负责人说话：只要名字，代码来源可以不填。', 'Create one to start talking with its Router — only a name is required.')}</p>
+          <Button variant="primary" className="mt-4" onClick={() => setCreating(true)}><Plus />{t('nav.newProject')}</Button>
         </Empty>
       ) : null}
       {archived.length ? (
-        <section id="archived" aria-label={`已归档（${archived.length}）`} className="mt-6">
-          <SectionTitle count={archived.length}>已归档</SectionTitle>
+        <section id="archived" aria-label={bi(`已归档（${archived.length}）`, `Archived (${archived.length})`)} className="mt-6">
+          <SectionTitle count={archived.length}>{bi('已归档', 'Archived')}</SectionTitle>
           <Rows>
             <ul aria-label="已归档的项目" className="divide-y divide-border">
               {archived.map((project) => <ArchivedProjectRow key={project.id} project={project} />)}

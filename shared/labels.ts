@@ -1,5 +1,6 @@
 // The words the service and the console both say: state labels, action names and the
 // lines built from them. One copy, so a notification and a page never disagree.
+import { getActiveLocale, type Locale } from './i18n.ts';
 import { NO_ROLE_LOST_TEXT } from './roles.ts';
 import { formatTime } from './time.ts';
 import { loginName, loginPage, parseLoginName } from './logins.ts';
@@ -139,12 +140,41 @@ export const taskStateLabels: Record<string, string> = {
   ready: '待验收', done: '已完成', held: '已停住', waiting_person: '等你决定',
   waiting_timer: '等预约时间', needs_verification: '执行机器失联', abandoned: '已放弃',
 };
+export const taskStateLabelsEn: Record<string, string> = {
+  draft: 'Draft', queued: 'Queued', running: 'Running', stopping: 'Stopping',
+  ready: 'Ready for review', done: 'Done', held: 'Paused', waiting_person: 'Needs decision',
+  waiting_timer: 'Scheduled', needs_verification: 'Machine offline', abandoned: 'Abandoned',
+};
+export const taskStateLabel = (state: string, locale: Locale = getActiveLocale()): string =>
+  (locale === 'en' ? taskStateLabelsEn[state] : taskStateLabels[state]) ?? state;
 // How a Run ended.
 export const exitKindLabels: Record<string, string> = { completed: '完成', failed: '失败', interrupted: '已中断', lost: '执行丢失', quota: '额度用完', auth: '登录失效' };
+export const exitKindLabelsEn: Record<string, string> = { completed: 'Completed', failed: 'Failed', interrupted: 'Interrupted', lost: 'Lost', quota: 'Quota exhausted', auth: 'Auth expired' };
+export const exitKindLabel = (kind: string, locale: Locale = getActiveLocale()): string =>
+  (locale === 'en' ? exitKindLabelsEn[kind] : exitKindLabels[kind]) ?? kind;
 export const runStateLabels: Record<string, string> = { launching: '启动中', running: '执行中', stopping: '正在停止', unknown: '执行情况未知', ended: '已结束' };
+export const runStateLabelsEn: Record<string, string> = { launching: 'Launching', running: 'Running', stopping: 'Stopping', unknown: 'Unknown', ended: 'Ended' };
+export const runStateLabel = (state: string, locale: Locale = getActiveLocale()): string =>
+  (locale === 'en' ? runStateLabelsEn[state] : runStateLabels[state]) ?? state;
 // Which group of logins a Run was placed from (roles-and-tiers.md §11.3), in the owner's words.
 export const placedByLabels: Record<string, string> = {
   prefer: '按负责人的优先', spread: '审阅分散', order: '按顺序', pinned: '指定登录', same_executor: '降级审阅（未换执行器）',
+};
+export const placedByLabelsEn: Record<string, string> = {
+  prefer: 'Router preference', spread: 'Cross-executor review', order: 'Priority order', pinned: 'Pinned account', same_executor: 'Fallback review (same executor)',
+};
+export const placedByLabel = (by: string, locale: Locale = getActiveLocale()): string =>
+  (locale === 'en' ? placedByLabelsEn[by] : placedByLabels[by]) ?? by;
+export const tierDisplayLabel = (tierId: string, locale: Locale = getActiveLocale()): string => {
+  if (locale === 'en') {
+    if (tierId === 'operate') return 'Operate';
+    if (tierId === 'execute') return 'Execute';
+    if (tierId === 'decide') return 'Decide';
+  }
+  if (tierId === 'operate') return '操作档';
+  if (tierId === 'execute') return '执行档';
+  if (tierId === 'decide') return '决策档';
+  return tierId;
 };
 export const taskDotClasses: Record<string, string> = {
   draft: 'running', queued: 'running', running: 'running', stopping: 'running', waiting_timer: 'running', needs_verification: 'running',

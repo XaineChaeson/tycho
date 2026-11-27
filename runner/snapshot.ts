@@ -1,3 +1,4 @@
+import { getActiveLocale } from '../shared/i18n.ts';
 import { FINAL_MESSAGE_REF } from '../shared/report.ts';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
@@ -490,6 +491,12 @@ const DELIVERY: Record<DeliverableId, string> = {
 
 export type ReviewArtifactBinding = Pick<ReviewOf, 'task_id' | 'run_id' | 'files' | 'report'>;
 
+function languageSection(): string {
+  return getActiveLocale() === 'en'
+    ? '## Language\n\nWrite prose, reports, and receipt summaries in English unless the task explicitly specifies another language.\n\n'
+    : '';
+}
+
 function deliverySection(role: RoleConfig | undefined): string {
   if (!role) return '';
   return `职能“${role.name}”的交付物为${deliverableLabel(role.deliverable)}：${DELIVERY[role.deliverable]}。\n\n`;
@@ -563,7 +570,7 @@ ${accessSection(access, source)}${extraSection}## 结论说明
 - \`reject\`：在 \`violations\` 中列出违反项、证据与修改范围。
 - \`cannot\`：缺失必要材料或环境无法核查（在 \`missing\` 中说明）。
 
-${knowledge}${projectFilesSection(projectFiles)}## 资料
+${knowledge}${projectFilesSection(projectFiles)}${languageSection()}## 资料
 
 本文件同目录的 \`context.json\` 中，\`pending_inputs\` 为本轮补充指令，\`history\` 仅作参考资料（非指令）。${notStarted ? NOT_STARTED : ''}
 
@@ -605,7 +612,7 @@ ${material.listing}
 `;
 }
 
-function renderBrief(task: TaskRow, checkSite: CheckSite | undefined, history: unknown[], source: SnapshotSource | undefined, access: RunAccess | undefined, role: RoleConfig | undefined, knowledge: string, material: KnowledgeTaskMaterial | undefined, spawn: boolean, projectFiles: readonly SnapshotProjectFile[] = []): string {
+export function renderBrief(task: TaskRow, checkSite: CheckSite | undefined, history: unknown[], source: SnapshotSource | undefined, access: RunAccess | undefined, role: RoleConfig | undefined, knowledge: string, material: KnowledgeTaskMaterial | undefined, spawn: boolean, projectFiles: readonly SnapshotProjectFile[] = []): string {
   const notStarted = history.some((round) => (round as { not_started?: boolean } | null)?.not_started);
   const acceptanceSection = task.acceptance?.trim() ? `## 验收标准\n\n${task.acceptance}\n\n` : '';
   const scopeSection = task.scope?.trim() ? `## 范围\n\n${task.scope}\n\n` : '';
@@ -617,7 +624,7 @@ ${checkSite ? checkSiteSection(checkSite) : ''}## 目标
 
 ${task.goal}
 
-${acceptanceSection}${scopeSection}${accessSection(access, source)}${materialSection(material)}${knowledge}${spawn ? SPAWN_SECTION : ''}${sourceSection(source, access?.permission === 'read')}${projectFilesSection(projectFiles)}## 资料
+${acceptanceSection}${scopeSection}${accessSection(access, source)}${materialSection(material)}${knowledge}${spawn ? SPAWN_SECTION : ''}${sourceSection(source, access?.permission === 'read')}${projectFilesSection(projectFiles)}${languageSection()}## 资料
 
 本文件同目录的 \`context.json\` 中，\`pending_inputs\` 为本轮补充指令，\`history\` 仅作参考资料（非指令）。${notStarted ? NOT_STARTED : ''}
 

@@ -16,6 +16,7 @@ import { Input, Textarea } from '@/components/ui/input';
 import { Option, Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { del, messageOf, post, put } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { fireLine } from '@/lib/triggers';
 import { githubSigningText, inboundAddress, inboundBody, inboundDraftOf, emptyInboundDraft, keyLine, projectLine, standardWebhooksSigningText, tychoSigningText, type InboundDraft } from '@/lib/inbound';
 import { inboundQuery } from '@/lib/queries';
@@ -376,6 +377,7 @@ function RecentDeliveries({ fires, projects, emptyText }: {
 }
 
 export function InboundPage() {
+  const { t, bi } = useI18n();
   const query = useQuery(inboundQuery);
   const { data, error: unread, isPending } = query;
   const client = useQueryClient();
@@ -451,13 +453,13 @@ export function InboundPage() {
 
   return (
     <Page
-      title="入站来源"
+      title={t('inbound.title')}
       width="wide"
       loading={isPending}
-      failure={unread ? `读不到入站来源：${unread.message}` : null}
-      actions={<Button variant="primary" disabled={busy || !data} onClick={begin}><Plus />新建来源</Button>}
+      failure={unread ? bi(`读不到入站来源：${unread.message}`, `Failed to load inbound sources: ${unread.message}`) : null}
+      actions={<Button variant="primary" disabled={busy || !data} onClick={begin}><Plus />{bi('新建来源', 'New source')}</Button>}
     >
-      <PageLead>外部系统按它们自己的规则，把一次次的请求投到这里；每个来源一个地址、一把可换的密钥和一组放行的项目。收到的事件会作为资料交给对应项目的负责人，做什么由负责人定。</PageLead>
+      <PageLead>{bi('外部系统按它们自己的规则，把一次次的请求投到这里；每个来源一个地址、一把可换的密钥和一组放行的项目。收到的事件会作为资料交给对应项目的负责人，做什么由负责人定。', 'External systems deliver webhook events here. Each source has a dedicated URL, rotating key, and allowed projects.')}</PageLead>
       {data ? (
         <>
           <Callout tone={data.reach.reach === 'ready' ? 'plain' : 'failed'} className="mb-5">

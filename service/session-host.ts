@@ -28,6 +28,7 @@ import { instructionsOf } from '../runner/snapshot.ts';
 import type { MachineInputs } from '../shared/machine-inputs.ts';
 import { restingUntil } from './ledger.ts';
 import { fromOwner, TRIGGER_CHANNEL } from '../shared/triggers.ts';
+import { getActiveLocale } from '../shared/i18n.ts';
 import { ROUTER_RECEIPT } from '../shared/trajectory.ts';
 import { hostname } from 'node:os';
 import type { Tools } from './tools.ts';
@@ -51,6 +52,11 @@ const MAX_TURN_IMAGES = 4;
 export const MCP_SERVER = 'tycho';
 const PROXY = fileURLToPath(new URL('./tools-proxy.ts', import.meta.url));
 const ROUTER_PROMPT = readFileSync(new URL('./router-prompt.md', import.meta.url), 'utf8');
+const routerPromptForLocale = (): string => (
+  getActiveLocale() === 'en'
+    ? `${ROUTER_PROMPT}\n\n## System Language\nThe owner's console language is set to English (en). Reply in English by default unless the owner writes in another language.\n`
+    : ROUTER_PROMPT
+);
 const INTERNAL_PREFIX = '[tycho 内部事件]';
 // A trigger's message carries its own account of where it came from (docs/design/triggers.md §3, §6).
 const TRIGGER_PREFIX = '[tycho 触发器]';
@@ -875,7 +881,7 @@ export function createSessionHost(options: SessionHostOptions) {
         '--permission-mode',
         'bypassPermissions',
         '--append-system-prompt',
-        ROUTER_PROMPT,
+        routerPromptForLocale(),
         ...(resume ? ['--resume', context.session_ref!] : ['--session-id', context.marker]),
       ];
       const proxy = { command: process.execPath, args: [PROXY, '--marker', context.marker], env: { TYCHO_TOOLS_PORT: String(port), TYCHO_TOOLS_TOKEN: token } };
@@ -894,15 +900,16 @@ export function createSessionHost(options: SessionHostOptions) {
       }
       const geminiModel = typeof geminiTier.model === 'string' && geminiTier.model.trim() !== '' ? geminiTier.model.trim() : undefined;
       const geminiEffort = typeof geminiTier.effort === 'string' && geminiTier.effort.trim() !== '' ? geminiTier.effort.trim() : undefined;
+      const routerPrompt = routerPromptForLocale();
       const config = codex ? {
-        argv: claude, prompt: ROUTER_PROMPT, ...(resume ? { resume: context.session_ref! } : {}),
+        argv: claude, prompt: routerPrompt, ...(resume ? { resume: context.session_ref! } : {}),
         tools: options.toolNames,
         mcp: proxy,
         ...(home ? { managedHome: home } : {}),
         ...(tierValue('model') ? { model: tierValue('model') } : {}),
         ...(tierValue('model_reasoning_effort') ? { effort: tierValue('model_reasoning_effort') } : {}),
       } : gemini ? {
-        argv: claude, prompt: ROUTER_PROMPT, ...(resume ? { resume: context.session_ref! } : {}),
+        argv: claude, prompt: routerPrompt, ...(resume ? { resume: context.session_ref! } : {}),
         tools: options.toolNames,
         mcp: proxy,
         cwd: cwd !== emptyDir ? cwd : null,

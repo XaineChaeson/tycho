@@ -9,6 +9,7 @@ import { taskLine, WORK_GROUPS, workGroup } from '@shared/labels.ts';
 import { StatusDot } from '@/components/bits';
 import { PLACES } from '@/components/nav';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
+import { useI18n } from '@/lib/i18n';
 import { activeProjects } from '@/lib/projects';
 import { knowledgeQuery, projectsQuery, tasksQuery } from '@/lib/queries';
 import type { Task } from '@/lib/types';
@@ -82,6 +83,7 @@ function altDigitIndex(event: KeyboardEvent): number | null {
 }
 
 export function Palette({ open, onOpenChange, onNewProject }: { open: boolean; onOpenChange: (open: boolean) => void; onNewProject: () => void }) {
+  const { t, bi } = useI18n();
   const navigate = useNavigate();
   const { data: projects } = useQuery(projectsQuery);
   const shown = activeProjects(projects ?? []);
@@ -197,30 +199,30 @@ export function Palette({ open, onOpenChange, onNewProject }: { open: boolean; o
           aria-describedby={undefined}
           className="fixed top-[14vh] left-1/2 z-50 w-[calc(100%-2rem)] max-w-[560px] -translate-x-1/2 overflow-hidden rounded-xl bg-raised shadow-dialog data-[state=open]:animate-fade-in"
         >
-          <DialogPrimitive.Title className="sr-only">搜索或跳转</DialogPrimitive.Title>
-          <Command label="搜索或跳转">
+          <DialogPrimitive.Title className="sr-only">{t('nav.searchOrJump')}</DialogPrimitive.Title>
+          <Command label={t('nav.searchOrJump')}>
             <CommandInput
-              aria-label="搜索或跳转"
+              aria-label={t('nav.searchOrJump')}
               value={search}
               onValueChange={setSearch}
-              placeholder="去哪儿：页面、项目、工作、知识与技能…"
+              placeholder={bi('去哪儿：页面、项目、工作、知识与技能…', 'Jump to a page, project, work, or skill…')}
               wrapperClassName="min-h-12 border-b border-border px-4"
             />
             <CommandList className="p-1">
-              <CommandEmpty>没有匹配的页面、项目、工作或知识。</CommandEmpty>
+              <CommandEmpty>{bi('没有匹配的页面、项目、工作或知识。', 'No matching pages, projects, work, or knowledge.')}</CommandEmpty>
               {orderedTasks.length ? (
-                <CommandGroup heading="工作">
+                <CommandGroup heading={t('nav.work')}>
                   {orderedTasks.map((task) => {
                     const quickIndex = quickIndexById.get(task.id);
                     return (
-                      <CommandItem key={task.id} value={`工作 ${task.title} ${task.id}`} onSelect={go(`/work/${encodeURIComponent(task.id)}`)}>
+                      <CommandItem key={task.id} value={`工作 work ${task.title} ${task.id}`} onSelect={go(`/work/${encodeURIComponent(task.id)}`)}>
                         <StatusDot state={task.summary?.dot ?? task.state} />
                         <span className="min-w-0 flex-1 truncate">{task.title}</span>
                         <span className="max-w-[38%] flex-none truncate text-xs text-faint">{taskLine(task)}</span>
                         {quickIndex !== undefined ? (
                           <kbd
                             aria-hidden="true"
-                            title={`Alt+${quickIndex} 快速跳转`}
+                            title={bi(`Alt+${quickIndex} 快速跳转`, `Alt+${quickIndex} quick jump`)}
                             className="inline-flex min-w-4 flex-none items-center justify-center rounded-xs border border-border bg-muted/70 px-1 font-mono text-2xs leading-4 text-faint tabular-nums"
                           >
                             {quickIndex}
@@ -232,9 +234,9 @@ export function Palette({ open, onOpenChange, onNewProject }: { open: boolean; o
                 </CommandGroup>
               ) : null}
               {orderedChildren.length ? (
-                <CommandGroup heading="子任务与审阅">
+                <CommandGroup heading={bi('子任务与审阅', 'Subtasks & Reviews')}>
                   {orderedChildren.map(({ task, parentTitle }) => (
-                    <CommandItem key={task.id} value={`子任务 审阅 任务 ${task.title} ${parentTitle} ${task.id}`} onSelect={go(`/task/${encodeURIComponent(task.id)}`)}>
+                    <CommandItem key={task.id} value={`子任务 审阅 任务 subtask review ${task.title} ${parentTitle} ${task.id}`} onSelect={go(`/task/${encodeURIComponent(task.id)}`)}>
                       <StatusDot state={task.summary?.dot ?? task.state} />
                       <span className="min-w-0 flex-1 truncate">{task.title}</span>
                       <span className="max-w-[40%] flex-none truncate text-xs text-faint">
@@ -245,22 +247,25 @@ export function Palette({ open, onOpenChange, onNewProject }: { open: boolean; o
                 </CommandGroup>
               ) : null}
               {shown.length ? (
-                <CommandGroup heading="项目">
+                <CommandGroup heading={t('nav.projects')}>
                   {shown.map((project) => (
-                    <CommandItem key={project.id} value={`项目 ${project.name} ${project.id}`} onSelect={go(`/projects/${encodeURIComponent(project.id)}`)}>
+                    <CommandItem key={project.id} value={`项目 project ${project.name} ${project.id}`} onSelect={go(`/projects/${encodeURIComponent(project.id)}`)}>
                       <span className="min-w-0 flex-1 truncate">{project.name}</span>
-                      <span className="text-xs text-faint">{`在进行 ${project.moving} · 等你 ${project.waiting}`}</span>
+                      <span className="text-xs text-faint">{t('nav.projectState', { paused: '', moving: project.moving, waiting: project.waiting })}</span>
                     </CommandItem>
                   ))}
                 </CommandGroup>
               ) : null}
-              <CommandGroup heading="页面">
-                {PLACES.map(({ to, title, icon: Icon }) => (
-                  <CommandItem key={to} value={`页面 ${title}`} onSelect={go(to)}><Icon aria-hidden="true" />{title}</CommandItem>
-                ))}
+              <CommandGroup heading={bi('页面', 'Pages')}>
+                {PLACES.map(({ to, title, titleKey, icon: Icon }) => {
+                  const label = t(titleKey);
+                  return (
+                    <CommandItem key={to} value={`页面 page ${title} ${label}`} onSelect={go(to)}><Icon aria-hidden="true" />{label}</CommandItem>
+                  );
+                })}
               </CommandGroup>
               {knowledgeItems.length ? (
-                <CommandGroup heading="知识与技能">
+                <CommandGroup heading={bi('知识与技能', 'Knowledge & Skills')}>
                   {knowledgeItems.map((item) => (
                     <CommandItem
                       key={item.id}
@@ -274,14 +279,14 @@ export function Palette({ open, onOpenChange, onNewProject }: { open: boolean; o
                   ))}
                 </CommandGroup>
               ) : null}
-              <CommandGroup heading="动作">
-                <CommandItem value="动作 查看账号与额度 账号 额度" onSelect={go('/accounts')}>
+              <CommandGroup heading={bi('动作', 'Actions')}>
+                <CommandItem value="动作 查看账号与额度 账号 额度 accounts quota" onSelect={go('/accounts')}>
                   <Gauge aria-hidden="true" />
-                  查看账号与额度
+                  {bi('查看账号与额度', 'View accounts & quota')}
                 </CommandItem>
-                <CommandItem value="动作 新建项目" onSelect={() => { onOpenChange(false); onNewProject(); }}>
+                <CommandItem value="动作 新建项目 new project" onSelect={() => { onOpenChange(false); onNewProject(); }}>
                   <FolderPlus aria-hidden="true" />
-                  新建项目
+                  {t('nav.newProject')}
                 </CommandItem>
               </CommandGroup>
             </CommandList>

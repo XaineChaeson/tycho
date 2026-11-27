@@ -83,6 +83,7 @@ export async function consoleApp(
     log?: (line: string) => void;
     // What a deleted project's copies are cleared with; the acceptor's sweep unless a test says.
     cleanupAfterProjectDelete?: HttpOptions['cleanupAfterProjectDelete'];
+    sideAsk?: HttpOptions['sideAsk'];
   } = {},
 ) {
   const f = options.f ?? fixture(t);
@@ -241,6 +242,7 @@ export async function consoleApp(
     accounts,
     ...(options.models ? { models: options.models } : {}),
     ...(options.quota ? { quota: options.quota } : {}),
+    ...(options.sideAsk ? { sideAsk: options.sideAsk } : {}),
     knowledgeTokens: knowledgeTokenStore(f.dir),
     inbounds,
     skillFolder: join(f.dir, 'skills'),

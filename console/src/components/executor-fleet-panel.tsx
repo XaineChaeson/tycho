@@ -17,6 +17,7 @@ import { Callout, Card, Dot, Mono, Note, Problem } from '@/components/bits';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { messageOf, post, put } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { accountsQuery, executorUpdatesQuery } from '@/lib/queries';
 import type { Machine } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -93,6 +94,7 @@ export function countOutdatedCliCells(machines: Machine[], fleet: ExecutorFleetS
 }
 
 export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
+  const { t, bi } = useI18n();
   const queryClient = useQueryClient();
   const { data: fleet, isPending, error } = useQuery(executorUpdatesQuery);
   const [checking, setChecking] = useState(false);
@@ -223,27 +225,27 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-sm font-semibold">CLI 版本矩阵</h2>
+              <h2 className="text-sm font-semibold">{t('cli.matrixTitle')}</h2>
               <Badge tone="plain" className="text-[11px]">
                 <ShieldCheck className="mr-1 size-3 text-success" />
-                空闲防打断 · 临时缓存自动清理
+                {t('cli.matrixBadge')}
               </Badge>
               {activeCount > 0 ? (
-                <Badge tone="waiting" className="text-[11px]">{activeCount} 项进行中</Badge>
+                <Badge tone="waiting" className="text-[11px]">{bi(`${activeCount} 项进行中`, `${activeCount} running`)}</Badge>
               ) : null}
             </div>
             <Note className="mt-0.5 text-xs">
-              各机器 CLI 版本漂移一目了然；更新时若机器有任务运行会自动排队等空闲，完成后立即重探并同步最新模型列表。
+              {t('cli.matrixDesc')}
             </Note>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="ghost" disabled={checking} onClick={() => void handleCheckUpstream()}>
               <RefreshCw className={cn('size-3.5', checking && 'animate-spin')} />
-              {checking ? '检查中' : '检查上游最新版'}
+              {checking ? t('cli.checking') : t('cli.checkUpstream')}
             </Button>
             <Button size="sm" variant={policyOpen ? 'primary' : 'ghost'} onClick={() => setPolicyOpen((v) => !v)}>
               <SlidersHorizontal className="size-3.5" />
-              定时自动更新：{policy.enabled ? `开（${enabledExecs.length} 项）` : '关'}
+              {t('cli.autoUpdate', { state: policy.enabled ? t('cli.autoUpdateOn', { count: enabledExecs.length }) : t('cli.autoUpdateOff') })}
             </Button>
           </div>
         </div>
@@ -351,7 +353,7 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
             <table className="w-full border-collapse text-left text-xs">
               <thead>
                 <tr className="border-b border-border bg-surface/70">
-                  <th className="w-48 px-3 py-2 font-semibold text-muted-foreground">机器</th>
+                  <th className="w-48 px-3 py-2 font-semibold text-muted-foreground">{t('machines.title')}</th>
                   {executors.map((exec) => {
                     const info = refByExecutor[exec];
                     const upstream = fleet?.upstream[exec];
@@ -373,12 +375,12 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                               <span className="whitespace-nowrap font-mono text-xs font-semibold text-foreground">{exec}</span>
                               {info?.ref ? (
                                 <span className="whitespace-nowrap rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] font-normal text-muted-foreground">
-                                  {info.source === 'upstream' ? `最新 ${info.ref}` : `机群最高 ${info.ref}`}
+                                  {info.source === 'upstream' ? t('cli.latest', { ver: info.ref }) : t('cli.fleetMax', { ver: info.ref })}
                                 </span>
                               ) : null}
                             </div>
                             {upstream?.error ? (
-                              <p className="mt-0.5 text-[10px] font-normal text-faint" title={upstream.error}>上游未连上（按机群比对）</p>
+                              <p className="mt-0.5 text-[10px] font-normal text-faint" title={upstream.error}>{bi('上游未连上（按机群比对）', 'Upstream unreachable (using fleet max)')}</p>
                             ) : null}
                           </div>
                           <Button
@@ -386,11 +388,11 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                             variant="ghost"
                             className="h-6 flex-none whitespace-nowrap px-2 text-[11px]"
                             disabled={onlineUpdatableCount === 0 || busyAll}
-                            title={onlineUpdatableCount === 0 ? `${exec} 当前没有支持自动批量更新的在线机器` : `更新所有在线机器上的 ${exec}`}
+                            title={onlineUpdatableCount === 0 ? bi(`${exec} 当前没有支持自动批量更新的在线机器`, `No online machines support batch update for ${exec}`) : bi(`更新所有在线机器上的 ${exec}`, `Update ${exec} on all online machines`)}
                             onClick={() => void handleRunUpdate(exec)}
                           >
                             <ArrowUpCircle className="size-3" />
-                            {busyAll ? '排队中' : '全机更新'}
+                            {busyAll ? t('cli.queuing') : t('cli.updateAll')}
                           </Button>
                         </div>
                       </th>
@@ -435,13 +437,13 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                                       : undefined
                                   }
                                 >
-                                  未安装
+                                  {t('cli.notInstalled')}
                                 </span>
                                 {job ? (
                                   <button
                                     type="button"
                                     className="cursor-pointer"
-                                    title={job.error ?? job.output ?? '查看详情'}
+                                    title={job.error ?? job.output ?? bi('查看详情', 'View details')}
                                     onClick={() => setExpandedJobId((cur) => (cur === job.id ? null : job.id))}
                                   >
                                     {stateBadge(job)}
@@ -456,12 +458,12 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                                   disabled={busyCell}
                                   title={
                                     exec === 'gemini'
-                                      ? `在 ${machine.id} 上一键安装 Antigravity CLI (agy)`
-                                      : `在 ${machine.id} 上一键安装 ${exec} CLI`
+                                      ? bi(`在 ${machine.id} 上一键安装 Antigravity CLI (agy)`, `Install Antigravity CLI (agy) on ${machine.id}`)
+                                      : bi(`在 ${machine.id} 上一键安装 ${exec} CLI`, `Install ${exec} CLI on ${machine.id}`)
                                   }
                                   onClick={() => void handleRunUpdate(exec, [machine.id])}
                                 >
-                                  安装
+                                  {t('cli.install')}
                                 </Button>
                               ) : null}
                             </div>
@@ -478,16 +480,16 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                                   {shortVer(status.version)}
                                 </span>
                                 {behind && !job ? (
-                                  <Badge tone="waiting" className="text-[10px]">落后</Badge>
+                                  <Badge tone="waiting" className="text-[10px]">{t('cli.behind')}</Badge>
                                 ) : null}
                                 {!job && isLikelyManualUpdate(exec, status.path) ? (
-                                  <Badge tone="plain" className="text-[10px] text-faint" title="该执行器由桌面安装包管理，需通过对应桌面端或本机配置更新">需手动更新</Badge>
+                                  <Badge tone="plain" className="text-[10px] text-faint" title={bi('该执行器由桌面安装包管理，需通过对应桌面端或本机配置更新', 'Managed by desktop installer; update via desktop app or local config')}>{t('cli.manualUpdate')}</Badge>
                                 ) : null}
                                 {job ? (
                                   <button
                                     type="button"
                                     className="cursor-pointer"
-                                    title={job.error ?? job.output ?? '查看详情'}
+                                    title={job.error ?? job.output ?? bi('查看详情', 'View details')}
                                     onClick={() => setExpandedJobId((cur) => (cur === job.id ? null : job.id))}
                                   >
                                     {stateBadge(job)}
@@ -500,10 +502,10 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                                   variant="ghost"
                                   className="h-6 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
                                   disabled={busyCell}
-                                  title={`更新 ${machine.id} 上的 ${exec}`}
+                                  title={bi(`更新 ${machine.id} 上的 ${exec}`, `Update ${exec} on ${machine.id}`)}
                                   onClick={() => void handleRunUpdate(exec, [machine.id])}
                                 >
-                                  更新
+                                  {t('cli.update')}
                                 </Button>
                               ) : null}
                             </div>
@@ -524,7 +526,7 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
           <div className="flex items-center justify-between gap-2">
             <h3 className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
               <Terminal className="size-3.5" />
-              最近更新记录（最多保留 30 条，内存循环缓存，不落盘堆积）
+              {t('cli.recentJobs')}
             </h3>
           </div>
           <ul className="divide-y divide-border/60 text-xs">

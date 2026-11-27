@@ -20,6 +20,7 @@ import { Option, Select } from '@/components/ui/select';
 import { useChange } from '@/hooks/use-change';
 import { api, messageOf, post } from '@/lib/api';
 import { EXAMPLE_ASKS, useAsk } from '@/lib/examples';
+import { useI18n } from '@/lib/i18n';
 import { useLive, useLiveState } from '@/lib/live-context';
 import { hiddenNotices, hideNotice } from '@/lib/notices';
 import { activeProjects, archivedProjectIds } from '@/lib/projects';
@@ -413,8 +414,17 @@ function headline(counts: {
   noMachine: number;
   unassigned: number;
   moving: number;
-}): string {
+}, isEn = false): string {
   const todo: string[] = [];
+  if (isEn) {
+    if (counts.decisions) todo.push(`${counts.decisions} awaiting decision`);
+    if (counts.ready) todo.push(`${counts.ready} ready for review`);
+    if (counts.held) todo.push(`${counts.held} held`);
+    if (counts.noMachine) todo.push(`${counts.noMachine} login(s) without machine`);
+    if (counts.unassigned) todo.push(`${counts.unassigned} unassigned message(s)`);
+    if (todo.length) return todo.join(', ');
+    return counts.moving ? `Nothing waiting on you — ${counts.moving} in progress` : 'Nothing waiting on you';
+  }
   if (counts.decisions) todo.push(`${counts.decisions} 件等你决定`);
   if (counts.ready) todo.push(`${counts.ready} 件待验收`);
   if (counts.held) todo.push(`${counts.held} 件已停住`);
@@ -479,12 +489,13 @@ function Unassigned({ messages, projects }: { messages: readonly Message[]; proj
 // Nothing is anywhere: the page says so, says how to start, and offers the sentences an
 // owner most often begins with. Pressing one fills the conversation's box.
 function NothingYet({ projects }: { projects: readonly Project[] }) {
+  const { bi } = useI18n();
   // A message goes to one project's Router: the examples begin in the first project's box.
   const first = projects[0];
   const ask = useAsk(first?.id ?? '');
   return (
-    <Empty icon={<CircleCheck />} title="现在没有在进行的工作" className="py-14" >
-      <p>到项目里告诉它的负责人要做什么，它会拆成任务、派出去、把结果带回来。</p>
+    <Empty icon={<CircleCheck />} title={bi('现在没有在进行的工作', 'No active work right now')} className="py-14" >
+      <p>{bi('到项目里告诉它的负责人要做什么，它会拆成任务、派出去、把结果带回来。', 'Tell a project Router what you need — it breaks work into tasks, dispatches them, and reports back.')}</p>
       {first ? (
         <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
           <span className="w-full text-xs text-faint">{`点一句，到 ${first.name} 的对话里问：`}</span>
@@ -507,6 +518,7 @@ function HomeBody({ overview, doctor, tasks, children, projects, unassigned }: {
   projects: readonly Project[];
   unassigned: readonly Message[];
 }) {
+  const { isEn, t, bi } = useI18n();
   const { summary } = useLiveState();
   // A project picker lists only the ones in sight: archived is out of every list until restored.
   const open = activeProjects(projects);
@@ -549,20 +561,20 @@ function HomeBody({ overview, doctor, tasks, children, projects, unassigned }: {
             noMachine: noMachine.length,
             unassigned: unassigned.length,
             moving: movingCount,
-          })}
+          }, isEn)}
         </h2>
         {summary ? <p className="mt-1.5 text-sm text-muted-foreground">{summary}</p> : null}
-        <ul aria-label="工作概况" className="mt-5 grid grid-cols-2 gap-3 wide:grid-cols-4">
-          <Stat label="等你决定" count={decisionCount} tone="waiting" icon={<CircleHelp />} />
-          <Stat label="待验收" count={readyCount} tone="waiting" icon={<PackageCheck />} />
-          <Stat label="正在推进" count={movingCount} tone="running" icon={<Activity />} />
-          <Stat label="最近结束" count={recent.length} tone="success" icon={<CircleCheck />} />
+        <ul aria-label={bi('工作概况', 'Work summary')} className="mt-5 grid grid-cols-2 gap-3 wide:grid-cols-4">
+          <Stat label={t('home.waitingYou')} count={decisionCount} tone="waiting" icon={<CircleHelp />} />
+          <Stat label={t('home.readyReview')} count={readyCount} tone="waiting" icon={<PackageCheck />} />
+          <Stat label={bi('正在推进', 'In progress')} count={movingCount} tone="running" icon={<Activity />} />
+          <Stat label={t('home.recentEnded')} count={recent.length} tone="success" icon={<CircleCheck />} />
         </ul>
       </header>
       {idle ? <NothingYet projects={open} /> : (
         <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-x-10 gap-y-8 wide:grid-cols-[minmax(0,1fr)_340px]">
           <section aria-labelledby="home-todo" className="min-w-0">
-            <SectionTitle id="home-todo" count={todo || undefined}>需要你处理</SectionTitle>
+            <SectionTitle id="home-todo" count={todo || undefined}>{bi('需要你处理', 'Needs your attention')}</SectionTitle>
             {todo ? (
               <div className="grid gap-3">
                 {approvals.map((card) => <ApprovalCard key={card.id} card={card} />)}
@@ -602,10 +614,10 @@ function HomeBody({ overview, doctor, tasks, children, projects, unassigned }: {
                   </Rows>
                 ) : null}
               </div>
-            ) : <Empty icon={<CircleCheck />} title="没有待处理的事">有问题要你定、有成果要你验收时，会出现在这里。</Empty>}
+            ) : <Empty icon={<CircleCheck />} title={bi('没有待处理的事', 'All caught up')}>{bi('有问题要你定、有成果要你验收时，会出现在这里。', 'Questions awaiting your decision and deliverables ready for review appear here.')}</Empty>}
           </section>
           <div className="grid min-w-0 gap-7">
-            <Aside title="正在进行" count={movingList.length || undefined}>
+            <Aside title={t('home.moving')} count={movingList.length || undefined}>
               {movingList.length ? (
                 <Rows>
                   {movingList.map((task) => (
@@ -618,14 +630,14 @@ function HomeBody({ overview, doctor, tasks, children, projects, unassigned }: {
                     />
                   ))}
                 </Rows>
-              ) : <Note>现在没有在进行的工作</Note>}
+              ) : <Note>{bi('现在没有在进行的工作', 'No active work right now')}</Note>}
             </Aside>
-            <Aside title="刚结束" action={<Link to="/work?show=ended" className="text-xs text-muted-foreground">全部已结束的工作</Link>}>
+            <Aside title={bi('刚结束', 'Just finished')} action={<Link to="/work?show=ended" className="text-xs text-muted-foreground">{bi('全部已结束的工作', 'All finished work')}</Link>}>
               {recent.length ? (
                 <Rows>
                   {recent.map((task) => <WorkRow key={task.id} task={task} project={projectName(task.project_id)} meta={<Time at={task.finished_at} />} />)}
                 </Rows>
-              ) : <Note>最近没有结束的工作</Note>}
+              ) : <Note>{bi('最近没有结束的工作', 'No recently finished work')}</Note>}
             </Aside>
           </div>
         </div>
@@ -650,6 +662,7 @@ function HomeBody({ overview, doctor, tasks, children, projects, unassigned }: {
 }
 
 export function HomePage() {
+  const { t } = useI18n();
   const { data: overview, isPending, error } = useQuery(overviewQuery);
   const { data: doctor } = useQuery(doctorQuery);
   // The works waiting to be accepted are read from the list the side column already
@@ -659,7 +672,7 @@ export function HomePage() {
   const { data: projects } = useQuery(projectsQuery);
   const waiting = useQuery({ queryKey: [PAGE, 'unassigned'], queryFn: async () => (await api<{ messages: Message[] }>('/api/messages/unassigned')).messages });
   return (
-    <Page title="总览" width="wide" loading={isPending} failure={error?.message}>
+    <Page title={t('home.title')} width="wide" loading={isPending} failure={error?.message}>
       {overview ? (
         <HomeBody
           overview={overview}

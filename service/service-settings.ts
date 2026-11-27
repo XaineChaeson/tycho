@@ -7,6 +7,7 @@ import { readSecret, wecomSecretFile } from './secrets.ts';
 import type { Settings, SettingsOptions } from './settings.ts';
 import { createSettings, DISPATCH_ORDER_KEYS } from './settings.ts';
 import type { SettingKey } from './settings.ts';
+import { normalizeLocale, setActiveLocale } from '../shared/i18n.ts';
 import { isTierId, tierNamesText } from '../shared/tiers.ts';
 import { knowledgeLimitsOf, type KnowledgeLimits } from './knowledge.ts';
 
@@ -59,8 +60,12 @@ export function serviceSettings({ ledger, dataDir, log }: ServiceSettingsOptions
         const others = whitelist.wecom.filter((actor) => actor !== from && actor !== to);
         ledger.setWhitelist({ ...whitelist, wecom: to === '' ? others : [...others, to as string] }, ctx);
       },
+      'ui.locale'({ to }) {
+        setActiveLocale(normalizeLocale(to));
+      },
     },
   });
+  setActiveLocale(normalizeLocale(settings.get('ui.locale')));
   return settings;
 }
 

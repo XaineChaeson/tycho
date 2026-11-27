@@ -5,6 +5,7 @@ import { useRef, useState } from 'react';
 import { Callout, Problem } from '@/components/bits';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useI18n } from '@/lib/i18n';
 import { Confirm, Sheet, SheetContent, SheetTrigger } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api, messageOf, post, session } from '@/lib/api';
@@ -113,11 +114,12 @@ function DeviceManager() {
 }
 
 export function DeviceLogin() {
+  const { t, bi } = useI18n();
   const [open, setOpen] = useState(false);
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger asChild><Button variant="ghost" size="sm" className="gap-1 px-1.5"><MonitorSmartphone />设备</Button></SheetTrigger>
-      <SheetContent title="设备" description="查看和管理已登录的设备。放行新设备在侧栏的“放行”里。" className="w-[min(440px,100%)]">
+      <SheetTrigger asChild><Button variant="ghost" size="sm" className="gap-1 px-1.5"><MonitorSmartphone />{t('nav.devices')}</Button></SheetTrigger>
+      <SheetContent title={t('nav.devices')} description={bi('查看和管理已登录的设备。放行新设备在侧栏的“放行”里。', 'Inspect and revoke signed-in devices. Approve new devices via "Admit" in the sidebar.')} className="w-[min(440px,100%)]">
         {open ? <DeviceManager /> : null}
       </SheetContent>
     </Sheet>

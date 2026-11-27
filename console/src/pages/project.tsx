@@ -2,7 +2,7 @@
 // conversation with its Router, the work that came of it, what sets it off by itself, and
 // how it is set up. Each side is an address of its own under the project's.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, AppWindow, ArrowUp, Cpu, Ellipsis, FolderOpen, History, List, Loader2, MessageSquarePlus, Paperclip, Square, X } from 'lucide-react';
+import { Activity, AppWindow, ArrowUp, Cpu, Ellipsis, FolderOpen, History, List, Loader2, MessageCircleQuestion, MessageSquarePlus, Paperclip, Square, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import { PROJECT_ARCHIVED_LABEL, PROJECT_ARCHIVED_NOTE, PROJECT_ARCHIVED_TEXT, PROJECT_PAUSED_NOTE, PROJECT_PAUSED_TEXT, WORK_GROUP_ORDER, WORK_GROUPS, workGroup } from '@shared/labels.ts';
@@ -18,6 +18,9 @@ import { ProjectDispatchGraph } from '@/components/project-dispatch-graph';
 import { formatFileSize, isProjectLibraryFile, ProjectFilesSheet } from '@/components/project-files';
 import { ProjectTriggers } from '@/components/project-triggers';
 import { ProjectWorkspaceRail, type RailTab } from '@/components/project-workspace-rail';
+import { QuoteTray } from '@/components/quote-tray';
+import { SelectionQuotePopover, type SelectedExcerpt } from '@/components/selection-quote-popover';
+import { SideAskDrawer, type SideAskQuote } from '@/components/side-ask-drawer';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/dialog';
@@ -30,6 +33,7 @@ import { useProjectFlag } from '@/hooks/use-project-flag';
 import { api, messageOf, post, projectFileRawUrl, uploadProjectFile } from '@/lib/api';
 import { conversationItems, hasTurn } from '@/lib/conversation';
 import { EXAMPLE_ASKS, useAsk } from '@/lib/examples';
+import { useI18n } from '@/lib/i18n';
 import { useLive, useLiveState } from '@/lib/live-context';
 import { approvalsQuery, PAGE, projectFilesQuery, projectsQuery, stateQuery, tasksQuery } from '@/lib/queries';
 import type { Conversation, Message, Project, ProjectFileSummary, Segment, Task, TurnChanges } from '@/lib/types';
@@ -106,23 +110,24 @@ function PausedNotice({ project }: { project: Pick<Project, 'id' | 'paused_at'> 
 // side in view can do; under it, a paused project says so. An archived project carries its
 // mark beside the name, and says the rest in the conversation.
 function ProjectBar({ id, project, actions }: { id: string; project: Pick<Project, 'name'> & Partial<Pick<Project, 'waiting' | 'paused_at' | 'archived_at'>> | undefined; actions?: ReactNode }) {
+  const { t } = useI18n();
   const waiting = project?.waiting ?? 0;
   const archived = project?.archived_at != null;
   return (
     <>
     <PageBar
-      title={project?.name ?? '项目'}
-      crumbs={[{ label: '项目', to: '/projects' }]}
+      title={project?.name ?? t('project.defaultTitle')}
+      crumbs={[{ label: t('nav.projects'), to: '/projects' }]}
       actions={actions}
       badge={archived ? <Badge tone="ended">{PROJECT_ARCHIVED_LABEL}</Badge> : undefined}
     >
       <PageTabs
-        label="项目的页面"
+        label={t('project.tabsLabel')}
         tabs={[
-          { to: projectPath(id), label: '对话' },
-          { to: projectPath(id, 'work'), label: '工作', count: waiting || undefined },
-          { to: projectPath(id, 'triggers'), label: '触发器' },
-          { to: projectPath(id, 'settings'), label: '设置' },
+          { to: projectPath(id), label: t('project.tabChat') },
+          { to: projectPath(id, 'work'), label: t('project.tabWork'), count: waiting || undefined },
+          { to: projectPath(id, 'triggers'), label: t('project.tabTriggers') },
+          { to: projectPath(id, 'settings'), label: t('project.tabSettings') },
         ]}
       />
     </PageBar>
@@ -132,12 +137,13 @@ function ProjectBar({ id, project, actions }: { id: string; project: Pick<Projec
 }
 
 function EmptyTalk({ id }: { id: string }) {
+  const { t } = useI18n();
   const ask = useAsk(id);
   return (
     <div className="mx-auto mt-[10vh] max-w-[480px] text-center">
-      <h2 className="text-lg font-semibold">还没有对话</h2>
-      <p className="mt-2 text-sm text-muted-foreground">对负责人说人话就行：它会把事情拆成任务、派给账号去做，再把结果带回来。</p>
-      <p className="mt-1 text-sm text-muted-foreground">它自己不动手，也不替你拿主意；遇到要你定的事，它会在这里问你。怕做错就说清楚验收标准。</p>
+      <h2 className="text-lg font-semibold">{t('project.emptyTitle')}</h2>
+      <p className="mt-2 text-sm text-muted-foreground">{t('project.emptyBody1')}</p>
+      <p className="mt-1 text-sm text-muted-foreground">{t('project.emptyBody2')}</p>
       <div className="mt-5 flex flex-wrap justify-center gap-2">
         {EXAMPLE_ASKS.map((text) => <Button key={text} size="sm" onClick={() => ask(text)}>{text}</Button>)}
       </div>
@@ -156,10 +162,11 @@ function normalizeUploadFile(file: File): File {
 // The box holds what the console keeps as the draft, not a text of its own: the owner
 // can go and look something up on another page and find it as they left it, and a text
 // the service refused while they were away is back in it, with the reason.
-function Composer({ busy, project, dimmed = false, routerError = null }: { busy: boolean; project: string; dimmed?: boolean; routerError?: string | null }) {
+function Composer({ busy, project, dimmed = false, routerError = null, focusSignal = 0 }: { busy: boolean; project: string; dimmed?: boolean; routerError?: string | null; focusSignal?: number }) {
+  const { t } = useI18n();
   const live = useLive();
   const client = useQueryClient();
-  const { sending, draft, attachments, refused } = useLiveState();
+  const { sending, draft, attachments, quotes, refused } = useLiveState();
   const location = useLocation();
   // "在对话里谈这项工作" arrives here with the sentence begun, and the caret goes into it.
   const begun = (location.state as { compose?: boolean } | null)?.compose === true;
@@ -174,8 +181,8 @@ function Composer({ busy, project, dimmed = false, routerError = null }: { busy:
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
-    if (begun) input.current?.focus();
-  }, [begun]);
+    if (begun || focusSignal > 0) input.current?.focus();
+  }, [begun, focusSignal]);
 
   useEffect(() => {
     if (!pasteNotice) return undefined;
@@ -301,7 +308,7 @@ function Composer({ busy, project, dimmed = false, routerError = null }: { busy:
     });
   }
 
-  const canSend = (draft.trim() !== '' || attachments.length > 0) && !uploading && sending === null;
+  const canSend = (draft.trim() !== '' || attachments.length > 0 || quotes.length > 0) && !uploading && sending === null;
 
   return (
     <form
@@ -315,13 +322,13 @@ function Composer({ busy, project, dimmed = false, routerError = null }: { busy:
       }}
     >
       <div className="relative mx-auto w-full max-w-[760px]">
-        {refused ? <Problem role="alert" className="mb-1.5">{`没有发出去：${refused}`}</Problem> : null}
-        {uploadError ? <Problem role="alert" className="mb-1.5">{`上传失败：${uploadError}`}</Problem> : null}
+        {refused ? <Problem role="alert" className="mb-1.5">{t('project.sendFailed', { reason: refused })}</Problem> : null}
+        {uploadError ? <Problem role="alert" className="mb-1.5">{t('project.uploadFailed', { reason: uploadError })}</Problem> : null}
         {pasteNotice ? <p className="mb-1.5 text-xs text-muted-foreground">{pasteNotice}</p> : null}
         {busy ? (
           <div className="mb-1.5 flex items-center justify-between gap-2">
-            <span role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Dot tone="running" />负责人在处理</span>
-            <Button size="sm" onClick={() => { post('/api/interrupt', { project_id: project }).catch((error: unknown) => live.showError(messageOf(error))); }}><Square className="size-3 fill-current" />打断</Button>
+            <span role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Dot tone="running" />{t('project.routerProcessing')}</span>
+            <Button size="sm" onClick={() => { post('/api/interrupt', { project_id: project }).catch((error: unknown) => live.showError(messageOf(error))); }}><Square className="size-3 fill-current" />{t('project.interrupt')}</Button>
           </div>
         ) : null}
         <ComposerTriggerMenu
@@ -332,7 +339,7 @@ function Composer({ busy, project, dimmed = false, routerError = null }: { busy:
           controllerRef={triggerController}
           onApply={handleApplyTrigger}
         />
-        {/* One box: attachments, text, and the buttons to attach/send. The ring is the box's, so it reads as one control. */}
+        {/* One box: quotes, attachments, text, and the buttons to attach/send. The ring is the box's, so it reads as one control. */}
         <div
           data-slot="composer-box"
           onDragEnter={onDragEnter}
@@ -344,6 +351,12 @@ function Composer({ busy, project, dimmed = false, routerError = null }: { busy:
             dragging && 'border-dashed border-primary bg-brand-soft/25',
           )}
         >
+          <QuoteTray
+            quotes={quotes}
+            disabled={sending !== null}
+            onRemove={(quoteId) => live.removeQuote(quoteId)}
+            onClear={() => live.clearQuotes()}
+          />
           {attachments.length > 0 || uploading ? (
             <div className="flex flex-wrap items-center gap-2 border-b border-border/60 px-3 pt-2.5 pb-2">
               {attachments.map((file) => (
@@ -395,11 +408,11 @@ function Composer({ busy, project, dimmed = false, routerError = null }: { busy:
               aria-label="选择附件"
               onChange={onFileInputChange}
             />
-            <Tooltip text="添加附件（支持粘贴图片或拖拽文件）">
+            <Tooltip text={t('project.attachTooltip')}>
               <Button
                 variant="ghost"
                 size="icon"
-                aria-label="添加附件"
+                aria-label={t('project.attachLabel')}
                 className="rounded-lg"
                 disabled={sending !== null || uploading}
                 onClick={() => fileInput.current?.click()}
@@ -410,8 +423,8 @@ function Composer({ busy, project, dimmed = false, routerError = null }: { busy:
             <Textarea
               ref={input}
               rows={1}
-              placeholder="给负责人发消息"
-              aria-label="给负责人发消息"
+              placeholder={t('project.composerPlaceholder')}
+              aria-label={t('project.composerPlaceholder')}
               className="max-h-[40vh] min-h-8 flex-1 overflow-y-auto border-0 bg-transparent px-1 py-1.5 text-base shadow-none focus:outline-0 read-only:bg-transparent"
               value={draft}
               readOnly={sending !== null}
@@ -425,12 +438,12 @@ function Composer({ busy, project, dimmed = false, routerError = null }: { busy:
               onPaste={onPaste}
               onKeyDown={onKeyDown}
             />
-            <Tooltip text="发送（Enter）">
+            <Tooltip text={t('project.sendTooltip')}>
               <Button
                 variant="primary"
                 size="icon"
                 type="submit"
-                aria-label="发送"
+                aria-label={t('common.send')}
                 data-ready={canSend ? 'true' : 'false'}
                 className="rounded-lg"
                 disabled={sending !== null || uploading}
@@ -440,12 +453,12 @@ function Composer({ busy, project, dimmed = false, routerError = null }: { busy:
             </Tooltip>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/50 px-3 py-1 text-2xs text-faint">
-            <span>发给项目负责人</span>
+            <span>{t('project.composerRecipient')}</span>
             <ComposerTargetChip mode="project" projectId={project} routerError={routerError} compact />
           </div>
         </div>
         {/* A phone sends with its keyboard's own key: the line would only take space there. */}
-        <p className="mt-1.5 hidden text-center text-2xs text-faint shell:block">Enter 发送，Shift+Enter 换行，输入 $/@// 快捷引用，支持粘贴或拖拽上传</p>
+        <p className="mt-1.5 hidden text-center text-2xs text-faint shell:block">{t('project.composerHint')}</p>
       </div>
     </form>
   );
@@ -546,10 +559,16 @@ function TalkSkeleton() {
 // A project's Router conversation: the current segment is written to, an earlier one is read
 // only, and "新话题" starts the next one.
 function ConversationTab({ id, project }: { id: string; project: Project | undefined }) {
+  const { t } = useI18n();
   const live = useLive();
   const client = useQueryClient();
   const [asked, setAsked] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const [composerFocusSignal, setComposerFocusSignal] = useState(0);
+  const [sideAskOpen, setSideAskOpen] = useState(false);
+  const [sideAskQuote, setSideAskQuote] = useState<SideAskQuote | null>(null);
+  const [threadQuote, setThreadQuote] = useState<{ seq: number; source: string; excerpt: string } | null>(null);
   const meta = useQuery({
     queryKey: [PAGE, 'conversation', id, asked],
     queryFn: () => api<Conversation>(`/api/projects/${encodeURIComponent(id)}/conversation${asked ? `?segment=${encodeURIComponent(asked)}` : ''}`),
@@ -719,7 +738,7 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
 
   async function newTopic(): Promise<void> {
     if (!canStartNewTopic) return;
-    if (!window.confirm('开启新话题会将当前对话归档为只读，确定吗？')) return;
+    if (!window.confirm(t('project.newTopicConfirm'))) return;
     setProblem(null);
     try {
       await post(`/api/projects/${encodeURIComponent(id)}/new-topic`);
@@ -730,6 +749,27 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
     }
   }
 
+  const quoteToMain = useCallback((quote: { source: string; excerpt: string }) => {
+    if (!writable || archived) return;
+    live.addQuote(quote, id);
+    setActivePane('chat');
+    setComposerFocusSignal((n) => n + 1);
+  }, [writable, archived, live, id]);
+
+  const handleSelectionQuote = useCallback((selection: SelectedExcerpt) => {
+    if (selection.pane === 'thread' && selectedThreadId) {
+      setThreadQuote((prev) => ({ seq: (prev?.seq ?? 0) + 1, source: selection.source, excerpt: selection.excerpt }));
+      setActivePane('thread');
+      return;
+    }
+    quoteToMain({ source: selection.source, excerpt: selection.excerpt });
+  }, [selectedThreadId, quoteToMain]);
+
+  const handleSelectionSideAsk = useCallback((selection: SelectedExcerpt) => {
+    setSideAskQuote({ source: selection.source, excerpt: selection.excerpt });
+    setSideAskOpen(true);
+  }, []);
+
   return (
     <>
       <ProjectBar
@@ -738,14 +778,20 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
         actions={(
           <>
             {meta.data && meta.data.segments.length > 1 ? (
-              <Select aria-label="哪一段对话" value={shown ?? ''} onChange={(event) => setAsked(event.target.value || null)}>
+              <Select aria-label={t('project.segmentLabel')} value={shown ?? ''} onChange={(event) => setAsked(event.target.value || null)}>
                 {meta.data.segments.map((segment) => <Option key={segment.id} value={segment.id}>{segmentLabel(segment)}</Option>)}
               </Select>
             ) : null}
-            <Tooltip text="查看项目文件与交互产物">
+            <Tooltip text={t('sideAsk.tooltip')}>
+              <Button variant={sideAskOpen ? 'secondary' : 'ghost'} onClick={() => setSideAskOpen((open) => !open)}>
+                <MessageCircleQuestion />
+                {t('sideAsk.action')}
+              </Button>
+            </Tooltip>
+            <Tooltip text={t('project.filesTooltip')}>
               <Button variant="ghost" onClick={() => setFilesOpen(true)}>
                 <FolderOpen />
-                项目文件
+                {t('project.files')}
                 {fileCount > 0 ? (
                   <span className="rounded-full bg-hover px-1.5 text-xs leading-[18px] font-medium text-muted-foreground tabular-nums">
                     {fileCount}
@@ -753,16 +799,16 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
                 ) : null}
               </Button>
             </Tooltip>
-            <Tooltip text={rows.length === 0 ? '当前对话还没有消息' : busy ? '负责人处理完当前消息后再开新话题' : '结束这一段，开一段新的对话'}>
-              <Button variant="ghost" disabled={!canStartNewTopic} onClick={() => void newTopic()}><MessageSquarePlus />新话题</Button>
+            <Tooltip text={rows.length === 0 ? t('project.newTopicNoMsg') : busy ? t('project.newTopicBusy') : t('project.newTopicTooltip')}>
+              <Button variant="ghost" disabled={!canStartNewTopic} onClick={() => void newTopic()}><MessageSquarePlus />{t('project.newTopic')}</Button>
             </Tooltip>
             <Menu>
-              <MenuTrigger asChild><Button variant="ghost" size="icon" aria-label="更多"><Ellipsis /></Button></MenuTrigger>
+              <MenuTrigger asChild><Button variant="ghost" size="icon" aria-label={t('common.more')}><Ellipsis /></Button></MenuTrigger>
               <MenuContent>
                 <MenuItem asChild>
                   <Link to={`/legacy?project=${encodeURIComponent(id)}`} className="no-underline">
                     <History />
-                    {meta.data && meta.data.legacy > 0 ? `旧全局记录里有 ${meta.data.legacy} 条和它有关` : '旧全局记录'}
+                    {meta.data && meta.data.legacy > 0 ? t('project.legacyCount', { count: meta.data.legacy }) : t('project.legacyRecord')}
                   </Link>
                 </MenuItem>
               </MenuContent>
@@ -770,7 +816,7 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
           </>
         )}
       />
-      <div className="flex min-h-0 flex-1">
+      <div ref={workspaceRef} className="flex min-h-0 flex-1">
         <div
           data-pane="chat"
           onFocusCapture={() => setActivePane('chat')}
@@ -785,8 +831,8 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
             <div className="mx-auto w-full max-w-[760px] px-4">
               {problem ? <Problem role="alert" className="mt-3">{problem}</Problem> : null}
               {meta.error ? <Problem role="alert" className="mt-3">{meta.error.message}</Problem> : null}
-              {!writable && meta.data ? <Note className="mt-4 rounded-lg bg-muted px-3 py-2">{ownerNotice ?? '这是之前的一段对话，只能看；新消息发在当前这一段。'}</Note> : null}
-              <div role="log" aria-label="对话" className="flex flex-col gap-5 pt-6 pb-8 text-base">
+              {!writable && meta.data ? <Note className="mt-4 rounded-lg bg-muted px-3 py-2">{ownerNotice ?? t('project.readOnlySegment')}</Note> : null}
+              <div role="log" aria-label={t('project.tabChat')} className="flex flex-col gap-5 pt-6 pb-8 text-base">
                 {writable && summary ? <p className="text-center text-xs text-faint">{summary}</p> : null}
                 {/* Never another conversation's rows under this one's name: until this one has
                     been read once, the shape of what is coming. */}
@@ -797,6 +843,7 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
                     projectId={id}
                     onSelectTask={openThread}
                     liveTasks={liveTasks}
+                    onQuote={writable && !archived ? quoteToMain : undefined}
                     empty={<EmptyTalk id={id} />}
                   />
                 )) : <TalkSkeleton />}
@@ -868,6 +915,7 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
                 busy={busy}
                 project={id}
                 routerError={routerError}
+                focusSignal={composerFocusSignal}
                 dimmed={Boolean(selectedThreadId && wide && !threadFocused && activePane === 'thread')}
               />
             </>
@@ -933,11 +981,24 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
                 focused={threadFocused}
                 onToggleFocus={() => setThreadFocused((value) => !value)}
                 dimmed={!threadFocused && activePane === 'chat'}
+                incomingQuote={threadQuote}
               />
             </aside>
           </>
         ) : null}
       </div>
+      <SelectionQuotePopover
+        rootRef={workspaceRef}
+        onQuote={handleSelectionQuote}
+        onSideAsk={handleSelectionSideAsk}
+      />
+      <SideAskDrawer
+        projectId={id}
+        open={sideAskOpen}
+        initialQuote={sideAskQuote}
+        onClose={() => setSideAskOpen(false)}
+        onPromoteToMain={quoteToMain}
+      />
       <Sheet open={selectedThreadId !== null && !wide} onOpenChange={(next) => { if (!next) closeThread(); }}>
         {selectedThreadId && !wide ? (
           <SheetContent

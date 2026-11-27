@@ -82,6 +82,11 @@ const DISPATCH_ORDER = Object.fromEntries(TIERS.map((tier): [DispatchOrderKey, D
 export const DISPATCH_ORDER_KEYS: readonly DispatchOrderKey[] = TIERS.map((tier) => dispatchOrderKey(tier.id));
 
 export const SETTINGS = {
+  'ui.locale': {
+    group: SERVICE, title: '系统语言', type: 'choice', choices: ['zh-CN', 'en'] as const,
+    help: '控制台界面、登录页、负责人默认回复与任务说明语言（zh-CN 简体中文 / en English）。切换后立即生效。',
+    default: 'zh-CN',
+  },
   'router.cli': {
     group: ROUTER, title: '负责人 CLI 路径', type: 'file', empty: '自动找执行器 CLI：先 PATH，再桌面/用户安装目录',
     help: '负责人未绑定自定义路径时自动定位对应执行器（支持 Claude / Codex / Gemini）。留空时优先 PATH，再查找常见安装位置；填的路径不在了也一样回退并由自检提示。下次启动负责人时生效：改完点下面的“重启负责人”。',

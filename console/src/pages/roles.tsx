@@ -21,6 +21,7 @@ import { Option, Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useChange } from '@/hooks/use-change';
 import { del, messageOf, put } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { rolesQuery } from '@/lib/queries';
 import type { Role } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -240,6 +241,7 @@ function NewRoleSheet({ roles, busy, onSave, onClose }: {
 }
 
 export function RolesPage() {
+  const { t, bi } = useI18n();
   const { data, isPending, error } = useQuery(rolesQuery);
   const change = useChange<Role[]>({ mutationKey: CHANGE, queryKey: rolesQuery.queryKey, reread: true });
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -314,21 +316,21 @@ export function RolesPage() {
 
   return (
     <Page
-      title="职能"
+      title={t('roles.title')}
       width="wide"
       loading={isPending}
       failure={error?.message}
-      actions={<Button variant="primary" disabled={change.busy} onClick={() => setAdding(true)}><Plus />加一个职能</Button>}
+      actions={<Button variant="primary" disabled={change.busy} onClick={() => setAdding(true)}><Plus />{bi('加一个职能', 'Add role')}</Button>}
     >
       {data ? (
         <article>
-          <PageLead className="mb-2">职能说一个任务是哪一类活：它默认用哪个档位、能不能改东西、交什么、要不要另派一个任务独立审阅。负责人建任务时选职能，任务页上可以改。</PageLead>
+          <PageLead className="mb-2">{bi('职能说一个任务是哪一类活：它默认用哪个档位、能不能改东西、交什么、要不要另派一个任务独立审阅。负责人建任务时选职能，任务页上可以改。', 'Roles define a task type: default tier, permissions, deliverable, and whether independent review is required.')}</PageLead>
           <Note className="mb-5 max-w-[78ch] text-xs">{ENFORCED_TEXT}</Note>
 
           <div className="grid grid-cols-1 items-start gap-5 shell:grid-cols-[252px_minmax(0,1fr)] wide:grid-cols-[280px_minmax(0,1fr)]">
-            <aside aria-label="职能列表" className="overflow-hidden rounded-xl bg-raised shadow-card shell:sticky shell:top-4">
+            <aside aria-label={bi('职能列表', 'Role list')} className="overflow-hidden rounded-xl bg-raised shadow-card shell:sticky shell:top-4">
               <div className="flex items-center justify-between border-b border-border/60 bg-muted/50 px-3.5 py-2 text-[11px] font-semibold tracking-wide text-muted-foreground">
-                <span>全部职能</span>
+                <span>{bi('全部职能', 'All roles')}</span>
                 <span className="rounded-full bg-hover px-1.5 leading-[17px] tabular-nums">{roles.length}</span>
               </div>
               <ul className="divide-y divide-border/60" onKeyDown={handleRailKeyDown}>

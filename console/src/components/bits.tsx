@@ -4,8 +4,9 @@
 import { Check, ChevronRight, Copy, X } from 'lucide-react';
 import { useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router';
-import { taskDotClasses, taskStateLabels } from '@shared/labels.ts';
+import { taskDotClasses, taskStateLabel } from '@shared/labels.ts';
 import { formatTime, fullTime } from '@shared/time.ts';
+import { useI18n } from '@/lib/i18n';
 import { Badge, type BadgeTone } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
@@ -127,13 +128,15 @@ export function Orbits({ className }: { className?: string }) {
 
 // A Task's state as a word, in the colour of what it means.
 export function StateBadge({ state, className }: { state: string; className?: string }) {
-  return <Badge tone={toneOf(state) as BadgeTone} className={className}>{taskStateLabels[state] ?? state}</Badge>;
+  const { locale } = useI18n();
+  return <Badge tone={toneOf(state) as BadgeTone} className={className}>{taskStateLabel(state, locale)}</Badge>;
 }
 
 export function Time({ at, prefix = '', suffix = '', className }: { at: string | number | null | undefined; prefix?: string; suffix?: string; className?: string }) {
+  const { locale } = useI18n();
   return (
-    <time dateTime={typeof at === 'string' ? at : at == null ? '' : new Date(at).toISOString()} title={fullTime(at)} className={cn('tabular-nums', className)}>
-      {prefix}{formatTime(at)}{suffix}
+    <time dateTime={typeof at === 'string' ? at : at == null ? '' : new Date(at).toISOString()} title={fullTime(at, locale)} className={cn('tabular-nums', className)}>
+      {prefix}{formatTime(at, new Date(), locale)}{suffix}
     </time>
   );
 }

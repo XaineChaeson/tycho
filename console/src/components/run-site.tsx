@@ -177,13 +177,17 @@ export function SiteRows({ site, id, foldTrailingTextAt = -1 }: { site: Site; id
             if (index === foldTrailingTextAt) {
               return (
                 <Details key={key} id={`raw-final:${key}`} summaryClassName="min-h-7 text-xs" title="查看原始末条输出">
-                  <div className="mb-2 ml-[22px]">
+                  <div data-quotable data-quote-source="末条输出" className="mb-2 ml-[22px]">
                     <Markdown text={row.text} className="py-1" />
                   </div>
                 </Details>
               );
             }
-            return <Markdown key={key} text={row.text} className="py-1" />;
+            return (
+              <div key={key} data-quotable data-quote-source="执行过程">
+                <Markdown text={row.text} className="py-1" />
+              </div>
+            );
           case 'thinking':
             return (
               <Details key={key} id={`thinking:${key}`} summaryClassName="min-h-7 text-xs" title={row.live ? '思考中…' : '思考记录'}>

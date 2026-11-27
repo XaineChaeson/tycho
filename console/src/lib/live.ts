@@ -7,6 +7,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { api, messageOf, post } from './api.ts';
 import { hasTurn, processing, summaryLine } from './conversation.ts';
+import { composeWithQuotes, MAX_COMPOSER_QUOTES, trimQuoteExcerpt, type ComposerQuote } from './quotes.ts';
 import type { Message, ProjectFileSummary, TurnChanges } from './types.ts';
 
 const SNAPSHOT_SIZE = 50;
@@ -72,6 +73,7 @@ export interface LiveState {
   // a walk to another page and back does not lose it.
   draft: string;
   attachments: readonly ProjectFileSummary[];
+  quotes: readonly ComposerQuote[];
   // Why the draft is a text that was sent and came back.
   refused: string | null;
   // "Since you last opened": read once, before the first snapshot moves that moment.
@@ -114,7 +116,7 @@ export function createLive({
   now = Date.now,
   gather = (fn) => setTimeout(fn, GATHER_MS),
 }: LiveOptions) {
-  let state: LiveState = { focus: null, loaded: false, messages: new Map(), changes: new Map(), connected: false, lastUpdate: null, sending: null, sendingAttachments: [], draft: '', attachments: [], refused: null, summary: '', error: null };
+  let state: LiveState = { focus: null, loaded: false, messages: new Map(), changes: new Map(), connected: false, lastUpdate: null, sending: null, sendingAttachments: [], draft: '', attachments: [], quotes: [], refused: null, summary: '', error: null };
   const listeners = new Set<() => void>();
   // The round under way, if the console is connected or connecting. A read that comes
   // back to find another round, or none, belongs to a connection that is over: all of
@@ -130,6 +132,8 @@ export function createLive({
   // What was typed to each project's Router and not sent, while another one is in view.
   const drafts = new Map<string, string>();
   const draftAttachments = new Map<string, ProjectFileSummary[]>();
+  const draftQuotes = new Map<string, ComposerQuote[]>();
+  let nextQuoteSeq = 0;
   // What was typed into each task's follow-up/interjection composer and not sent yet.
   const taskDrafts = loadTaskDrafts();
   // And why a text of a project's came back, while another one is in view.
@@ -396,6 +400,42 @@ export function createLive({
       set({ attachments: next, refused: null });
     },
 
+    addQuote(input: { source: string; excerpt: string }, targetProject?: string): void {
+      const excerpt = trimQuoteExcerpt(input.excerpt);
+      if (!excerpt) return;
+      const quote: ComposerQuote = { id: `q-${++nextQuoteSeq}`, source: input.source.trim(), excerpt };
+      const projectId = targetProject ?? state.focus?.project;
+      if (!projectId) {
+        if (state.quotes.length >= MAX_COMPOSER_QUOTES) return;
+        set({ quotes: [...state.quotes, quote], refused: null });
+        return;
+      }
+      const isFocused = state.focus?.project === projectId;
+      const current = isFocused ? state.quotes : (draftQuotes.get(projectId) ?? []);
+      if (current.length >= MAX_COMPOSER_QUOTES) return;
+      const next = [...current, quote];
+      draftQuotes.set(projectId, next);
+      refusals.delete(projectId);
+      if (isFocused) set({ quotes: next, refused: null });
+    },
+
+    removeQuote(quoteId: string): void {
+      const next = state.quotes.filter((existing) => existing.id !== quoteId);
+      if (next.length === state.quotes.length) return;
+      if (state.focus) {
+        if (next.length > 0) draftQuotes.set(state.focus.project, next);
+        else draftQuotes.delete(state.focus.project);
+        refusals.delete(state.focus.project);
+      }
+      set({ quotes: next, refused: null });
+    },
+
+    clearQuotes(): void {
+      if (state.quotes.length === 0) return;
+      if (state.focus) draftQuotes.delete(state.focus.project);
+      set({ quotes: [] });
+    },
+
     // Begins a text for a project's Router, which may not be the one in view yet.
     typeFor(project: string | null, text: string): void {
       if (project === null || state.focus?.project === project) {
@@ -433,17 +473,20 @@ export function createLive({
         drafts.set(state.focus.project, state.draft);
         if (state.attachments.length > 0) draftAttachments.set(state.focus.project, [...state.attachments]);
         else draftAttachments.delete(state.focus.project);
+        if (state.quotes.length > 0) draftQuotes.set(state.focus.project, [...state.quotes]);
+        else draftQuotes.delete(state.focus.project);
         if (state.refused === null) refusals.delete(state.focus.project);
         else refusals.set(state.focus.project, state.refused);
       }
       const draft = focus ? drafts.get(focus.project) ?? '' : '';
       const attachments = focus ? draftAttachments.get(focus.project) ?? [] : [];
+      const quotes = focus ? draftQuotes.get(focus.project) ?? [] : [];
       const refused = focus ? refusals.get(focus.project) ?? null : null;
       if (state.focus && state.loaded) kept.set(focusKey(state.focus), { messages: state.messages, changes: state.changes });
       // A project's queue that has just been given its first segment is the same conversation.
       const grown = focus !== null && state.loaded && state.focus?.project === focus.project && state.focus.segment === null;
       const back = focus === null ? undefined : grown ? { messages: state.messages, changes: state.changes } : kept.get(focusKey(focus));
-      set({ focus, draft, attachments, refused, loaded: back !== undefined, messages: back?.messages ?? new Map(), changes: back?.changes ?? new Map() });
+      set({ focus, draft, attachments, quotes, refused, loaded: back !== undefined, messages: back?.messages ?? new Map(), changes: back?.changes ?? new Map() });
       const mine = round;
       if (focus && mine && !mine.reading) snapshot(mine, false).catch((err: unknown) => showError(messageOf(err)));
     },
@@ -451,7 +494,9 @@ export function createLive({
     // Sends the draft. False when the service did not take it: the text is the draft
     // again, with the reason.
     async send(): Promise<boolean> {
-      const text = state.draft;
+      const rawDraft = state.draft;
+      const quotes = state.quotes;
+      const text = composeWithQuotes(rawDraft, quotes);
       const attachments = state.attachments;
       const project = state.focus?.project;
       if ((text.trim() === '' && attachments.length === 0) || state.sending !== null) return false;
@@ -462,7 +507,8 @@ export function createLive({
       }
       drafts.delete(project);
       draftAttachments.delete(project);
-      set({ sending: text, sendingAttachments: attachments, draft: '', attachments: [], refused: null, error: null });
+      draftQuotes.delete(project);
+      set({ sending: text, sendingAttachments: attachments, draft: '', attachments: [], quotes: [], refused: null, error: null });
       const attachmentIds = attachments.map((file) => file.id);
       const mine = { project, text, attachmentIds, row: null as string | null };
       unanswered = mine;
@@ -483,8 +529,10 @@ export function createLive({
         if (unanswered === mine) unanswered = undefined;
         // Ahead of anything begun meanwhile from another page: neither text nor attachments are lost.
         // Back in that project's box, ahead of anything typed there since.
-        const back = [text, state.focus?.project === project ? state.draft : drafts.get(project) ?? ''].filter(Boolean).join('\n');
+        const back = [rawDraft, state.focus?.project === project ? state.draft : drafts.get(project) ?? ''].filter(Boolean).join('\n');
         const currentAttachments = state.focus?.project === project ? state.attachments : draftAttachments.get(project) ?? [];
+        const currentQuotes = state.focus?.project === project ? state.quotes : draftQuotes.get(project) ?? [];
+        const mergedQuotes = [...quotes, ...currentQuotes].slice(0, MAX_COMPOSER_QUOTES);
         const mergedAttachments: ProjectFileSummary[] = [];
         for (const item of [...attachments, ...currentAttachments]) {
           if (!mergedAttachments.some((existing) => existing.id === item.id) && mergedAttachments.length < MAX_ATTACHMENTS) {
@@ -493,10 +541,12 @@ export function createLive({
         }
         if (state.focus?.project === project) {
           if (mergedAttachments.length > 0) draftAttachments.set(project, mergedAttachments);
-          set({ sending: null, sendingAttachments: [], draft: back, attachments: mergedAttachments, refused: messageOf(err) });
+          if (mergedQuotes.length > 0) draftQuotes.set(project, mergedQuotes);
+          set({ sending: null, sendingAttachments: [], draft: back, attachments: mergedAttachments, quotes: mergedQuotes, refused: messageOf(err) });
         } else {
           drafts.set(project, back);
           if (mergedAttachments.length > 0) draftAttachments.set(project, mergedAttachments);
+          if (mergedQuotes.length > 0) draftQuotes.set(project, mergedQuotes);
           refusals.set(project, messageOf(err));
           set({ sending: null, sendingAttachments: [] });
         }

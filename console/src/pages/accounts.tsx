@@ -28,6 +28,7 @@ import { Input } from '@/components/ui/input';
 import { Menu, MenuContent, MenuItem, MenuTrigger } from '@/components/ui/menu';
 import { EARLIER_CHANGE, useChange } from '@/hooks/use-change';
 import { ApiError, del, messageOf, post, put } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { accountsQuery, LOGINS_CHANGE } from '@/lib/queries';
 import { machineLoginPath, machineLoginStanding } from '@/lib/machines';
 import {
@@ -995,6 +996,7 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft,
 type Taken = (accounts: Account[], answer: unknown) => Account[];
 
 export function AccountsPage() {
+  const { t, bi } = useI18n();
   const { data, isPending, error } = useQuery(accountsQuery);
   const [query] = useSearchParams();
   const focus = query.get('login');
@@ -1609,11 +1611,11 @@ export function AccountsPage() {
 
   return (
     <Page
-      title="账号"
+      title={t('accounts.title')}
       width="wide"
       loading={isPending}
       failure={error?.message}
-      actions={data ? <Button variant="primary" disabled={busy} onClick={() => setAdding(true)}><Plus />{ADD}</Button> : undefined}
+      actions={data ? <Button variant="primary" disabled={busy} onClick={() => setAdding(true)}><Plus />{t('accounts.addAccount')}</Button> : undefined}
     >
       {data ? (
         <>
@@ -1621,7 +1623,7 @@ export function AccountsPage() {
 
           {allRows.length > 0 ? (
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div role="tablist" aria-label="账号视图切换" className="inline-flex items-center rounded-lg border border-border bg-muted/70 p-0.5 text-xs">
+              <div role="tablist" aria-label={bi('账号视图切换', 'Accounts view')} className="inline-flex items-center rounded-lg border border-border bg-muted/70 p-0.5 text-xs">
                 <button
                   type="button"
                   role="tab"
@@ -1634,7 +1636,7 @@ export function AccountsPage() {
                       : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
-                  {`账号池 · ${logicalEntries.length}`}
+                  {`${t('accounts.tabPool')} · ${logicalEntries.length}`}
                 </button>
                 <button
                   type="button"
@@ -1649,7 +1651,7 @@ export function AccountsPage() {
                   )}
                 >
                   <SlidersHorizontal className="size-3.5" aria-hidden="true" />
-                  派发策略（优先级槽）
+                  {t('accounts.tabPolicy')}
                 </button>
               </div>
 
@@ -1659,14 +1661,14 @@ export function AccountsPage() {
                   onClick={() => setActiveTab('policy')}
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-raised px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
                 >
-                  <span>决策档 P1：</span>
+                  <span>{bi('决策档 P1：', 'Decide P1: ')}</span>
                   <strong className="font-medium text-foreground">{decideP1Names.join(' + ')}</strong>
-                  <span className="text-primary">调整 →</span>
+                  <span className="text-primary">{bi('调整 →', 'Edit →')}</span>
                 </button>
               ) : null}
             </div>
           ) : (
-            <PageLead className="mb-3">一处添加并统一保管账号，项目放行的所有在线机器共用；额度耗尽时按策略自动切换。</PageLead>
+            <PageLead className="mb-3">{bi('一处添加并统一保管账号，项目放行的所有在线机器共用；额度耗尽时按策略自动切换。', 'Manage shared accounts in one place across online machines with automatic quota failover.')}</PageLead>
           )}
 
           {allRows.length === 0 ? (

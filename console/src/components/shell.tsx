@@ -2,7 +2,7 @@
 // the banners that say the service is not in its normal state, and one place for an
 // action's failure.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Monitor, Moon, Pause, Plus, Search, Sun, X } from 'lucide-react';
+import { Languages, Monitor, Moon, Pause, Plus, Search, Sun, X } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router';
 import { bannerNotes, PROJECT_PAUSED_LABEL, restoreHeadline, WORK_GROUPS, workGroup, type BannerNote } from '@shared/labels.ts';
@@ -22,7 +22,8 @@ import { ThemeSkinPicker } from '@/components/theme-skin-picker';
 import { Button } from '@/components/ui/button';
 import { Tooltip } from '@/components/ui/menu';
 import { Segmented } from '@/components/ui/segmented';
-import { messageOf, post } from '@/lib/api';
+import { messageOf, post, put } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { useLive, useLiveState } from '@/lib/live-context';
 import { activeProjects, archivedProjectIds } from '@/lib/projects';
 import { PAGE, overviewQuery, projectsQuery, stateQuery, tasksQuery } from '@/lib/queries';
@@ -122,20 +123,21 @@ function Brand() {
   );
 }
 
-function PlaceLink({ place: { to, title, icon: Icon }, count, countLabel, subtle, onNavigate }: {
+function PlaceLink({ place: { to, titleKey, icon: Icon }, count, countLabel, subtle, onNavigate }: {
   place: Place;
   count?: number;
   countLabel?: string;
   subtle?: boolean;
   onNavigate: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <NavLink to={to} end={to === '/'} onClick={onNavigate} className={SIDE_ITEM}>
       <Icon className="size-4 flex-none group-aria-[current=page]/side:text-primary" strokeWidth={1.75} aria-hidden="true" />
-      <span className="min-w-0 flex-1 truncate">{title}</span>
+      <span className="min-w-0 flex-1 truncate">{t(titleKey)}</span>
       {count ? (
         <span
-          aria-label={countLabel ?? `${count} 件等你`}
+          aria-label={countLabel ?? t('nav.waitingCount', { count })}
           className={cn(
             'rounded-full px-1.5 text-xs leading-[18px] font-semibold tabular-nums',
             subtle ? 'bg-waiting-soft text-waiting-foreground' : 'bg-waiting text-ink-foreground',
@@ -151,8 +153,13 @@ function PlaceLink({ place: { to, title, icon: Icon }, count, countLabel, subtle
 // A project in the side column: its name, and at a glance whether something of it waits
 // for the owner (amber, with how many) or is moving (blue); a paused one is muted, with a mark.
 function ProjectLink({ project, onNavigate }: { project: Project; onNavigate: () => void }) {
+  const { t } = useI18n();
   const paused = project.paused_at != null;
-  const state = `${paused ? `${PROJECT_PAUSED_LABEL} · ` : ''}在进行 ${project.moving} · 等你 ${project.waiting}`;
+  const state = t('nav.projectState', {
+    paused: paused ? `${PROJECT_PAUSED_LABEL} · ` : '',
+    moving: project.moving,
+    waiting: project.waiting,
+  });
   return (
     <NavLink to={`/projects/${encodeURIComponent(project.id)}`} onClick={onNavigate} title={state} className={SIDE_ITEM}>
       <ProjectMark name={project.name} className="-ml-0.5" />
@@ -239,13 +246,20 @@ const THEME_ICONS = { system: Monitor, light: Sun, dark: Moon };
 
 // The scheme is this browser's, not the service's: it is stored here and nowhere else.
 function ThemeSwitch() {
+  const { t } = useI18n();
   const [choice, setChoice] = useState<ThemeChoice>(readTheme);
+  const labels: Record<ThemeChoice, string> = {
+    system: t('nav.themeSystem'),
+    light: t('nav.themeLight'),
+    dark: t('nav.themeDark'),
+  };
   return (
     <Segmented
-      label="深浅色"
+      label={t('nav.themeSwitchLabel')}
       value={choice}
-      options={THEME_CHOICES.map(({ value, label }) => {
+      options={THEME_CHOICES.map(({ value }) => {
         const Icon = THEME_ICONS[value];
+        const label = labels[value];
         return { value, title: label, label: <><Icon className="size-3.5" aria-hidden="true" /><span className="sr-only">{label}</span></> };
       })}
       className="flex-none flex-nowrap [&>label]:px-1.5"
@@ -257,7 +271,35 @@ function ThemeSwitch() {
   );
 }
 
+function LanguageSwitch() {
+  const { locale, setLocale, t } = useI18n();
+  const client = useQueryClient();
+  const next = locale === 'en' ? 'zh-CN' : 'en';
+  function toggle(): void {
+    setLocale(next);
+    void put('/api/settings/ui.locale', { value: next })
+      .then(() => client.invalidateQueries({ queryKey: stateQuery.queryKey }))
+      .catch(() => { /* local preference remains applied */ });
+  }
+  return (
+    <Tooltip text={t('common.switchLanguage')}>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        type="button"
+        aria-label={t('common.switchLanguage')}
+        onClick={toggle}
+        className="h-7 w-auto gap-0.5 px-1.5 font-mono text-2xs text-muted-foreground hover:text-foreground"
+      >
+        <Languages className="size-3.5" aria-hidden="true" />
+        <span>{locale === 'en' ? 'EN' : '中'}</span>
+      </Button>
+    </Tooltip>
+  );
+}
+
 export function Shell() {
+  const { locale, setLocale, t } = useI18n();
   const location = useLocation();
   const live = useLive();
   const { connected, lastUpdate, error } = useLiveState();
@@ -265,6 +307,14 @@ export function Shell() {
   const { data: service, isError: stateFailed } = useQuery(stateQuery);
   const { data: projects } = useQuery(projectsQuery);
   const { data: overview } = useQuery(overviewQuery);
+  const lastServerLocale = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!service?.locale) return;
+    if (lastServerLocale.current !== service.locale) {
+      lastServerLocale.current = service.locale;
+      if (service.locale !== locale) setLocale(service.locale);
+    }
+  }, [service?.locale, locale, setLocale]);
   // Only the ones in sight: an archived project is in its own list on the projects page.
   const shownProjects = activeProjects(projects ?? []);
   const archivedCount = (projects ?? []).filter((project) => project.archived_at != null).length;
@@ -334,7 +384,7 @@ export function Shell() {
   const knowledgeAwaiting = overview?.counts.knowledge_awaiting ?? 0;
   const pendingJoins = overview?.counts.pending_joins ?? 0;
   const notes: BannerNote[] = [
-    ...(!connected && lastUpdate ? [{ text: `已断开，上次更新 ${formatTime(lastUpdate)}` }] : []),
+    ...(!connected && lastUpdate ? [{ text: t('nav.disconnected', { at: formatTime(lastUpdate) }) }] : []),
     ...(service ? bannerNotes({
       dispatch: { degraded: Boolean(service.dispatch.degraded), recovering: Boolean(service.dispatch.recovering), paused: service.dispatch.paused ?? null },
       router: service.router,
@@ -369,18 +419,18 @@ export function Shell() {
           className="flex min-h-hit items-center gap-2 rounded-md bg-raised px-2 text-sm text-faint shadow-card transition-colors duration-100 hover:text-muted-foreground"
         >
           <Search className="size-4 flex-none" aria-hidden="true" />
-          <span className="flex-1 text-left">搜索或跳转</span>
+          <span className="flex-1 text-left">{t('nav.searchOrJump')}</span>
           <kbd className="rounded-xs border border-border px-1 font-sans text-2xs">{MAC ? '⌘K' : 'Ctrl K'}</kbd>
         </button>
         <div className="-mr-1 flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto pr-1">
-          <nav aria-label="视图" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px">
+          <nav aria-label={t('nav.views')} className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px">
             {WORK_PLACES.map((place) => <PlaceLink key={place.to} place={place} onNavigate={shut} {...(place.to === '/' ? { count: waiting } : {})} />)}
           </nav>
-          <nav aria-label="项目" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px">
+          <nav aria-label={t('nav.projects')} className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px">
             <div className="flex min-h-7 items-center justify-between pr-0.5 pl-2">
-              <Link to="/projects" onClick={shut} className="text-xs font-medium text-faint no-underline hover:text-foreground">项目</Link>
-              <Tooltip text="新建项目">
-                <Button variant="ghost" size="icon-sm" aria-label="新建项目" className="size-6 min-h-0" onClick={() => { shut(); setCreating(true); }}><Plus className="size-3.5" /></Button>
+              <Link to="/projects" onClick={shut} className="text-xs font-medium text-faint no-underline hover:text-foreground">{t('nav.projects')}</Link>
+              <Tooltip text={t('nav.newProject')}>
+                <Button variant="ghost" size="icon-sm" aria-label={t('nav.newProject')} className="size-6 min-h-0" onClick={() => { shut(); setCreating(true); }}><Plus className="size-3.5" /></Button>
               </Tooltip>
             </div>
             {shownProjects.map((project) => {
@@ -425,30 +475,30 @@ export function Shell() {
                 onClick={shut}
                 className="flex items-center justify-between rounded-md px-2 py-1 text-xs text-faint no-underline transition-colors duration-100 hover:bg-hover hover:text-foreground"
               >
-                <span>已归档项目</span>
+                <span>{t('nav.archivedProjects')}</span>
                 <span className="tabular-nums">{archivedCount}</span>
               </Link>
             ) : null}
             {projects && projects.length === 0 ? (
               <button type="button" onClick={() => { shut(); setCreating(true); }} className="rounded-md px-2 py-1.5 text-left text-xs text-faint hover:bg-hover hover:text-foreground">
-                还没有项目。建一个，就能和它的负责人说话。
+                {t('nav.noProjectsYet')}
               </button>
             ) : null}
             {projects && projects.length > 0 && shownProjects.length === 0 ? (
               <Link to="/projects" onClick={shut} className="rounded-md px-2 py-1.5 text-left text-xs text-faint no-underline hover:bg-hover hover:text-foreground">
-                项目都归档了：到项目列表恢复。
+                {t('nav.allProjectsArchived')}
               </Link>
             ) : null}
           </nav>
-          <nav aria-label="配置" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px">
-            <p className="flex min-h-7 items-center px-2 text-xs font-medium text-faint">配置</p>
+          <nav aria-label={t('nav.setup')} className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px">
+            <p className="flex min-h-7 items-center px-2 text-xs font-medium text-faint">{t('nav.setup')}</p>
             {SETUP_PLACES.map((place) => (
               <PlaceLink
                 key={place.to}
                 place={place}
                 onNavigate={shut}
                 {...(place.to === '/knowledge' && knowledgeAwaiting > 0
-                  ? { count: knowledgeAwaiting, countLabel: `${knowledgeAwaiting} 条知识待定`, subtle: true }
+                  ? { count: knowledgeAwaiting, countLabel: t('nav.knowledgeAwaiting', { count: knowledgeAwaiting }), subtle: true }
                   : {})}
               />
             ))}
@@ -465,8 +515,8 @@ export function Shell() {
               <Admit />
               {pendingJoins > 0 ? (
                 <span
-                  aria-label={`${pendingJoins} 台机器待放行`}
-                  title={`${pendingJoins} 台机器待放行`}
+                  aria-label={t('nav.pendingMachines', { count: pendingJoins })}
+                  title={t('nav.pendingMachines', { count: pendingJoins })}
                   className="pointer-events-none absolute -top-0.5 -right-0.5 flex min-w-4 items-center justify-center rounded-full bg-waiting px-1 text-2xs leading-4 font-semibold text-ink-foreground tabular-nums"
                 >
                   {pendingJoins}
@@ -475,6 +525,7 @@ export function Shell() {
             </div>
             <DeviceLogin />
             <span className="flex-1" />
+            <LanguageSwitch />
             <ThemeSkinPicker />
             <ThemeSwitch />
           </div>
@@ -492,7 +543,7 @@ export function Shell() {
             <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-4">
               <div className="pointer-events-auto flex max-w-[560px] items-start gap-2 rounded-lg border border-failed-border bg-raised py-2 pr-1.5 pl-3.5 text-sm shadow-pop">
                 <p role="alert" className="min-w-0 flex-1 py-0.5 text-destructive wrap-anywhere">{error}</p>
-                <Button variant="ghost" size="icon-sm" aria-label="知道了" onClick={() => live.showError(null)}><X /></Button>
+                <Button variant="ghost" size="icon-sm" aria-label={t('common.gotIt')} onClick={() => live.showError(null)}><X /></Button>
               </div>
             </div>
           ) : null}

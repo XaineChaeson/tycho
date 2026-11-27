@@ -1,3 +1,4 @@
+import type { Locale } from '@shared/i18n.ts';
 import type {OutputCapacity} from '@shared/node-output.ts';
 import type { ReportDescriptor } from '@shared/report.ts';
 export type { ReportDescriptor } from '@shared/report.ts';
@@ -504,6 +505,7 @@ interface GatewayState {
 export interface ServiceState {
   // Absent when talking to a service from before the page-refresh notice.
   version?: string;
+  locale?: Locale;
   dispatch: Dispatch;
   router: RouterState;
   channels?: { wecom?: WecomState | null; weixin?: WeixinChannelState | null } | null;

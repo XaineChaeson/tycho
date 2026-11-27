@@ -1,7 +1,8 @@
 // Logical-account Routing Matrix (P1 primary load-balanced, P2 fallback, off excluded) shared by
 // AccountsPage (global defaults + Dispatch Simulator) and ProjectSettings (per-project overrides).
-import { ChevronDown, Layers, SlidersHorizontal } from 'lucide-react';
+import { ArrowDown, ChevronDown, Layers, SlidersHorizontal } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
+import { tierDisplayLabel } from '@shared/labels.ts';
 import { TIERS, tierValueFrom, type TierId } from '@shared/tiers.ts';
 import {
   deriveEffectiveTierSlots,
@@ -14,6 +15,7 @@ import {
 import { latestQuota } from '@shared/usage.ts';
 import { formatProviderName, formatSpecialQuotaLabel } from '@/components/account-quota-popover';
 import { Dot, Problem } from '@/components/bits';
+import { useI18n } from '@/lib/i18n';
 import type { Account, AccountsAndMachines, Machine, MachineLogin } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
@@ -272,6 +274,7 @@ export function DispatchSlotsPanel({
   ariaLabel?: string;
   hint?: ReactNode;
 }) {
+  const { locale, t, bi } = useI18n();
   const [simOpen, setSimOpen] = useState(false);
   const [simTier, setSimTier] = useState<TierId>('decide');
   const [simMachine, setSimMachine] = useState<string>('any');
@@ -366,9 +369,9 @@ export function DispatchSlotsPanel({
           'hidden items-center gap-2 border-b border-border bg-muted/55 px-4 py-2 text-xs font-medium text-muted-foreground sm:grid',
           compact ? 'grid-cols-[minmax(0,1fr)_112px_112px_112px]' : 'grid-cols-[minmax(0,1fr)_128px_128px_128px]',
         )}>
-          <span>逻辑账号 / 渠道</span>
+          <span>{t('slots.headerAccount')}</span>
           {TIERS.map((tier) => (
-            <span key={tier.id} className="text-center">{tier.label}</span>
+            <span key={tier.id} className="text-center">{tierDisplayLabel(tier.id, locale)}</span>
           ))}
         </div>
 
@@ -456,9 +459,24 @@ export function DispatchSlotsPanel({
           <p className="px-4 py-4 text-xs text-muted-foreground">暂无可用的登录或渠道。</p>
         )}
 
-        {/* Built-in Live Effective Topology Footer */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-muted/40 px-4 py-2.5 text-xs">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        {/* Built-in Live Effective Topology Footer — 3-column tier-aligned cards */}
+        <div className="space-y-3 border-t border-border bg-muted/35 px-4 py-3 text-xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-medium text-muted-foreground">{t('slots.effectiveTitle')}</span>
+            {showSim ? (
+              <button
+                type="button"
+                aria-expanded={simOpen}
+                onClick={() => setSimOpen((prev) => !prev)}
+                className="inline-flex flex-none cursor-pointer items-center gap-1 text-xs font-medium text-primary hover:underline"
+              >
+                {simOpen ? t('slots.simClose') : t('slots.simOpen')}
+                <ChevronDown aria-hidden="true" className={cn('size-3.5 transition-transform duration-150', simOpen && 'rotate-180')} />
+              </button>
+            ) : null}
+          </div>
+
+          <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3">
             {TIERS.map((tier) => {
               const s = slotsByTier[tier.id];
               const p1 = s.p1
@@ -469,41 +487,73 @@ export function DispatchSlotsPanel({
                 .map((k) => entryMap.get(k))
                 .filter((e): e is LogicalAccountEntry => e !== undefined && (!showTierSupport || e.supportedTiers[tier.id]))
                 .map((e) => e.name);
+              const tierTitle = tierDisplayLabel(tier.id, locale);
+              const modeLabel = p1.length >= 2
+                ? t('slots.modeBalanced', { count: p1.length })
+                : p1.length === 1
+                  ? t('slots.modeSingle')
+                  : t('slots.modeEmpty');
               return (
-                <div key={tier.id} role="region" aria-label={`${tier.label}派发槽位`} className="inline-flex flex-wrap items-center gap-1.5">
-                  <span className="font-medium text-muted-foreground">{tier.label}</span>
-                  {p1.length > 0 ? (
-                    <span className="rounded border border-brand-border bg-brand-soft px-1.5 py-0.5 font-medium text-brand-foreground">
-                      {p1.join(' + ')}
-                      {p1.length >= 2 ? <span className="ml-1 text-2xs opacity-80">均衡</span> : null}
+                <div
+                  key={tier.id}
+                  role="region"
+                  aria-label={bi(`${tier.label}派发槽位`, `${tierTitle} dispatch slots`)}
+                  className="flex flex-col gap-2 rounded-lg border border-border/80 bg-raised/90 p-2.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-foreground">{tierTitle}</span>
+                    <span className={cn(
+                      'rounded-full px-1.5 py-0.5 text-2xs font-medium',
+                      p1.length >= 2
+                        ? 'bg-brand-soft text-brand-foreground'
+                        : 'bg-muted text-muted-foreground',
+                    )}>
+                      {modeLabel}
                     </span>
-                  ) : (
-                    <span className="text-faint">无主力</span>
-                  )}
-                  {p2.length > 0 ? (
-                    <>
-                      <span className="text-faint" aria-hidden="true">→</span>
-                      <span className="rounded border border-waiting-border bg-waiting-soft px-1.5 py-0.5 text-waiting-foreground">
-                        {p2.join(' + ')}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className="mr-0.5 flex-none font-mono text-2xs font-semibold text-primary">P1</span>
+                      {p1.length > 0 ? (
+                        p1.map((name) => (
+                          <span
+                            key={name}
+                            className="max-w-full truncate rounded border border-brand-border bg-brand-soft px-1.5 py-0.5 font-medium text-brand-foreground"
+                            title={name}
+                          >
+                            {name}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-2xs text-faint">{t('slots.noPrimary')}</span>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1 border-t border-border/50 pt-1.5">
+                      <span className="mr-0.5 inline-flex flex-none items-center gap-0.5 font-mono text-2xs text-muted-foreground">
+                        <ArrowDown className="size-2.5 text-faint" aria-hidden="true" />
+                        P2
                       </span>
-                    </>
-                  ) : null}
+                      {p2.length > 0 ? (
+                        p2.map((name) => (
+                          <span
+                            key={name}
+                            className="max-w-full truncate rounded border border-waiting-border bg-waiting-soft px-1.5 py-0.5 text-waiting-foreground"
+                            title={name}
+                          >
+                            {name}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-2xs text-faint">{t('slots.noFallback')}</span>
+                      )}
+                    </div>
+                  </div>
                 </div>
               );
             })}
           </div>
-
-          {showSim ? (
-            <button
-              type="button"
-              aria-expanded={simOpen}
-              onClick={() => setSimOpen((prev) => !prev)}
-              className="inline-flex flex-none cursor-pointer items-center gap-1 text-xs font-medium text-primary hover:underline"
-            >
-              {simOpen ? '收起模拟' : '测试派发模拟'}
-              <ChevronDown aria-hidden="true" className={cn('size-3.5 transition-transform duration-150', simOpen && 'rotate-180')} />
-            </button>
-          ) : null}
         </div>
       </div>
 

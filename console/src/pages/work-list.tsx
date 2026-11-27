@@ -15,6 +15,7 @@ import { Option, Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { WorkRow } from '@/components/work-row';
 import { api } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { activeProjects, archivedProjectIds } from '@/lib/projects';
 import { PAGE, projectsQuery, tasksQuery } from '@/lib/queries';
 import type { EndedWorks, Project } from '@/lib/types';
@@ -24,10 +25,11 @@ const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 250;
 
 function Tabs({ ended }: { ended: boolean }) {
+  const { bi } = useI18n();
   return (
     <PageTabs
-      label="哪些工作"
-      tabs={[{ to: '/work', label: '在办', current: !ended }, { to: '/work?show=ended', label: '已结束', current: ended }]}
+      label={bi('哪些工作', 'Work filter')}
+      tabs={[{ to: '/work', label: bi('在办', 'Active'), current: !ended }, { to: '/work?show=ended', label: bi('已结束', 'Finished'), current: ended }]}
     />
   );
 }
@@ -182,12 +184,13 @@ function Ended({ projects }: { projects: readonly Project[] }) {
 }
 
 export function WorkListPage() {
+  const { t } = useI18n();
   const [params] = useSearchParams();
   const { data: projects } = useQuery(projectsQuery);
   const ended = params.get('show') === 'ended';
   return (
     <>
-      <PageBar title="工作"><Tabs ended={ended} /></PageBar>
+      <PageBar title={t('work.title')}><Tabs ended={ended} /></PageBar>
       {ended ? <Ended projects={projects ?? []} /> : <Open projects={projects ?? []} />}
     </>
   );

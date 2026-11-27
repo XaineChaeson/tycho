@@ -19,6 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/segmented';
 import { api, messageOf, post } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { PAGE } from '@/lib/queries';
 import {
   DIMENSIONS, DRAWN, RANGES, axisLabel, dayLabel, daysOf, formatDuration, formatTokens, formatUsd, metricOf, niceMax, rangeOf, summarize, tokensOf, usagePath,
@@ -59,6 +60,7 @@ const METRICS: readonly { value: Metric; label: string; title: string }[] = [
 const showMetric = (value: number, metric: Metric): string => (metric === 'tokens' ? formatTokens(value) : formatUsd(value));
 
 export function UsagePage() {
+  const { t, bi } = useI18n();
   const client = useQueryClient();
   const quota = useQuery(quotaQuery);
   const [days, setDays] = useState<Range>(7);
@@ -92,31 +94,31 @@ export function UsagePage() {
 
   return (
     <Page
-      title="用量"
+      title={t('usage.title')}
       width="wide"
       loading={quota.isPending && usage.isPending}
       failure={quota.error ? messageOf(quota.error) : undefined}
       actions={(
-        <Button size="sm" disabled={!readable || refresh.isPending || reading} title={readable ? '刷新所有可读取的登录，会用掉一点点额度' : '没有可以读取额度的登录'} onClick={() => refresh.mutate({ all: true })}>
+        <Button size="sm" disabled={!readable || refresh.isPending || reading} title={readable ? bi('刷新所有可读取的登录，会用掉一点点额度', 'Refresh all readable logins (uses minimal quota)') : bi('没有可以读取额度的登录', 'No logins with readable quota')} onClick={() => refresh.mutate({ all: true })}>
           <RefreshCw className={cn(refreshingAll || reading ? 'animate-spin motion-reduce:animate-none' : undefined)} />
-          {refreshingAll || reading ? QUOTA_TEXT.refreshing : '刷新额度'}
+          {refreshingAll || reading ? bi(QUOTA_TEXT.refreshing, 'Refreshing') : bi('刷新额度', 'Refresh quota')}
         </Button>
       )}
     >
-      <PageLead>各个登录还剩多少额度，以及每一轮执行、负责人每个回合用掉了多少。</PageLead>
+      <PageLead>{bi('各个登录还剩多少额度，以及每一轮执行、负责人每个回合用掉了多少。', 'Remaining quota per login and token spend across worker rounds and router turns.')}</PageLead>
       {failure ? <Problem role="alert" className="mb-3">{failure}</Problem> : null}
 
       <section aria-labelledby="quota-title" className="mb-9">
-        <SectionTitle id="quota-title">剩余额度</SectionTitle>
+        <SectionTitle id="quota-title">{bi('剩余额度', 'Remaining quota')}</SectionTitle>
         {quota.data ? <QuotaList page={quota.data} pending={refresh.isPending ? refresh.variables : undefined} onRefresh={(id) => refresh.mutate({ login_id: id })} /> : null}
       </section>
 
       <section aria-labelledby="spend-title">
         <SectionTitle
           id="spend-title"
-          action={<Segmented label="时间范围" value={String(days)} options={RANGES.map((value) => ({ value: String(value), label: `${value} 天` }))} onChange={(value) => setDays(Number(value) as Range)} />}
+          action={<Segmented label={bi('时间范围', 'Time range')} value={String(days)} options={RANGES.map((value) => ({ value: String(value), label: bi(`${value} 天`, `${value}d`) }))} onChange={(value) => setDays(Number(value) as Range)} />}
         >
-          消耗
+          {bi('消耗', 'Spend')}
         </SectionTitle>
         {usage.error ? <Problem role="alert">{messageOf(usage.error)}</Problem> : null}
         {usage.data ? (

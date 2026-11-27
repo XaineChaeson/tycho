@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomInt, scrypt, scryptSync, timingSafeEqual } from 'node:crypto';
+import { getActiveLocale, type Locale } from '../shared/i18n.ts';
 import { InputError } from './errors.ts';
 import type { ConsoleSession, Ctx, Ledger } from './ledger.ts';
 import { passphraseSecretFile, putSecret, readSecret, removeSecret } from './secrets.ts';
@@ -403,9 +404,9 @@ function escapeHtml(text: string): string {
 const LOGIN_FAVICON = "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0'%20stop-color='%234A76F5'/%3E%3Cstop%20offset='1'%20stop-color='%231E44C8'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='64'%20height='64'%20rx='18'%20fill='url(%23g)'/%3E%3Cg%20transform='rotate(-24%2032%2033)'%3E%3Cpath%20d='M12%2033A20%209.5%200%201%201%2052%2033A20%209.5%200%200%201%2020%2040.8'%20fill='none'%20stroke='%23FFFFFF'%20stroke-opacity='0.44'%20stroke-width='3'%20stroke-linecap='round'/%3E%3C/g%3E%3Cpath%20d='M18.5%2021H45.5M32%2021V46'%20fill='none'%20stroke='%23FFFFFF'%20stroke-width='5.6'%20stroke-linecap='round'/%3E%3Ccircle%20cx='49.5'%20cy='28.5'%20r='3.6'%20fill='%23F8D06B'/%3E%3C/svg%3E";
 const LOGIN_MARK = `<svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true"><defs><linearGradient id="tycho-login-g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4A76F5"/><stop offset="1" stop-color="#1E44C8"/></linearGradient></defs><rect width="64" height="64" rx="18" fill="url(#tycho-login-g)"/><g transform="rotate(-24 32 33)"><path d="M12 33A20 9.5 0 1 1 52 33A20 9.5 0 0 1 20 40.8" fill="none" stroke="#FFFFFF" stroke-opacity="0.44" stroke-width="2.8" stroke-linecap="round"/></g><path d="M18.5 21H45.5M32 21V46" fill="none" stroke="#FFFFFF" stroke-width="5.4" stroke-linecap="round"/><circle cx="49.5" cy="28.5" r="3.5" fill="#F8D06B"/></svg>`;
 
-function page(body: string, refresh = false): string {
+function page(body: string, refresh = false, locale: Locale = getActiveLocale()): string {
   return `<!doctype html>
-<html lang="zh-CN">
+<html lang="${locale}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -465,57 +466,102 @@ function resolveImHint(hasIm: ImLoginHint): { wecom: boolean; weixin: boolean } 
   return { wecom: Boolean(hasIm.wecom), weixin: Boolean(hasIm.weixin) };
 }
 
-function imChannelNames(hasIm: ImLoginHint): string | null {
+function imChannelNames(hasIm: ImLoginHint, locale: Locale = getActiveLocale()): string | null {
   const { wecom, weixin } = resolveImHint(hasIm);
+  if (locale === 'en') {
+    if (wecom && weixin) return 'WeCom or WeChat';
+    if (wecom) return 'WeCom';
+    if (weixin) return 'WeChat';
+    return null;
+  }
   if (wecom && weixin) return '企业微信或微信';
   if (wecom) return '企业微信';
   if (weixin) return '微信';
   return null;
 }
 
-const loginGuidance = (hasIm: ImLoginHint): string => {
+const loginGuidance = (hasIm: ImLoginHint, locale: Locale = getActiveLocale()): string => {
+  if (locale === 'en') {
+    const command = process.env.TYCHO_STARTED_BY === 'tycho' ? 'tycho open' : 'npm run login-link';
+    const channels = imChannelNames(hasIm, 'en');
+    return channels
+      ? `Send 'login' to the bot in ${channels} for a link, or run ${command} on the host machine.`
+      : `Run ${command} on the host machine to open the console.`;
+  }
   const command = process.env.TYCHO_STARTED_BY === 'tycho' ? 'tycho open 打开控制台' : 'npm run login-link 获取链接';
   const { wecom, weixin } = resolveImHint(hasIm);
   if (wecom && weixin) return `请在企业微信或微信里私聊机器人发‘登录’获取链接，也可在本机运行 ${command}。`;
   if (weixin) return `请在微信里私聊机器人发‘登录’获取链接，也可在本机运行 ${command}。`;
   return wecom ? `请私聊机器人发‘登录’获取链接，也可在本机运行 ${command}。` : `请在服务所在电脑运行 ${command}。`;
 };
-const startDeviceLogin = '<form method="post" action="/login/device"><button>在这台设备上登录</button></form>';
-export const waitDeviceLoginPage = (request: DeviceLoginRequest, hasIm: ImLoginHint = false): string => {
-  const channels = imChannelNames(hasIm);
+const startDeviceLogin = (locale: Locale = getActiveLocale()): string =>
+  `<form method="post" action="/login/device"><button>${locale === 'en' ? 'Sign in on this device' : '在这台设备上登录'}</button></form>`;
+export const waitDeviceLoginPage = (request: DeviceLoginRequest, hasIm: ImLoginHint = false, locale: Locale = getActiveLocale()): string => {
+  const channels = imChannelNames(hasIm, locale);
+  const mins = Number(((request.expires_at - request.created_at) / MINUTE_MS).toFixed(1));
+  if (locale === 'en') {
+    return page(
+      `<h1>${request.code}</h1><p>Open the console on a signed-in device, click "Admit" in the sidebar, and enter this code.</p>
+  ${channels ? `<p>Or message the bot in ${channels}: login ${request.code}</p>` : ''}
+  <p>Valid for ${mins} minutes. This page will enter the console automatically once approved.</p>`, true, locale);
+  }
   return page(
     `<h1>${request.code}</h1><p>在已经登录的手机或电脑上打开控制台，点侧栏的“放行”，输入这个数。</p>
   ${channels ? `<p>或者在${channels}里私聊机器人发：登录 ${request.code}</p>` : ''}
-  <p>${Number(((request.expires_at - request.created_at) / MINUTE_MS).toFixed(1))} 分钟内有效，放行后这一页会自动进入控制台。</p>`, true);
+  <p>${mins} 分钟内有效，放行后这一页会自动进入控制台。</p>`, true, locale);
 };
-export const endedDeviceLoginPage = (rejected = false): string => page(`<h1>${rejected ? '这次登录没有被放行' : '登录请求已失效'}</h1>
+export const endedDeviceLoginPage = (rejected = false, locale: Locale = getActiveLocale()): string => locale === 'en'
+  ? page(`<h1>${rejected ? 'Sign-in was not approved' : 'Sign-in request expired'}</h1>
+  <p>${rejected ? 'This sign-in request was rejected.' : 'The request expired, was already used, or the service restarted.'} Please try again.</p>
+  <form method="post" action="/login/device"><button>Start over</button></form>`, false, locale)
+  : page(`<h1>${rejected ? '这次登录没有被放行' : '登录请求已失效'}</h1>
   <p>${rejected ? '已拒绝这次登录。' : '请求已过期、已经用过，或服务已重启。'}请重新开始。</p>
-  <form method="post" action="/login/device"><button>重新开始</button></form>`);
-export const deviceLoginFullPage = (): string => page('<h1>现在等着放行的设备太多，稍后再试</h1>');
+  <form method="post" action="/login/device"><button>重新开始</button></form>`, false, locale);
+export const deviceLoginFullPage = (locale: Locale = getActiveLocale()): string => page(
+  locale === 'en' ? '<h1>Too many pending device sign-ins. Try again shortly.</h1>' : '<h1>现在等着放行的设备太多，稍后再试</h1>',
+  false,
+  locale,
+);
 // No lifetime here: the one in force now need not be the one this link was sent under.
-export const deadLinkPage = (hasIm: ImLoginHint = false): string => page(`<h1>链接已失效或已经用过</h1><p>请重新获取。${loginGuidance(hasIm)}</p>${startDeviceLogin}`);
-export const tooManyPage = (): string => page('<h1>尝试次数太多</h1><p>请一分钟后再试。</p>');
+export const deadLinkPage = (hasIm: ImLoginHint = false, locale: Locale = getActiveLocale()): string => locale === 'en'
+  ? page(`<h1>This sign-in link has expired or was already used</h1><p>Request a new one. ${loginGuidance(hasIm, locale)}</p>${startDeviceLogin(locale)}`, false, locale)
+  : page(`<h1>链接已失效或已经用过</h1><p>请重新获取。${loginGuidance(hasIm, locale)}</p>${startDeviceLogin(locale)}`, false, locale);
+export const tooManyPage = (locale: Locale = getActiveLocale()): string => page(
+  locale === 'en' ? '<h1>Too many attempts</h1><p>Please wait a minute and try again.</p>' : '<h1>尝试次数太多</h1><p>请一分钟后再试。</p>',
+  false,
+  locale,
+);
 // A checkout whose console was never built: the service runs, there is only no page to show.
-export const notBuiltPage = (): string =>
-  page('<h1>控制台还没有构建：运行 npm run build:console</h1><p>在仓库目录运行这条命令，再刷新这一页。服务和接口照常在运行。</p>');
-export const enterPage = (hasIm: ImLoginHint = false, options?: { hasPassphrase?: boolean; error?: string }): string => {
+export const notBuiltPage = (locale: Locale = getActiveLocale()): string =>
+  page(
+    locale === 'en'
+      ? '<h1>Console not built yet: run npm run build:console</h1><p>Run this command in the repository directory, then refresh. The service and API are running normally.</p>'
+      : '<h1>控制台还没有构建：运行 npm run build:console</h1><p>在仓库目录运行这条命令，再刷新这一页。服务和接口照常在运行。</p>',
+    false,
+    locale,
+  );
+export const enterPage = (hasIm: ImLoginHint = false, options?: { hasPassphrase?: boolean; error?: string; locale?: Locale }): string => {
+  const locale = options?.locale ?? getActiveLocale();
+  const en = locale === 'en';
   const errorBanner = options?.error ? `<p class="alert" role="alert">${escapeHtml(options.error)}</p>` : '';
   const passphraseSection = options?.hasPassphrase
     ? `${errorBanner}
   <form id="passphrase-login" method="post" action="/login/passphrase">
-    <label class="label" for="passphrase-input">主人口令登录</label>
-    <input id="passphrase-input" type="password" name="passphrase" autocomplete="current-password" placeholder="输入主人口令" required>
-    <button type="submit">口令登录</button>
+    <label class="label" for="passphrase-input">${en ? 'Owner passphrase' : '主人口令登录'}</label>
+    <input id="passphrase-input" type="password" name="passphrase" autocomplete="current-password" placeholder="${en ? 'Enter passphrase' : '输入主人口令'}" required>
+    <button type="submit">${en ? 'Sign in with passphrase' : '口令登录'}</button>
   </form>
-  <div class="divider" role="separator"><span>其他登录方式</span></div>`
+  <div class="divider" role="separator"><span>${en ? 'Other sign-in methods' : '其他登录方式'}</span></div>`
     : errorBanner;
   const fallbackSection = `<div class="${options?.hasPassphrase ? 'other secondary' : 'other'}">
-  <form id="enter" method="post" action="/login"><input type="hidden" name="credential"><button disabled>进入</button></form>
-  <p id="link-status">需要 JavaScript 读取一次性链接；也可在下方请求设备放行。</p>
-  <noscript><p>浏览器未启用 JavaScript，请使用下面的设备放行。</p></noscript>
-  <p>${loginGuidance(hasIm)}</p>${startDeviceLogin}
+  <form id="enter" method="post" action="/login"><input type="hidden" name="credential"><button disabled>${en ? 'Enter' : '进入'}</button></form>
+  <p id="link-status">${en ? 'JavaScript is required to read a one-time link, or request device approval below.' : '需要 JavaScript 读取一次性链接；也可在下方请求设备放行。'}</p>
+  <noscript><p>${en ? 'JavaScript is disabled in your browser. Use device approval below.' : '浏览器未启用 JavaScript，请使用下面的设备放行。'}</p></noscript>
+  <p>${loginGuidance(hasIm, locale)}</p>${startDeviceLogin(locale)}
   </div>`;
-  return page(`<h1>进入 Tycho</h1>
+  const readyMsg = en ? 'Click Enter. This link can only be used once.' : '点击进入，链接只能使用一次。';
+  const missingMsg = en ? 'No valid one-time link found. Request a new one or use device approval.' : '没有可用的一次性链接，请重新获取，或使用设备放行。';
+  return page(`<h1>${en ? 'Sign in to Tycho' : '进入 Tycho'}</h1>
   ${passphraseSection}
   ${fallbackSection}
   <script>
@@ -528,10 +574,10 @@ export const enterPage = (hasIm: ImLoginHint = false, options?: { hasPassphrase?
       const match = /^#([0-9a-f]{64})$/.exec(location.hash);
       field.value = match ? match[1] : '';
       button.disabled = !match;
-      status.textContent = match ? '点击进入，链接只能使用一次。' : '没有可用的一次性链接，请重新获取，或使用设备放行。';
+      status.textContent = match ? ${JSON.stringify(readyMsg)} : ${JSON.stringify(missingMsg)};
     };
     addEventListener('hashchange', update);
     update();
   }
-  </script>`);
+  </script>`, false, locale);
 };

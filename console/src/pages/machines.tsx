@@ -24,6 +24,7 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from '@/components/ui/menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EARLIER_CHANGE, useChange } from '@/hooks/use-change';
 import { ApiError, del, messageOf, post, put } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { accountsQuery, executorUpdatesQuery, LOGINS_CHANGE, nodeJoinsQuery } from '@/lib/queries';
 import { formOf, loginSettingsBody, tierEditorOf, tierRefusal, type TierEditor } from '@/lib/accounts';
 import {
@@ -418,6 +419,7 @@ function removalQuestion(machine: Machine, keeps: boolean): { title: string; des
 }
 
 export function MachinesPage() {
+  const { t, bi } = useI18n();
   const isWide = useMediaQuery(WIDE_QUERY);
   const { data, isPending, error } = useQuery(accountsQuery);
   const { data: fleetStatus } = useQuery(executorUpdatesQuery);
@@ -840,16 +842,16 @@ export function MachinesPage() {
 
   return (
     <Page
-      title="机器"
+      title={t('machines.title')}
       width="wide"
       loading={isPending}
       failure={error?.message}
-      actions={data ? <Button variant="primary" onClick={() => setAdding(true)}><Plus />接入一台机器</Button> : undefined}
+      actions={data ? <Button variant="primary" onClick={() => setAdding(true)}><Plus />{t('machines.joinMachine')}</Button> : undefined}
     >
       {data ? (
         <>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div role="tablist" aria-label="机器视图切换" className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface/70 p-0.5">
+            <div role="tablist" aria-label={bi('机器视图切换', 'Machines view')} className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface/70 p-0.5">
               <button
                 type="button"
                 role="tab"
@@ -863,7 +865,7 @@ export function MachinesPage() {
                 )}
               >
                 <Server className="size-3.5" />
-                机器列表 · {data.machines.length}
+                {t('machines.tabList')} · {data.machines.length}
               </button>
               <button
                 type="button"
@@ -878,17 +880,17 @@ export function MachinesPage() {
                 )}
               >
                 <RefreshCw className={cn('size-3.5', activeCliUpdates > 0 && 'animate-spin')} />
-                CLI 更新
+                {t('machines.tabCli')}
                 {outdatedCliCount > 0 ? (
-                  <Badge tone="waiting" className="ml-0.5 px-1.5 py-0 text-[10px]">{outdatedCliCount} 落后</Badge>
+                  <Badge tone="waiting" className="ml-0.5 px-1.5 py-0 text-[10px]">{t('machines.behindBadge', { count: outdatedCliCount })}</Badge>
                 ) : activeCliUpdates > 0 ? (
-                  <Badge tone="plain" className="ml-0.5 px-1.5 py-0 text-[10px]">{activeCliUpdates} 进行中</Badge>
+                  <Badge tone="plain" className="ml-0.5 px-1.5 py-0 text-[10px]">{bi(`${activeCliUpdates} 进行中`, `${activeCliUpdates} running`)}</Badge>
                 ) : null}
               </button>
             </div>
             {fleetStatus?.policy.enabled ? (
               <span className="text-xs text-muted-foreground">
-                定时自动更新已启用 · 每 {fleetStatus.policy.intervalHours} 小时
+                {bi(`定时自动更新已启用 · 每 ${fleetStatus.policy.intervalHours} 小时`, `Auto update on · every ${fleetStatus.policy.intervalHours}h`)}
               </span>
             ) : null}
           </div>

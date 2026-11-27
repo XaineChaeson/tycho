@@ -1,4 +1,5 @@
 import {outputReport,releasesFor,policyOf} from './node-output.ts';
+import { normalizeLocale } from '../shared/i18n.ts';
 import { deviceLoginMissingText, joinMissingText, modelText, NEEDS_LOGIN_TEXT, RECENT_ENDED, WORK_GROUPS, workGroup } from '../shared/labels.ts';
 import { grantsOf } from '../shared/grants.ts';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -111,6 +112,7 @@ import type { ReplayConsole } from './replay-console.ts';
 import type { ClaudeLogin } from './claude-login.ts';
 import type { CodexLogin } from './codex-login.ts';
 import type { SignIns } from './sign-ins.ts';
+import type { SideAskContext, SideAskInput, SideAskResult, SideAskTurn } from './side-ask.ts';
 
 const MAX_BODY_BYTES = 1024 * 1024;
 // GitHub's own hook payloads go up to 25 MB, and its signature covers every byte: an inbound
@@ -430,6 +432,8 @@ export interface HttpOptions {
   models?: Pick<Models, 'state' | 'refresh' | 'reschedule'> & Partial<Pick<Models, 'readLine'>>;
   // Multi-machine CLI fleet updater (version drift check, idle-safe updates, scheduled policy).
   executorUpdates?: Pick<ExecutorUpdates, 'status' | 'refreshUpstream' | 'triggerUpdate' | 'setPolicy'>;
+  // Ephemeral read-only Side Ask runner for clarifying questions without mutating ledger history.
+  sideAsk?: (projectId: string, context: SideAskContext, input: SideAskInput) => Promise<SideAskResult>;
   // Asking an account's quota now (docs/design/usage.md §3). Absent in a service without it:
   // the figures are only those the rounds report, and the page says nothing can be asked.
   quota?: Pick<QuotaReads, 'refusal' | 'read' | 'readStale' | 'state'>;
@@ -1427,6 +1431,7 @@ export function createHttp(options: HttpOptions) {
     const reachable = dispatch.paused !== null;
     return {
       version: options.releases.version,
+      locale: normalizeLocale(options.settings.get('ui.locale')),
       dispatch,
       router: session.status(),
       active_runs: reachable ? ledger.listActiveRuns().length : null,
@@ -2429,6 +2434,50 @@ export function createHttp(options: HttpOptions) {
     const segment = ledger.newTopic(projectId, { actor: CONSOLE_ACTOR });
     session.kick();
     sendJson(response, 201, { segment: { id: segment.id, seq: segment.seq, state: segment.state, created_at: segment.created_at, closed_at: segment.closed_at } });
+  }
+
+  async function sideAskProject(request: IncomingMessage, response: ServerResponse, projectId: string): Promise<void> {
+    if (!options.sideAsk) throw new HttpError(503, '当前服务未启用临时追问功能');
+    const project = ledger.getProject(projectId);
+    const body = await readJson(request) as Record<string, unknown>;
+    const question = typeof body.question === 'string' ? body.question.trim() : '';
+    if (!question) throw new InputError('问题不能为空');
+    if (question.length > 4000) throw new InputError('临时追问内容过长（最多 4000 字符）');
+    let quote: { source?: string; excerpt: string } | undefined;
+    if (body.quote && typeof body.quote === 'object' && !Array.isArray(body.quote)) {
+      const qObj = body.quote as Record<string, unknown>;
+      const excerpt = typeof qObj.excerpt === 'string' ? qObj.excerpt.trim() : '';
+      if (excerpt) {
+        const source = typeof qObj.source === 'string' && qObj.source.trim() !== '' ? qObj.source.trim() : undefined;
+        quote = source ? { source, excerpt: excerpt.slice(0, 2000) } : { excerpt: excerpt.slice(0, 2000) };
+      }
+    }
+    const history: SideAskTurn[] = [];
+    if (Array.isArray(body.history)) {
+      for (const item of body.history.slice(-8)) {
+        if (!item || typeof item !== 'object') continue;
+        const role = (item as Record<string, unknown>).role;
+        const text = (item as Record<string, unknown>).text;
+        if ((role === 'user' || role === 'assistant') && typeof text === 'string' && text.trim() !== '') {
+          history.push({ role, text: text.trim().slice(0, 2000) });
+        }
+      }
+    }
+    const locale = body.locale === 'en' || body.locale === 'zh-CN'
+      ? body.locale
+      : normalizeLocale(options.settings.get('ui.locale'));
+    const segment = ledger.currentSegment(projectId);
+    const recentMessages = (segment ? ledger.listMessages({ segmentId: segment.id, limit: 12 }) : ledger.listMessages({ projectId, limit: 12 }))
+      .map((msg) => ({ direction: msg.direction, text: msg.text, created_at: msg.created_at }));
+    const recentTasks = ledger.listTasks({ projectId })
+      .slice(0, 8)
+      .map((t) => ({ id: t.id, title: t.title, state: t.state, summary: t.reason ?? null }));
+    const result = await options.sideAsk(
+      projectId,
+      { projectName: project.name, recentMessages, recentTasks },
+      { question, quote, history, locale },
+    );
+    sendJson(response, 200, result);
   }
 
   // ---- A project's triggers (docs/design/triggers.md §7). The definition is parsed by the ledger,
@@ -4372,6 +4421,7 @@ export function createHttp(options: HttpOptions) {
     { method: 'GET', path: '/api/projects/:id/files/:fileId/preview', outside: true, handle: ({ response, params, url }) => getProjectFilePreview(response, params[0]!, params[1]!, url) },
     { method: 'DELETE', path: '/api/projects/:id/files/:fileId', outside: true, handle: ({ response, params }) => deleteProjectFile(response, params[0]!, params[1]!) },
     { method: 'POST', path: '/api/projects/:id/new-topic', outside: true, handle: ({ response, params }) => newTopic(response, params[0]!) },
+    { method: 'POST', path: '/api/projects/:id/side-ask', outside: true, handle: ({ request, response, params }) => sideAskProject(request, response, params[0]!) },
     { method: 'POST', path: '/api/projects/:id/pause', outside: true, handle: ({ request, response, params }) => pauseProject(request, response, params[0]!) },
     { method: 'POST', path: '/api/projects/:id/archive', outside: true, handle: ({ request, response, params }) => archiveProject(request, response, params[0]!) },
     { method: 'DELETE', path: '/api/projects/:id', outside: true, handle: ({ request, response, params }) => deleteProject(request, response, params[0]!) },

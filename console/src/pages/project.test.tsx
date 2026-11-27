@@ -787,3 +787,59 @@ test('a project router failure from /api/state surfaces an alert banner with one
     expect(app.calls.some((c) => c.path === '/api/router/restart' && c.method === 'POST')).toBe(true);
   });
 });
+
+test('quoting a router message attaches it to the composer tray and submits a Markdown blockquote', async () => {
+  const { user, calls } = open('#/projects/p1', withMessages([
+    inbound('01', '测一下延迟'),
+    reply('02', '01', '深市全链路推送延迟 P50 为 9.4ms。'),
+  ]));
+
+  expect(await screen.findByText('深市全链路推送延迟 P50 为 9.4ms。')).toBeInTheDocument();
+  const quoteButtons = screen.getAllByRole('button', { name: '引用这段内容' });
+  await user.click(quoteButtons[1]!);
+
+  const tray = await screen.findByRole('region', { name: '已引用 1 段内容' });
+  expect(within(tray).getByText('负责人')).toBeInTheDocument();
+  expect(within(tray).getByText(/深市全链路推送延迟/)).toBeInTheDocument();
+
+  await user.type(box(), '沪市的分布呢？');
+  await user.click(screen.getByRole('button', { name: '发送' }));
+
+  await waitFor(() => {
+    const sent = calls.find((c) => c.path === '/api/messages' && c.method === 'POST');
+    expect(sent).toBeDefined();
+    expect((sent!.body as { text: string }).text).toBe(
+      '> **[负责人]** 深市全链路推送延迟 P50 为 9.4ms。\n\n沪市的分布呢？',
+    );
+  });
+});
+
+test('ephemeral Side Ask answers via /side-ask without touching /api/messages and can promote to main composer', async () => {
+  const { user, calls } = open('#/projects/p1', withMessages([
+    inbound('01', '看下本地盘暗坑'),
+  ], (call) => {
+    if (call.method === 'POST' && call.path === '/api/projects/p1/side-ask') {
+      return {
+        answer: '本地盘暗坑指的是离线 ClickHouse 元数据与临时 Merge 目录占用节点本地 SSD，而非 MinIO。',
+        executor: 'gemini',
+        duration_ms: 420,
+      };
+    }
+    return undefined;
+  }));
+
+  expect(await screen.findByText('看下本地盘暗坑')).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '临时追问' }));
+
+  const drawer = await screen.findByRole('dialog', { name: '临时追问' });
+  const input = within(drawer).getByRole('textbox', { name: '临时追问' });
+  await user.type(input, '本地盘暗坑具体指什么？{Enter}');
+
+  expect(await within(drawer).findByText(/离线 ClickHouse 元数据/)).toBeInTheDocument();
+  expect(calls.some((c) => c.path === '/api/messages')).toBe(false);
+  expect(calls.some((c) => c.path === '/api/projects/p1/side-ask')).toBe(true);
+
+  await user.click(within(drawer).getByRole('button', { name: '转入主对话' }));
+  const tray = await screen.findByRole('region', { name: '已引用 1 段内容' });
+  expect(within(tray).getByText(/离线 ClickHouse 元数据/)).toBeInTheDocument();
+});

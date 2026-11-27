@@ -2492,3 +2492,56 @@ test('renders failover banner, process/diff tab toggle, and large-paste collapsi
   expect(calls[0]!.path).toBe('/api/tasks/task/continue');
   expect((calls[0]!.body as { note: string }).note).toContain('LOG_LINE');
 });
+
+test('long router continuation instructions collapse by default with preview and expand to Markdown, while short inputs stay bubbles', async () => {
+  const longText = [
+    '主人认可阶段化开发路线，并提出三项具体的架构与基础设施追问。',
+    '',
+    '### 【三项必查清单】',
+    '1. 盘点全部与行情网关、逐笔和订单簿相关的仓库与部署位置；',
+    '2. 核查离线 ClickHouse 与团队集群 ClickHouse 的本地盘与 MinIO 差异；',
+    '3. 测算 10 档订单簿写入团队库在默认 LZ4 与 Delta+ZSTD 下的日增量与可用年限。',
+  ].join('\n');
+
+  open('#/task/task', site({
+    task: aTask({ state: 'running' }),
+    runs: [aRun({ id: 'r1', state: 'running', created_at: later(1) })],
+    inputs: [
+      { id: 'i-short', run_id: 'r1', text: '顺便把日志也查一下', state: 'bound', created_at: later(2) },
+      { id: 'i-long', run_id: 'r1', text: longText, state: 'bound', created_at: later(3) },
+    ],
+  }));
+
+  // Short input stays an expanded chat bubble (not inside a <details>).
+  const shortEl = await screen.findByText('顺便把日志也查一下');
+  expect(shortEl.closest('details')).toBeNull();
+
+  // Long input starts collapsed inside a <details> with a char-count badge and 1-line preview.
+  const badge = screen.getByText(`续派指令 · ${longText.length} 字`);
+  const details = badge.closest('details')!;
+  expect(details).not.toHaveAttribute('open');
+  expect(within(details).getByRole('heading', { name: '【三项必查清单】' })).toBeInTheDocument();
+});
+
+test('quoting a task report attaches to TaskComposer and submits a Markdown blockquote on /continue', async () => {
+  const { user, calls } = open('#/task/task', site({
+    task: aTask({ state: 'done' }),
+    runs: [ended({ id: 'r1', session_ref: 'sess-9', receipt: { status: 'done', summary: '已完成 10 档容量精算，LZ4 日增 4.2 GiB。', artifacts: [] } })],
+  }));
+
+  expect(await screen.findByText(/已完成 10 档容量精算/)).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: '引用这段内容' }));
+
+  const tray = await screen.findByRole('region', { name: '已引用 1 段内容' });
+  expect(within(tray).getByText('汇报')).toBeInTheDocument();
+
+  const box = screen.getByRole('textbox', { name: '继续发送指令' });
+  await user.type(box, '再对比一下 ZSTD(3) 压缩率');
+  await user.click(screen.getByRole('button', { name: '继续发送指令' }));
+
+  await waitFor(() => expect(calls).toHaveLength(1));
+  expect(calls[0]!.path).toBe('/api/tasks/task/continue');
+  expect((calls[0]!.body as { note: string }).note).toBe(
+    '> **[汇报]** 已完成 10 档容量精算，LZ4 日增 4.2 GiB。\n\n再对比一下 ZSTD(3) 压缩率',
+  );
+});

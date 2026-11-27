@@ -21,6 +21,7 @@ import type { ImChannel, ImChannelPermissions } from '../shared/im.ts';
 import { createWeixin, type Weixin } from './weixin.ts';
 import { createGitHubService } from './github.ts';
 import { createReplayConsole } from './replay-console.ts';
+import { runSideAsk } from './side-ask.ts';
 import { joinCard } from '../channels/wecom-cards.ts';
 import { latestMoment } from './pushes.ts';
 import { artifactsDroppedText } from '../shared/labels.ts';
@@ -1686,6 +1687,7 @@ export async function startService(options: ServiceOptions) {
       logins,
       models,
       executorUpdates,
+      sideAsk: async (projectId, context, input) => runSideAsk(await routerLaunch(projectId), context, input),
       quota: quotaReads,
       machines,
       nodes,

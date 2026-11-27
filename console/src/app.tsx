@@ -3,6 +3,8 @@ import { Component, useEffect, useState, type ReactNode } from 'react';
 import { HashRouter, Route, Routes, useParams } from 'react-router';
 import { Shell } from '@/components/shell';
 import { Button } from '@/components/ui/button';
+import { getActiveLocale } from '@shared/i18n.ts';
+import { I18nProvider, translate } from '@/lib/i18n';
 import { createLive } from '@/lib/live';
 import { LiveContext } from '@/lib/live-context';
 import { AccountsPage } from '@/pages/accounts';
@@ -50,21 +52,22 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBound
 
   render() {
     if (this.state.error) {
+      const loc = getActiveLocale();
       return (
         <div role="alert" className="flex min-h-screen items-center justify-center bg-canvas p-6 text-foreground">
           <div className="grid w-full max-w-md gap-4 rounded-xl border border-border bg-raised p-6 shadow-card">
             <div className="grid gap-1.5">
-              <h1 className="text-base font-semibold">页面渲染遇到异常</h1>
+              <h1 className="text-base font-semibold">{translate(loc, 'error.renderTitle')}</h1>
               <p className="text-sm text-muted-foreground wrap-anywhere">
-                {this.state.error.message || '发生了未预期的渲染错误。'}
+                {this.state.error.message || translate(loc, 'error.renderFallback')}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button type="button" variant="primary" size="sm" onClick={this.handleReload}>
-                刷新页面
+                {translate(loc, 'error.reload')}
               </Button>
               <Button type="button" variant="ghost" size="sm" onClick={this.handleGoHome}>
-                返回总览
+                {translate(loc, 'error.goHome')}
               </Button>
             </div>
           </div>
@@ -87,34 +90,36 @@ export function App() {
   }, [live]);
 
   return (
-    <QueryClientProvider client={client}>
-      <LiveContext value={live}>
-        <ErrorBoundary>
-          <HashRouter>
-            <Routes>
-              <Route element={<Shell />}>
-                <Route path="/work" element={<WorkListPage />} />
-                <Route path="/work/:id" element={<Keyed page={WorkPage} />} />
-                <Route path="/task/:id" element={<Keyed page={TaskPage} />} />
-                <Route path="/projects" element={<ProjectsPage />} />
-                <Route path="/projects/:id/:tab?" element={<Keyed page={ProjectPage} />} />
-                <Route path="/legacy" element={<LegacyPage />} />
-                <Route path="/roles" element={<RolesPage />} />
-                <Route path="/inbound" element={<InboundPage />} />
-                <Route path="/knowledge" element={<KnowledgePage />} />
-                <Route path="/knowledge/proposals/:id" element={<Keyed page={ProposalPage} />} />
-                <Route path="/knowledge/entries/:id" element={<Keyed page={EntryPage} />} />
-                <Route path="/settings/:place?" element={<SettingsPage />} />
-                <Route path="/accounts" element={<AccountsPage />} />
-                <Route path="/machines" element={<MachinesPage />} />
-                <Route path="/usage" element={<UsagePage />} />
-                {/* Any other address is the overview: what waits, what moves, what just ended. */}
-                <Route path="*" element={<HomePage />} />
-              </Route>
-            </Routes>
-          </HashRouter>
-        </ErrorBoundary>
-      </LiveContext>
-    </QueryClientProvider>
+    <I18nProvider>
+      <QueryClientProvider client={client}>
+        <LiveContext value={live}>
+          <ErrorBoundary>
+            <HashRouter>
+              <Routes>
+                <Route element={<Shell />}>
+                  <Route path="/work" element={<WorkListPage />} />
+                  <Route path="/work/:id" element={<Keyed page={WorkPage} />} />
+                  <Route path="/task/:id" element={<Keyed page={TaskPage} />} />
+                  <Route path="/projects" element={<ProjectsPage />} />
+                  <Route path="/projects/:id/:tab?" element={<Keyed page={ProjectPage} />} />
+                  <Route path="/legacy" element={<LegacyPage />} />
+                  <Route path="/roles" element={<RolesPage />} />
+                  <Route path="/inbound" element={<InboundPage />} />
+                  <Route path="/knowledge" element={<KnowledgePage />} />
+                  <Route path="/knowledge/proposals/:id" element={<Keyed page={ProposalPage} />} />
+                  <Route path="/knowledge/entries/:id" element={<Keyed page={EntryPage} />} />
+                  <Route path="/settings/:place?" element={<SettingsPage />} />
+                  <Route path="/accounts" element={<AccountsPage />} />
+                  <Route path="/machines" element={<MachinesPage />} />
+                  <Route path="/usage" element={<UsagePage />} />
+                  {/* Any other address is the overview: what waits, what moves, what just ended. */}
+                  <Route path="*" element={<HomePage />} />
+                </Route>
+              </Routes>
+            </HashRouter>
+          </ErrorBoundary>
+        </LiveContext>
+      </QueryClientProvider>
+    </I18nProvider>
   );
 }

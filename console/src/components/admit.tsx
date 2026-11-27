@@ -4,6 +4,7 @@ import { KeyRound } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Callout, Problem } from '@/components/bits';
 import { Button } from '@/components/ui/button';
+import { useI18n } from '@/lib/i18n';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { api, messageOf, post } from '@/lib/api';
@@ -162,11 +163,12 @@ function MachineMatch({ match, busy, onDecide }: {
 
 // The one way to let something in by its six digits, from the foot of the side column.
 export function Admit() {
+  const { t, bi } = useI18n();
   const [open, setOpen] = useState(false);
   return (
     <Sheet open={open} onOpenChange={setOpen}>
-      <SheetTrigger asChild><Button variant="ghost" size="sm" className="gap-1 px-1.5"><KeyRound />放行</Button></SheetTrigger>
-      <SheetContent title="放行" description="放行一台新设备登录控制台，或者一台新机器加入。" className="w-[min(440px,100%)]">
+      <SheetTrigger asChild><Button variant="ghost" size="sm" className="gap-1 px-1.5"><KeyRound />{t('nav.admit')}</Button></SheetTrigger>
+      <SheetContent title={t('nav.admit')} description={bi('放行一台新设备登录控制台，或者一台新机器加入。', 'Approve a new device sign-in or connect a new machine.')} className="w-[min(440px,100%)]">
         {open ? <AdmitForm /> : null}
       </SheetContent>
     </Sheet>

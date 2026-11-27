@@ -26,6 +26,7 @@ import { Confirm, Sheet, SheetContent } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Option, Select } from '@/components/ui/select';
 import { api, messageOf, post } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { accountsQuery, knowledgeQuery } from '@/lib/queries';
 import type { EntryReport, KnowledgeClient, KnowledgeEntry, KnowledgePage as Page, KnowledgeProposalRow, LegacyDecision } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -1021,6 +1022,7 @@ function Access({ page }: { page: Page }) {
 }
 
 export function KnowledgePage() {
+  const { t, bi } = useI18n();
   const { data, isPending, error } = useQuery(knowledgeQuery);
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -1043,15 +1045,15 @@ export function KnowledgePage() {
   }, [setParams]);
   return (
     <>
-      <PageBar title="知识" actions={data ? <Button variant="primary" onClick={() => setWriting(true)}><Plus />自己写一条</Button> : null}>
+      <PageBar title={t('knowledge.title')} actions={data ? <Button variant="primary" onClick={() => setWriting(true)}><Plus />{bi('自己写一条', 'New entry')}</Button> : null}>
         <PageTabs
-          label="知识的哪一部分"
+          label={bi('知识的哪一部分', 'Knowledge views')}
           tabs={[
-            { to: '/knowledge?view=pending', label: '待处理', current: view === 'pending', count: data ? pendingCount : undefined },
-            { to: '/knowledge?view=entries', label: '条目', current: view === 'entries' },
-            { to: '/knowledge?view=effective', label: '生效预览', current: view === 'effective' },
-            { to: '/knowledge?view=proposals', label: '提议', current: view === 'proposals' },
-            { to: '/knowledge?view=access', label: '接入', current: view === 'access' },
+            { to: '/knowledge?view=pending', label: bi('待处理', 'Pending'), current: view === 'pending', count: data ? pendingCount : undefined },
+            { to: '/knowledge?view=entries', label: bi('条目', 'Entries'), current: view === 'entries' },
+            { to: '/knowledge?view=effective', label: bi('生效预览', 'Effective preview'), current: view === 'effective' },
+            { to: '/knowledge?view=proposals', label: bi('提议', 'Proposals'), current: view === 'proposals' },
+            { to: '/knowledge?view=access', label: bi('接入', 'Access'), current: view === 'access' },
           ]}
         />
       </PageBar>

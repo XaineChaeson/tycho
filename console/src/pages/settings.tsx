@@ -2,9 +2,10 @@
 // slides sideways on a phone), one search over all of them. Each item says what it is now,
 // what it means behind 说明, and — only once something has been typed — offers to send or
 // drop it.
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
+import { normalizeLocale } from '@shared/i18n.ts';
 import { changedByText, projectRouterErrors, routerLine, tierText } from '@shared/labels.ts';
 import { loginName } from '@shared/logins.ts';
 import { formatTime } from '@shared/time.ts';
@@ -22,7 +23,8 @@ import { SkeletonPage } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { EARLIER_CHANGE, useChange } from '@/hooks/use-change';
 import { del, messageOf, post, put } from '@/lib/api';
-import { accountsQuery, settingsQuery } from '@/lib/queries';
+import { useI18n } from '@/lib/i18n';
+import { accountsQuery, settingsQuery, stateQuery } from '@/lib/queries';
 import { isNumber, sameSetting, settingField, settingShown, settingValue, unitLabel, type LoginChoice } from '@/lib/settings';
 import { loginChoices } from '@/lib/logins';
 import type { Account, Setting, SettingsPage as Listing, Tier } from '@/lib/types';
@@ -159,6 +161,7 @@ function SettingRow({ item, current, draft, saving, saved, busy, save, edit, acc
   // The account the tier row is about: the account row's draft, or the account saved.
   bound: string;
 }) {
+  const { t, bi } = useI18n();
   const path = `/api/settings/${encodeURIComponent(item.key)}`;
   const field = draft.field ?? settingField(item, item.value, logins);
   const mine = saving === item.key;
@@ -167,8 +170,9 @@ function SettingRow({ item, current, draft, saving, saved, busy, save, edit, acc
   // none bound, or one that has no tiers, the row has nothing to offer but empty.
   const picked = item.key === ROUTER_ACCOUNT || item.key === ROUTER_TIER;
   const held = typeof item.value === 'string' ? item.value : '';
+  const localeChoiceLabel = (choice: string): string => (choice === 'en' ? 'English (en)' : choice === 'zh-CN' ? '简体中文 (zh-CN)' : choice);
   const options = picked ? routerChoices(item.key, accounts, bound, item.empty, held)
-    : item.type === 'choice' ? (item.choices ?? []).map((choice): [string, string] => [choice, choice])
+    : item.type === 'choice' ? (item.choices ?? []).map((choice): [string, string] => [choice, item.key === 'ui.locale' ? localeChoiceLabel(choice) : choice])
       : null;
   // Closed when there is nothing to pick from: no tier of the bound account, and nothing
   // in force either (an older name is shown so it can be seen and cleared).
@@ -181,21 +185,22 @@ function SettingRow({ item, current, draft, saving, saved, busy, save, edit, acc
   // The tier row is the one item whose value is a name the page shows in its own words: the
   // summary and the choice say the same thing (docs/design/roles-and-tiers.md §2).
   const shownValue = (): string => {
+    if (item.key === 'ui.locale' && typeof item.value === 'string') return localeChoiceLabel(item.value);
     const text = settingShown(item, item.value, logins);
     return item.key === ROUTER_TIER && typeof item.value === 'string' && item.value !== '' ? tierLabel(item.value) : text;
   };
-  const facts = [`现在：${shownValue()}`];
-  if (away) facts.push(`默认：${settingShown(item, item.default, logins)}`);
-  if (item.restart) facts.push('重启后生效（需重启 Tycho 服务进程）');
+  const facts = [`${bi('现在：', 'Current: ')}${shownValue()}`];
+  if (away) facts.push(`${bi('默认：', 'Default: ')}${item.key === 'ui.locale' && typeof item.default === 'string' ? localeChoiceLabel(item.default) : settingShown(item, item.default, logins)}`);
+  if (item.restart) facts.push(bi('重启后生效（需重启 Tycho 服务进程）', 'Requires Tycho service restart'));
   if (item.updated_at) facts.push(`${formatTime(item.updated_at)} ${changedByText(item.updated_by ?? '')}`);
   const unit = unitLabel(item);
   return (
     <Row
       id={`setting-${item.key}`}
-      label={item.title}
+      label={item.key === 'ui.locale' ? t('settings.languageTitle') : item.title}
       current={current}
       summary={facts.join(' · ')}
-      help={item.help}
+      help={item.key === 'ui.locale' ? t('settings.languageHint') : item.help}
       extra={
         <>
           {/* The operate tier is offered, not refused: the owner may want it anyway
@@ -237,18 +242,18 @@ function SettingRow({ item, current, draft, saving, saved, busy, save, edit, acc
       actions={
         <>
           {unit ? <span className="text-sm text-muted-foreground">{unit}</span> : null}
-          {item.type === 'boolean' && mine ? <span className="text-xs text-muted-foreground">保存中</span> : null}
+          {item.type === 'boolean' && mine ? <span className="text-xs text-muted-foreground">{bi('保存中', 'Saving')}</span> : null}
           {item.type !== 'boolean' && dirty ? (
             <>
               {/* The one send path: Enter in the box and this button are the same submit. */}
-              <Button type="submit" variant="primary" disabled={busy}>{mine ? '保存中' : '保存'}</Button>
-              <Button variant="ghost" disabled={mine} onClick={() => edit(item.key, settingField(item, item.value, logins))}>撤销</Button>
+              <Button type="submit" variant="primary" disabled={busy}>{mine ? bi('保存中', 'Saving') : t('common.save')}</Button>
+              <Button variant="ghost" disabled={mine} onClick={() => edit(item.key, settingField(item, item.value, logins))}>{bi('撤销', 'Revert')}</Button>
             </>
           ) : null}
           {clearable ? (
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void save(item.key, () => del<{ settings: Setting[] }>(path), listOf)}>恢复默认</Button>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void save(item.key, () => del<{ settings: Setting[] }>(path), listOf)}>{bi('恢复默认', 'Reset default')}</Button>
           ) : null}
-          {saved === item.key ? <span role="status" className="text-xs text-success-foreground">已保存</span> : null}
+          {saved === item.key ? <span role="status" className="text-xs text-success-foreground">{t('common.saved')}</span> : null}
         </>
       }
     />
@@ -499,6 +504,8 @@ function SettingsSearch({ entries, groups, onPick }: { entries: Entry[]; groups:
 }
 
 export function SettingsPage() {
+  const { setLocale, t, bi } = useI18n();
+  const queryClient = useQueryClient();
   // A group, or one item: a link to an item opens its group at it.
   const { place } = useParams();
   const navigate = useNavigate();
@@ -564,7 +571,19 @@ export function SettingsPage() {
     setSaving(key);
     patch(key, { error: undefined });
     try {
-      await change.send(request, (page, answer) => ({ ...page, ...taken(answer, page) }));
+      let nextLocale: string | undefined;
+      await change.send(request, (page, answer) => {
+        const patchResult = taken(answer, page);
+        if (key === 'ui.locale' && patchResult.settings) {
+          const found = patchResult.settings.find((item) => item.key === 'ui.locale');
+          if (typeof found?.value === 'string') nextLocale = found.value;
+        }
+        return { ...page, ...patchResult };
+      });
+      if (key === 'ui.locale') {
+        if (nextLocale) setLocale(normalizeLocale(nextLocale));
+        void queryClient.invalidateQueries({ queryKey: stateQuery.queryKey });
+      }
       // In one step with releasing the lock: the row is never open on the old value.
       setDrafts(({ [key]: _saved, ...rest }) => rest);
       setSaved(key);
@@ -604,7 +623,7 @@ export function SettingsPage() {
   if (!data) {
     return (
       <>
-        <PageBar title="设置" />
+        <PageBar title={t('settings.title')} />
         <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-5 shell:px-6">
           {error ? <Problem role="alert" className="mb-3">{error.message}</Problem> : null}
           {isPending ? <SkeletonPage /> : null}
@@ -647,7 +666,7 @@ export function SettingsPage() {
 
   return (
     <>
-      <PageBar title="设置" />
+      <PageBar title={t('settings.title')} />
       {/* The search and the groups stand still and only the group's own page scrolls: down
           the side on a wide screen, across the top on a phone. */}
       <div className="flex min-h-0 flex-1 flex-col wrap-anywhere shell:flex-row">
@@ -661,8 +680,8 @@ export function SettingsPage() {
           </div>
           <div className="flex min-h-0 min-w-0 items-center shell:flex-col shell:items-stretch shell:gap-2">
             <GroupNav groups={groups} current={current} dirtyGroups={dirtyGroups} />
-            <nav aria-label="外部集成" className="flex flex-none items-center pr-3 pb-2 shell:flex-col shell:items-stretch shell:border-t shell:border-border shell:px-0 shell:pt-2 shell:pb-0">
-              <span className="hidden px-2.5 pb-1 text-2xs font-medium tracking-wide text-faint uppercase shell:block">外部集成</span>
+            <nav aria-label={bi('外部集成', 'Integrations')} className="flex flex-none items-center pr-3 pb-2 shell:flex-col shell:items-stretch shell:border-t shell:border-border shell:px-0 shell:pt-2 shell:pb-0">
+              <span className="hidden px-2.5 pb-1 text-2xs font-medium tracking-wide text-faint uppercase shell:block">{bi('外部集成', 'Integrations')}</span>
               <Link
                 to={placeLink(GITHUB)}
                 aria-current={current === GITHUB ? 'page' : undefined}

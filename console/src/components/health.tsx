@@ -4,6 +4,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { gatewayNote, projectRouterErrors, routerLine, type GatewayNote, type RouterState } from '@shared/labels.ts';
 import { Dot, HashLink, Time, type Tone } from '@/components/bits';
+import { useI18n } from '@/lib/i18n';
 import { stateQuery } from '@/lib/queries';
 import type { LaunchingRun, ServiceState, WecomState } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -89,6 +90,7 @@ const sound = ({ tone }: Line): boolean => tone === 'running' || tone === 'ended
 const foldTitle = (lines: readonly Line[]): string => lines.map((each) => `${each.name}：${each.detail ?? each.text}`).join('；');
 
 export function Health({ className }: { className?: string }) {
+  const { t, bi } = useI18n();
   const { data: state } = useQuery(stateQuery);
   if (!state) return null;
   const lines = healthLines(state);
@@ -97,23 +99,23 @@ export function Health({ className }: { className?: string }) {
     return (
       <p data-slot="health" title={foldTitle(lines)} className={cn('flex items-center gap-2 text-xs text-muted-foreground', className)}>
         <Dot tone="success" />
-        一切正常
+        {t('health.allGood')}
       </p>
     );
   }
   return (
-    <div data-slot="health" aria-label="运行状况" className={cn('grid gap-1.5', className)}>
+    <div data-slot="health" aria-label={bi('运行状况', 'Service health')} className={cn('grid gap-1.5', className)}>
       {lines.map((each) => (
         <div key={each.key} className="text-xs">
           <p className="flex items-center gap-2">
-            <Dot tone={each.tone === 'running' ? 'success' : each.tone} pulse={false} title={each.tone === 'failed' ? '有问题' : each.tone === 'waiting' ? '等一下会好' : '正常'} />
+            <Dot tone={each.tone === 'running' ? 'success' : each.tone} pulse={false} title={each.tone === 'failed' ? bi('有问题', 'Error') : each.tone === 'waiting' ? bi('等一下会好', 'Pending') : bi('正常', 'OK')} />
             <span className="font-medium">{each.name}</span>
             <span className={each.tone === 'failed' ? 'text-destructive' : 'text-muted-foreground'}>{each.text}</span>
           </p>
           {!sound(each) && each.detail ? (
             <p className="mt-0.5 pl-4 text-muted-foreground wrap-anywhere">
               {each.detail}
-              {each.href ? <> <HashLink href={each.href}>{each.linkLabel ?? '去处理'}</HashLink></> : null}
+              {each.href ? <> <HashLink href={each.href}>{each.linkLabel ?? bi('去处理', 'Inspect')}</HashLink></> : null}
             </p>
           ) : null}
         </div>
@@ -125,6 +127,7 @@ export function Health({ className }: { className?: string }) {
 // The side column also says when the console last heard from the service: a stale page
 // looks like a quiet service otherwise.
 export function LastHeard({ at, className }: { at: number | null; className?: string }) {
+  const { bi } = useI18n();
   if (at === null) return null;
-  return <Time at={at} prefix="更新于 " className={cn('text-2xs text-faint', className)} />;
+  return <Time at={at} prefix={bi('更新于 ', 'Updated ')} className={cn('text-2xs text-faint', className)} />;
 }
