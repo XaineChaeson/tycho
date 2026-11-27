@@ -5,6 +5,7 @@ import { Note, Problem } from '@/components/bits';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { api, messageOf } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 
 interface WeixinStatus {
   state: 'disconnected' | 'waiting' | 'scanned' | 'pin_required' | 'connected' | 'expired' | 'error';
@@ -16,14 +17,14 @@ interface WeixinStatus {
 type Action = { type: 'login' | 'disconnect' } | { type: 'pin'; pin: string };
 const KEY = ['weixin-status'];
 const SCANNING = new Set<WeixinStatus['state']>(['waiting', 'scanned', 'pin_required']);
-const LABELS: Record<WeixinStatus['state'], string> = {
-  disconnected: '未连接微信',
-  waiting: '请用手机微信扫描二维码',
-  scanned: '已扫码，请在手机微信确认连接',
-  pin_required: '请输入手机微信显示的数字',
-  connected: '微信已连接',
-  expired: '二维码已过期，请重新获取',
-  error: '微信连接出现问题',
+const LABEL_KEYS: Record<WeixinStatus['state'], string> = {
+  disconnected: 'set.wx.state.disconnected',
+  waiting: 'set.wx.state.waiting',
+  scanned: 'set.wx.state.scanned',
+  pin_required: 'set.wx.state.pin_required',
+  connected: 'set.wx.state.connected',
+  expired: 'set.wx.state.expired',
+  error: 'set.wx.state.error',
 };
 
 function visibleStatus(status: WeixinStatus): WeixinStatus {
@@ -32,6 +33,7 @@ function visibleStatus(status: WeixinStatus): WeixinStatus {
 }
 
 function LoginQr({ content }: { content: string }) {
+  const { t } = useI18n();
   const [image, setImage] = useState<string>();
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -42,13 +44,14 @@ function LoginQr({ content }: { content: string }) {
       .catch(() => { if (active) setFailed(true); });
     return () => { active = false; };
   }, [content]);
-  if (failed) return <Problem role="alert">二维码生成失败，请重新获取二维码。</Problem>;
+  if (failed) return <Problem role="alert">{t('set.wx.qrFailed')}</Problem>;
   return image
-    ? <img src={image} alt="微信登录二维码" width={240} height={240} className="max-w-full rounded-lg border border-border bg-white" />
-    : <Note>正在生成二维码…</Note>;
+    ? <img src={image} alt={t('set.wx.qrAlt')} width={240} height={240} className="max-w-full rounded-lg border border-border bg-white" />
+    : <Note>{t('set.wx.qrGenerating')}</Note>;
 }
 
 export function WeixinSetup() {
+  const { t } = useI18n();
   const client = useQueryClient();
   const [pin, setPin] = useState('');
   const mounted = useRef(true);
@@ -113,37 +116,37 @@ export function WeixinSetup() {
   }
 
   return (
-    <section className="grid gap-4 p-4" aria-label="微信连接">
+    <section className="grid gap-4 p-4" aria-label={t('set.wx.sectionLabel')}>
       <div className="grid gap-1">
-        <h2 className="text-sm font-semibold">微信私聊</h2>
-        <Note>使用手机微信扫码并确认，将微信里的 ClawBot 连接到 Tycho。</Note>
-        <Note>连接后可在私聊里选择项目、与负责人对话。普通聊天不会反复附项目卡。</Note>
+        <h2 className="text-sm font-semibold">{t('set.wx.title')}</h2>
+        <Note>{t('set.wx.desc1')}</Note>
+        <Note>{t('set.wx.desc2')}</Note>
       </div>
-      <p role="status" className="text-sm font-medium">{status ? LABELS[status.state] : query.isPending ? '正在读取微信连接状态…' : '微信状态暂时无法读取'}</p>
+      <p role="status" className="text-sm font-medium">{status ? t(LABEL_KEYS[status.state]) : query.isPending ? t('set.wx.loadingStatus') : t('set.wx.statusUnavailable')}</p>
       {error ? <div className="grid justify-items-start gap-2">
         <Problem role="alert">{error}</Problem>
-        <Button size="sm" disabled={busy || query.isFetching} onClick={() => { mutation.reset(); void query.refetch({ cancelRefetch: false }); }}>重试读取</Button>
+        <Button size="sm" disabled={busy || query.isFetching} onClick={() => { mutation.reset(); void query.refetch({ cancelRefetch: false }); }}>{t('set.retryRead')}</Button>
       </div> : null}
       {status && SCANNING.has(status.state) && status.qr ? <LoginQr key={status.qr} content={status.qr} /> : null}
       {status?.state === 'pin_required' ? <form onSubmit={submitPin} className="grid max-w-sm gap-2">
-        <label htmlFor="weixin-pin" className="text-sm">手机微信显示的数字</label>
+        <label htmlFor="weixin-pin" className="text-sm">{t('set.wx.pinLabel')}</label>
         <Input id="weixin-pin" value={pin} onChange={(event) => setPin(event.target.value)} inputMode="numeric" autoComplete="one-time-code" disabled={busy} />
-        <Button type="submit" variant="primary" disabled={busy || !pin.trim()}>确认数字</Button>
+        <Button type="submit" variant="primary" disabled={busy || !pin.trim()}>{t('set.wx.pinConfirm')}</Button>
       </form> : null}
       {status?.state === 'connected' ? <dl className="grid gap-2 text-sm">
         {status.bot_id ? <div><dt className="text-muted-foreground">ClawBot</dt><dd className="break-all font-mono">{status.bot_id}</dd></div> : null}
-        {status.user_id ? <div><dt className="text-muted-foreground">微信账号</dt><dd className="break-all font-mono">{status.user_id}</dd></div> : null}
+        {status.user_id ? <div><dt className="text-muted-foreground">{t('set.wx.accountLabel')}</dt><dd className="break-all font-mono">{status.user_id}</dd></div> : null}
       </dl> : null}
       {status ? <div className="flex flex-wrap gap-2">
         <Button variant={status.state === 'disconnected' || status.state === 'expired' || status.state === 'error' ? 'primary' : 'secondary'} disabled={busy}
           onClick={() => send({ type: 'login' })}>
-          {status.state === 'connected' ? '重新登录' : SCANNING.has(status.state) || status.state === 'expired' ? '重新获取二维码' : '连接微信'}
+          {status.state === 'connected' ? t('set.wx.relogin') : SCANNING.has(status.state) || status.state === 'expired' ? t('set.wx.refreshQr') : t('set.wx.connect')}
         </Button>
         {status.state === 'connected' || SCANNING.has(status.state) ? <Button variant="danger" disabled={busy} onClick={() => send({ type: 'disconnect' })}>
-          {status.state === 'connected' ? '断开连接' : '取消连接'}
+          {status.state === 'connected' ? t('set.disconnect') : t('set.wx.cancelConnect')}
         </Button> : null}
       </div> : null}
-      {busy ? <Note>正在处理，请稍候…</Note> : null}
+      {busy ? <Note>{t('set.wx.processing')}</Note> : null}
     </section>
   );
 }

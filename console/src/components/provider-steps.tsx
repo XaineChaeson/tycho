@@ -17,6 +17,7 @@ import { Input, Textarea } from '@/components/ui/input';
 import { Option, Select } from '@/components/ui/select';
 import { tierEditorOf, tierRefusal, withField, type AccountForm, type TierProblem } from '@/lib/accounts';
 import { messageOf, post } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import type { AccountModels, AccountsAndMachines } from '@/lib/types';
 
 interface LineRead {
@@ -68,16 +69,17 @@ function ModelRows({ id, field, rows, disabled, onChange }: {
   disabled: boolean;
   onChange: (rows: ProviderModelRow[]) => void;
 }) {
+  const { t } = useI18n();
   const at = (index: number, change: Partial<ProviderModelRow>): void => onChange(rows.map((row, where) => (where === index ? { ...row, ...change } : row)));
   return (
     <fieldset className="grid gap-2">
       <legend className="mb-1 text-sm font-medium">{field.label}</legend>
       {field.hint ? <Note className="text-xs">{field.hint}</Note> : null}
       {rows.map((row, index) => (
-        <div key={index} role="group" aria-label={`第 ${index + 1} 个模型`} className="grid gap-2 rounded-lg border border-border p-2.5">
+        <div key={index} role="group" aria-label={t('acct.provider.modelGroupAria', { place: index + 1 })} className="grid gap-2 rounded-lg border border-border p-2.5">
           <div className="flex items-center gap-2">
-            <Input aria-label={`第 ${index + 1} 个模型的名字`} id={index === 0 ? id : undefined} className="font-mono text-xs" value={row.id} disabled={disabled} onChange={(event) => at(index, { id: event.target.value })} />
-            {rows.length > 1 ? <Button size="sm" variant="ghost" disabled={disabled} onClick={() => onChange(rows.filter((_, where) => where !== index))}>删除</Button> : null}
+            <Input aria-label={t('acct.provider.modelNameAria', { place: index + 1 })} id={index === 0 ? id : undefined} className="font-mono text-xs" value={row.id} disabled={disabled} onChange={(event) => at(index, { id: event.target.value })} />
+            {rows.length > 1 ? <Button size="sm" variant="ghost" disabled={disabled} onClick={() => onChange(rows.filter((_, where) => where !== index))}>{t('common.delete')}</Button> : null}
           </div>
           <div className="flex flex-wrap gap-x-3">
             {field.efforts.map((effort) => (
@@ -99,7 +101,7 @@ function ModelRows({ id, field, rows, disabled, onChange }: {
           </div>
         </div>
       ))}
-      <Button size="sm" className="justify-self-start" disabled={disabled} onClick={() => onChange([...rows, { id: '' }])}>再加一个模型</Button>
+      <Button size="sm" className="justify-self-start" disabled={disabled} onClick={() => onChange([...rows, { id: '' }])}>{t('acct.provider.addModel')}</Button>
     </fieldset>
   );
 }
@@ -111,6 +113,7 @@ export function LineFields({ form, draft, disabled, onChange }: {
   disabled: boolean;
   onChange: (draft: ProviderDraft) => void;
 }) {
+  const { t } = useI18n();
   const id = useId();
   const line = form.lines.find((each) => each.id === draft.line) ?? firstOf(form);
   const set = (name: string, value: unknown): void => onChange({ ...draft, [name]: value });
@@ -118,7 +121,7 @@ export function LineFields({ form, draft, disabled, onChange }: {
     <div className="grid gap-4">
       {form.lines.length > 1 ? (
         <fieldset className="grid gap-1">
-          <legend className="mb-1 text-sm font-medium">线路</legend>
+          <legend className="mb-1 text-sm font-medium">{t('acct.detail.factRoute')}</legend>
           {form.lines.map((each) => (
             <Choice key={each.id} className="items-start">
               <span className="mt-0.5 flex"><Radio name={`${id}-line`} checked={line.id === each.id} disabled={disabled} onChange={() => onChange(draftOf(each))} /></span>
@@ -163,6 +166,7 @@ export function ProviderSteps({ form, page, busy, onEdit, onCreate, onBack, onDo
   onBack: () => void;
   onDone: () => void;
 }) {
+  const { t } = useI18n();
   const id = useId();
   const declared = page.provider_forms?.[form.executor];
   const [draft, setDraft] = useState<ProviderDraft>(() => (declared ? draftOf(firstOf(declared)) : { line: '' }));
@@ -171,7 +175,7 @@ export function ProviderSteps({ form, page, busy, onEdit, onCreate, onBack, onDo
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tierProblem, setTierProblem] = useState<TierProblem | null>(null);
-  if (!declared) return <Problem role="alert">这个执行器的账号没有线路可填</Problem>;
+  if (!declared) return <Problem role="alert">{t('acct.provider.noLines')}</Problem>;
   const line = declared.lines.find((each) => each.id === draft.line) ?? firstOf(declared);
   const editor = tierEditorOf(page.tier_forms, form.executor);
   // What the tiers pick a model from: what was read from the line, else the models written here.
@@ -202,7 +206,7 @@ export function ProviderSteps({ form, page, busy, onEdit, onCreate, onBack, onDo
   async function save(): Promise<void> {
     const problem = tierRefusal(form.tiers, editor);
     if (form.credential === '') {
-      setError(`先填${declared!.key.label}`);
+      setError(t('acct.provider.fillKeyFirst', { label: declared!.key.label }));
       return;
     }
     if (problem) {
@@ -232,7 +236,7 @@ export function ProviderSteps({ form, page, busy, onEdit, onCreate, onBack, onDo
         page={page}
         problem={tierProblem}
         models={models}
-        cancelLabel="上一步"
+        cancelLabel={t('acct.action.prevStep')}
         secret={null}
         hidden={['provider']}
         before={(
@@ -243,8 +247,8 @@ export function ProviderSteps({ form, page, busy, onEdit, onCreate, onBack, onDo
                 onChange={(event) => { onEdit({ ...form, credential: event.target.value }); setRead(null); }} />
             </Field>
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" disabled={reading || saving} onClick={() => void readLine()}>{reading ? '正在读取' : '从线路读取模型'}</Button>
-              <Note className="text-xs">{read?.reason ? `没读到：${read.reason}` : read?.models.length ? `读到 ${read.models.length} 个模型，档位里可以直接选` : '用填好的地址和密钥问一次这条线路；主机够不着的内网地址就手填。'}</Note>
+              <Button size="sm" disabled={reading || saving} onClick={() => void readLine()}>{reading ? t('acct.provider.readingModels') : t('acct.provider.readModelsBtn')}</Button>
+              <Note className="text-xs">{read?.reason ? t('acct.provider.readFailed', { reason: read.reason }) : read?.models.length ? t('acct.provider.readSuccess', { count: read.models.length }) : t('acct.provider.readHint')}</Note>
             </div>
           </div>
         )}

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { X } from 'lucide-react';
 import { AlertDialog as AlertPrimitive, Dialog as DialogPrimitive } from 'radix-ui';
+import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { Button } from './button';
 
@@ -19,9 +20,10 @@ const WINDOW = [
 ].join(' ');
 
 function CloseButton() {
+  const { t } = useI18n();
   return (
     <DialogPrimitive.Close asChild>
-      <Button variant="ghost" size="icon-sm" aria-label="关闭" className="-mr-1.5 flex-none"><X /></Button>
+      <Button variant="ghost" size="icon-sm" aria-label={t('common.close')} className="-mr-1.5 flex-none"><X /></Button>
     </DialogPrimitive.Close>
   );
 }
@@ -99,7 +101,7 @@ function SheetContent({ title, description, footer, side = 'right', className, b
 
 // A yes-or-no before something that cannot be taken back. It does not close on a click
 // beside it; the refusal of what was confirmed is said inside it, where the next try is.
-function Confirm({ open, title, description, confirm, cancel = '取消', danger = true, busy = false, confirmDisabled = false, error, onConfirm, onCancel, children }: {
+function Confirm({ open, title, description, confirm, cancel, danger = true, busy = false, confirmDisabled = false, error, onConfirm, onCancel, children }: {
   open: boolean;
   title: React.ReactNode;
   description?: React.ReactNode;
@@ -114,19 +116,23 @@ function Confirm({ open, title, description, confirm, cancel = '取消', danger 
   onCancel: () => void;
   children?: React.ReactNode;
 }) {
+  const { t } = useI18n();
+  const cancelLabel = cancel ?? t('common.cancel');
   return (
     <AlertPrimitive.Root open={open} onOpenChange={(next) => { if (!next && !busy) onCancel(); }}>
       <AlertPrimitive.Portal>
         <AlertPrimitive.Overlay className={OVERLAY} />
-        <AlertPrimitive.Content data-slot="confirm" className={cn(WINDOW, 'max-w-[420px] gap-4 p-5')} {...(description ? {} : { 'aria-describedby': undefined })}>
-          <div>
-            <AlertPrimitive.Title className="text-base font-semibold">{title}</AlertPrimitive.Title>
-            {description ? <AlertPrimitive.Description className="mt-1.5 text-muted-foreground">{description}</AlertPrimitive.Description> : null}
+        <AlertPrimitive.Content data-slot="confirm" className={cn(WINDOW, 'max-w-[420px] overflow-hidden')} {...(description ? {} : { 'aria-describedby': undefined })}>
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-5 pb-4">
+            <div>
+              <AlertPrimitive.Title className="text-base font-semibold">{title}</AlertPrimitive.Title>
+              {description ? <AlertPrimitive.Description className="mt-1.5 text-muted-foreground">{description}</AlertPrimitive.Description> : null}
+            </div>
+            {children}
+            {error ? <p role="alert" className="text-destructive">{error}</p> : null}
           </div>
-          {children}
-          {error ? <p role="alert" className="text-destructive">{error}</p> : null}
-          <div className="flex flex-wrap justify-end gap-2">
-            <AlertPrimitive.Cancel asChild><Button disabled={busy}>{cancel}</Button></AlertPrimitive.Cancel>
+          <div className="flex flex-none flex-wrap justify-end gap-2 border-t border-border/70 px-5 py-3">
+            <AlertPrimitive.Cancel asChild><Button disabled={busy}>{cancelLabel}</Button></AlertPrimitive.Cancel>
             {/* Not Radix's Action: that closes at once, and this one stays until it is answered. */}
             <Button variant={danger ? 'danger-solid' : 'primary'} disabled={busy || confirmDisabled} onClick={onConfirm}>{confirm}</Button>
           </div>

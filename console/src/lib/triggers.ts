@@ -1,6 +1,7 @@
 // The trigger form of the project page and the lines it shows (docs/design/triggers.md §2.1–§2.3, §7).
 // All pure. Times typed in the form are the browser's wall clock and go out as instants; a cron
 // rule goes out with the zone it runs in.
+import { t } from '@shared/i18n.ts';
 import { FIRE_MESSAGE_LABELS, MISSED_LABELS, OUTCOME_LABELS, SCHEDULE_LABELS, type MissedPolicy, type ScheduleKind, type TriggerSource } from '@shared/triggers.ts';
 import { INTERNAL_EVENT_LABELS, type InternalEventKind } from '@shared/internal-events.ts';
 import type { Trigger, TriggerFire } from './types.ts';
@@ -156,13 +157,13 @@ export const triggerBody = (draft: TriggerDraft): TriggerBody => ({
 const utc = (iso: string): string => `${iso.slice(0, 10)} ${iso.slice(11, 16)}`;
 
 export function nextLine(trigger: Trigger): string {
-  if (!trigger.enabled) return '已停用，不会触发';
-  if (trigger.source === 'event') return trigger.ended === 'expired' ? '过了截止时间，不再触发' : '订阅的事件发生时触发';
-  if (trigger.next_error) return `下一次未知：规则算不出来（${trigger.next_error}），改一下规则或停用它`;
-  if (trigger.ended === 'done') return '已经触发过，没有下一次';
-  if (trigger.ended === 'expired') return '过了截止时间，不再触发';
-  if (trigger.next_at === null || trigger.next_local === null) return '没有下一次';
-  return `下一次：${trigger.next_local}（${trigger.zone}），UTC ${utc(trigger.next_at)}`;
+  if (!trigger.enabled) return t('set.trig.nextDisabled');
+  if (trigger.source === 'event') return trigger.ended === 'expired' ? t('set.trig.nextExpired') : t('set.trig.nextEvent');
+  if (trigger.next_error) return t('set.trig.nextError', { error: trigger.next_error });
+  if (trigger.ended === 'done') return t('set.trig.nextDone');
+  if (trigger.ended === 'expired') return t('set.trig.nextExpired');
+  if (trigger.next_at === null || trigger.next_local === null) return t('set.trig.nextNone');
+  return t('set.trig.nextAt', { local: trigger.next_local, zone: trigger.zone, utc: utc(trigger.next_at) });
 }
 
 export function isTriggerEnded(trigger: Trigger): boolean {
@@ -190,7 +191,9 @@ export function cloneDraftOf(trigger: Trigger, zone: string): TriggerDraft {
 export function fireLine(fire: TriggerFire): string {
   return [
     OUTCOME_LABELS[fire.outcome],
-    ...(fire.merged_count > 1 ? [`合并了${fire.merged_capped ? '至少 ' : ' '}${fire.merged_count} 个时刻`] : []),
+    ...(fire.merged_count > 1
+      ? [t(fire.merged_capped ? 'set.trig.mergedCountCapped' : 'set.trig.mergedCount', { count: fire.merged_count })]
+      : []),
     ...(fire.message_state && fire.outcome !== 'replaced' ? [FIRE_MESSAGE_LABELS[fire.message_state] ?? fire.message_state] : []),
   ].join(' · ');
 }
@@ -254,15 +257,21 @@ export function formatCountdown(targetIso: string, nowMs: number = Date.now()): 
   const targetMs = Date.parse(targetIso);
   if (!Number.isFinite(targetMs)) return '';
   const diffMs = targetMs - nowMs;
-  if (diffMs <= 60_000) return '即将触发';
+  if (diffMs <= 60_000) return t('set.trig.countdownSoon');
   const totalMin = Math.round(diffMs / 60_000);
-  if (totalMin < 60) return `${totalMin}m 后`;
+  if (totalMin < 60) return t('set.trig.countdownMin', { min: totalMin });
   const totalHours = Math.floor(totalMin / 60);
   const remMin = totalMin % 60;
-  if (totalHours < 24) return remMin > 0 ? `${totalHours}h ${remMin}m 后` : `${totalHours}h 后`;
+  if (totalHours < 24) {
+    return remMin > 0
+      ? t('set.trig.countdownHourMin', { hours: totalHours, min: remMin })
+      : t('set.trig.countdownHour', { hours: totalHours });
+  }
   const days = Math.floor(totalHours / 24);
   const remHours = totalHours % 24;
-  return remHours > 0 ? `${days}天 ${remHours}h 后` : `${days}天 后`;
+  return remHours > 0
+    ? t('set.trig.countdownDayHour', { days, hours: remHours })
+    : t('set.trig.countdownDay', { days });
 }
 
 export interface TriggerClockMeta {
@@ -277,15 +286,17 @@ export interface TriggerClockMeta {
 
 export function triggerClockMeta(trigger: Trigger, zone: string, nowMs: number = Date.now()): TriggerClockMeta {
   if (trigger.source === 'event') {
-    const kindLabel = trigger.event ? (INTERNAL_EVENT_LABELS[trigger.event.kind] ?? trigger.event.kind) : '内部事件';
-    const scope = trigger.event?.task_id ? `限定 ${trigger.event.task_id.slice(0, 8)}` : '全部任务';
+    const kindLabel = trigger.event ? (INTERNAL_EVENT_LABELS[trigger.event.kind] ?? trigger.event.kind) : t('set.trig.internalEvent');
+    const scope = trigger.event?.task_id
+      ? t('set.trig.scopeTask', { id: trigger.event.task_id.slice(0, 8) })
+      : t('set.trig.scopeAllTasks');
     const countdown = !trigger.enabled
-      ? '已停用'
+      ? t('common.disabled')
       : trigger.ended === 'expired'
-        ? '已截止'
-        : '实时监听';
+        ? t('set.trig.expired')
+        : t('set.trig.listening');
     return {
-      clock: '事件',
+      clock: t('set.trig.clockEvent'),
       dateTag: kindLabel,
       countdown,
       cadenceTag: `${kindLabel} · ${scope}`,
@@ -301,15 +312,17 @@ export function triggerClockMeta(trigger: Trigger, zone: string, nowMs: number =
       ? SCHEDULE_LABELS.once
       : trigger.schedule.kind === 'cron'
         ? `cron · ${trigger.schedule.expr}`
-        : `每 ${Math.round(trigger.schedule.every_ms / MINUTE_MS)} 分钟`;
+        : t('set.trig.everyMin', { minutes: Math.round(trigger.schedule.every_ms / MINUTE_MS) });
 
   const utcText = trigger.next_at ? `UTC ${utc(trigger.next_at)}` : null;
 
   if (!trigger.enabled) {
     return {
-      clock: trigger.schedule?.kind === 'every' ? `每${Math.round(trigger.schedule.every_ms / MINUTE_MS)}m` : '--:--',
-      dateTag: '已停用',
-      countdown: '已停用',
+      clock: trigger.schedule?.kind === 'every'
+        ? t('set.trig.clockEvery', { minutes: Math.round(trigger.schedule.every_ms / MINUTE_MS) })
+        : '--:--',
+      dateTag: t('common.disabled'),
+      countdown: t('common.disabled'),
       cadenceTag,
       urgent: false,
       isEvent: false,
@@ -319,9 +332,9 @@ export function triggerClockMeta(trigger: Trigger, zone: string, nowMs: number =
 
   if (trigger.next_error) {
     return {
-      clock: '异常',
-      dateTag: '规则错误',
-      countdown: '需修正规则',
+      clock: t('set.trig.clockError'),
+      dateTag: t('set.trig.ruleError'),
+      countdown: t('set.trig.fixRule'),
       cadenceTag,
       urgent: true,
       isEvent: false,
@@ -331,9 +344,9 @@ export function triggerClockMeta(trigger: Trigger, zone: string, nowMs: number =
 
   if (trigger.ended === 'done' || trigger.ended === 'expired' || !trigger.next_at || !trigger.next_local) {
     return {
-      clock: trigger.ended === 'done' ? '已发' : '结束',
-      dateTag: trigger.ended === 'done' ? '已完成' : '已截止',
-      countdown: trigger.ended === 'done' ? '已触发' : '不再触发',
+      clock: trigger.ended === 'done' ? t('set.trig.clockDone') : t('set.trig.clockEnded'),
+      dateTag: trigger.ended === 'done' ? t('set.trig.done') : t('set.trig.expired'),
+      countdown: trigger.ended === 'done' ? t('set.trig.fired') : t('set.trig.noLongerFiring'),
       cadenceTag,
       urgent: false,
       isEvent: false,
@@ -348,9 +361,9 @@ export function triggerClockMeta(trigger: Trigger, zone: string, nowMs: number =
   const localClock = trigger.next_local.slice(11, 16) || nextParts?.clock || '--:--';
   const localDate = trigger.next_local.slice(0, 10);
   const dateTag = localDate === nowParts.dateStr
-    ? '今天'
+    ? t('set.trig.today')
     : localDate === tomorrowStr
-      ? '明天'
+      ? t('set.trig.tomorrow')
       : localDate.slice(5);
   const diffMs = Number.isFinite(nextMs) ? nextMs - nowMs : Infinity;
   return {
@@ -414,10 +427,10 @@ export function buildScheduleTimeline(
   const tomorrowStr = addDaysDateStr(todayStr, 1);
 
   const scheduled = triggers
-    .filter((t) => t.enabled && t.source === 'schedule' && t.next_at !== null && !t.ended && !t.next_error)
-    .map((t) => {
-      const nextMs = Date.parse(t.next_at!);
-      return { trigger: t, nextMs, parts: zonedPartsOf(nextMs, zone) };
+    .filter((item) => item.enabled && item.source === 'schedule' && item.next_at !== null && !item.ended && !item.next_error)
+    .map((item) => {
+      const nextMs = Date.parse(item.next_at!);
+      return { trigger: item, nextMs, parts: zonedPartsOf(nextMs, zone) };
     })
     .filter((item) => Number.isFinite(item.nextMs))
     .sort((a, b) => a.nextMs - b.nextMs);
@@ -427,7 +440,11 @@ export function buildScheduleTimeline(
     id: earliest.trigger.id,
     name: earliest.trigger.name,
     timeLabel: earliest.parts.clock,
-    dateTag: earliest.parts.dateStr === todayStr ? '今天' : earliest.parts.dateStr === tomorrowStr ? '明天' : earliest.parts.monthDay,
+    dateTag: earliest.parts.dateStr === todayStr
+      ? t('set.trig.today')
+      : earliest.parts.dateStr === tomorrowStr
+        ? t('set.trig.tomorrow')
+        : earliest.parts.monthDay,
     countdown: formatCountdown(earliest.trigger.next_at!, nowMs),
   } : null;
 
@@ -442,7 +459,7 @@ export function buildScheduleTimeline(
     return {
       visible: false,
       dayKind: 'today',
-      dateLabel: `今天 ${nowParts.monthDay}`,
+      dateLabel: t('set.trig.todayDate', { date: nowParts.monthDay }),
       zone,
       nowMinutes: nowParts.minutesOfDay,
       nowLabel: nowParts.clock,
@@ -512,7 +529,9 @@ export function buildScheduleTimeline(
   return {
     visible: true,
     dayKind: useToday ? 'today' : 'tomorrow',
-    dateLabel: useToday ? `今天 ${nowParts.monthDay}` : `明天 ${tomorrowStr.slice(5)}`,
+    dateLabel: useToday
+      ? t('set.trig.todayDate', { date: nowParts.monthDay })
+      : t('set.trig.tomorrowDate', { date: tomorrowStr.slice(5) }),
     zone,
     nowMinutes: useToday ? nowParts.minutesOfDay : null,
     nowLabel: useToday ? nowParts.clock : null,

@@ -20,6 +20,7 @@ import { ArtifactFrame, ImageLightbox, MermaidBlock } from '@/components/artifac
 import { StatusDot } from '@/components/bits';
 import { Badge } from '@/components/ui/badge';
 import { projectFileRawUrl } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { projectFilesQuery, tasksQuery } from '@/lib/queries';
 import type { ProjectFileSummary, Task } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -115,18 +116,6 @@ function linkifyChildren(children: ReactNode, taskMap: ReadonlyMap<string, Task>
   return children;
 }
 
-function TaskLinkified({
-  children,
-  taskMap,
-}: {
-  children: ReactNode;
-  taskMap: ReadonlyMap<string, Task>;
-}) {
-  const insideLink = useContext(InsideLinkContext);
-  if (insideLink || taskMap.size === 0) return <>{children}</>;
-  return <>{linkifyChildren(children, taskMap)}</>;
-}
-
 function InlineCode({
   children,
   taskMap,
@@ -206,6 +195,7 @@ function hasRenderableArtifactLink(node: HastElement | undefined, projectId: str
 }
 
 function InlineImage({ src, alt }: { src: string; alt?: string }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
 
   return (
@@ -213,7 +203,7 @@ function InlineImage({ src, alt }: { src: string; alt?: string }) {
       <button
         type="button"
         className="my-2 inline-block cursor-zoom-in rounded-lg border-0 bg-transparent p-0 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        aria-label={alt ? `放大查看图片：${alt}` : '放大查看图片'}
+        aria-label={alt ? t('core.markdown.zoomImageAlt', { alt }) : t('core.markdown.zoomImage')}
         onClick={() => setOpen(true)}
       >
         <img
@@ -325,87 +315,118 @@ function ProjectFileLink({
   return <ProjectFileLinkView projectId={projectId} fileId={fileId} label={label} cached={knownFile} />;
 }
 
-function buildComponents(
-  projectId: string | undefined,
-  files: readonly ProjectFileSummary[] | undefined,
-  taskMap: ReadonlyMap<string, Task>,
-): Components {
-  const wrapText = (children: ReactNode): ReactNode =>
-    taskMap.size > 0 ? <TaskLinkified taskMap={taskMap}>{children}</TaskLinkified> : children;
-
-  return {
-    table: ({ node: _node, ...props }) => (
-      <div className="prose-table" role="region" aria-label="表格" tabIndex={0}>
-        <table {...props} />
-      </div>
-    ),
-    p: ({ node, children, ...props }) => {
-      const body = wrapText(children);
-      if (hasRenderableArtifactLink(node, projectId)) {
-        return <div className="mb-2.5" {...props}>{body}</div>;
-      }
-      return <p {...props}>{body}</p>;
-    },
-    li: ({ node: _node, children, ...props }) => <li {...props}>{wrapText(children)}</li>,
-    td: ({ node: _node, children, ...props }) => <td {...props}>{wrapText(children)}</td>,
-    th: ({ node: _node, children, ...props }) => <th {...props}>{wrapText(children)}</th>,
-    blockquote: ({ node: _node, children, ...props }) => <blockquote {...props}>{wrapText(children)}</blockquote>,
-    strong: ({ node: _node, children, ...props }) => <strong {...props}>{wrapText(children)}</strong>,
-    em: ({ node: _node, children, ...props }) => <em {...props}>{wrapText(children)}</em>,
-    del: ({ node: _node, children, ...props }) => <del {...props}>{wrapText(children)}</del>,
-    h1: ({ node: _node, children, ...props }) => <h1 {...props}>{wrapText(children)}</h1>,
-    h2: ({ node: _node, children, ...props }) => <h2 {...props}>{wrapText(children)}</h2>,
-    h3: ({ node: _node, children, ...props }) => <h3 {...props}>{wrapText(children)}</h3>,
-    h4: ({ node: _node, children, ...props }) => <h4 {...props}>{wrapText(children)}</h4>,
-    h5: ({ node: _node, children, ...props }) => <h5 {...props}>{wrapText(children)}</h5>,
-    h6: ({ node: _node, children, ...props }) => <h6 {...props}>{wrapText(children)}</h6>,
-    code: ({ node: _node, children, ...props }) => (
-      <InlineCode taskMap={taskMap} {...props}>{children}</InlineCode>
-    ),
-    pre: ({ node, children, ...props }) => {
-      const mermaidSource = getMermaidSource(node);
-      if (mermaidSource !== null) {
-        return <MermaidBlock code={mermaidSource} />;
-      }
-      return (
-        <InsidePreContext value={true}>
-          <pre {...props}>{children}</pre>
-        </InsidePreContext>
-      );
-    },
-    a: ({ node: _node, href, children, ...props }) => {
-      if (typeof href === 'string' && href.startsWith(TYCHO_FILE_SCHEME)) {
-        const fileId = parseTychoFileId(href);
-        const label = extractText(children).trim();
-        if (projectId && fileId) {
-          return <ProjectFileLink projectId={projectId} fileId={fileId} label={label} files={files} />;
-        }
-        return (
-          <Badge tone="plain" className="align-middle">
-            {label || href.slice(TYCHO_FILE_SCHEME.length).trim() || '产物'}
-          </Badge>
-        );
-      }
-      return (
-        <InsideLinkContext value={true}>
-          <a {...props} href={href} target="_blank" rel="noreferrer noopener">
-            {children}
-          </a>
-        </InsideLinkContext>
-      );
-    },
-    // Same-origin project file images, raster data:image/ and blob: render inline with lightbox;
-    // external URLs stay plain links so third-party images are never auto-fetched.
-    img: ({ src, alt }) => {
-      if (typeof src === 'string' && isSafeInlineImage(src)) {
-        return <InlineImage src={src} alt={alt} />;
-      }
-      return typeof src === 'string' && src
-        ? <a href={src} target="_blank" rel="noreferrer noopener">{alt || src}</a>
-        : <>{alt}</>;
-    },
-  };
+interface MarkdownRenderContextValue {
+  projectId: string | undefined;
+  files: readonly ProjectFileSummary[] | undefined;
+  taskMap: ReadonlyMap<string, Task>;
 }
+
+const MarkdownRenderContext = createContext<MarkdownRenderContextValue>({
+  projectId: undefined,
+  files: undefined,
+  taskMap: EMPTY_TASK_MAP,
+});
+
+function ContextualTaskLinkified({ children }: { children: ReactNode }) {
+  const { taskMap } = useContext(MarkdownRenderContext);
+  const insideLink = useContext(InsideLinkContext);
+  if (insideLink || taskMap.size === 0) return <>{children}</>;
+  return <>{linkifyChildren(children, taskMap)}</>;
+}
+
+function ContextualInlineCode({ children, ...props }: ComponentProps<'code'>) {
+  const { taskMap } = useContext(MarkdownRenderContext);
+  return <InlineCode taskMap={taskMap} {...props}>{children}</InlineCode>;
+}
+
+function ContextualTable({ node: _node, ...props }: ComponentProps<'table'> & ExtraProps) {
+  const { t } = useI18n();
+  return (
+    <div className="prose-table" role="region" aria-label={t('core.markdown.table')} tabIndex={0}>
+      <table {...props} />
+    </div>
+  );
+}
+
+function ContextualParagraph({ node, children, ...props }: ComponentProps<'p'> & ExtraProps) {
+  const { projectId } = useContext(MarkdownRenderContext);
+  const body = <ContextualTaskLinkified>{children}</ContextualTaskLinkified>;
+  if (hasRenderableArtifactLink(node, projectId)) {
+    return <div className="mb-2.5" {...props}>{body}</div>;
+  }
+  return <p {...props}>{body}</p>;
+}
+
+function ContextualAnchor({ node: _node, href, children, ...props }: ComponentProps<'a'> & ExtraProps) {
+  const { projectId, files } = useContext(MarkdownRenderContext);
+  const { t } = useI18n();
+  if (typeof href === 'string' && href.startsWith(TYCHO_FILE_SCHEME)) {
+    const fileId = parseTychoFileId(href);
+    const label = extractText(children).trim();
+    if (projectId && fileId) {
+      return <ProjectFileLink projectId={projectId} fileId={fileId} label={label} files={files} />;
+    }
+    return (
+      <Badge tone="plain" className="align-middle">
+        {label || href.slice(TYCHO_FILE_SCHEME.length).trim() || t('core.markdown.artifact')}
+      </Badge>
+    );
+  }
+  return (
+    <InsideLinkContext value={true}>
+      <a {...props} href={href} target="_blank" rel="noreferrer noopener">
+        {children}
+      </a>
+    </InsideLinkContext>
+  );
+}
+
+function ContextualPre({ node, children, ...props }: ComponentProps<'pre'> & ExtraProps) {
+  const mermaidSource = getMermaidSource(node);
+  if (mermaidSource !== null) {
+    return <MermaidBlock code={mermaidSource} />;
+  }
+  return (
+    <InsidePreContext value={true}>
+      <pre {...props}>{children}</pre>
+    </InsidePreContext>
+  );
+}
+
+function ContextualImage({ src, alt }: ComponentProps<'img'> & ExtraProps) {
+  if (typeof src === 'string' && isSafeInlineImage(src)) {
+    return <InlineImage src={src} alt={alt} />;
+  }
+  return typeof src === 'string' && src
+    ? <a href={src} target="_blank" rel="noreferrer noopener">{alt || src}</a>
+    : <>{alt}</>;
+}
+
+// Stable module-scope renderer components so task/file query updates never remount
+// stateful descendants like open `<ImageLightbox>` dialogs or `<ArtifactFrame>` iframes.
+const MARKDOWN_COMPONENTS: Components = {
+  table: ContextualTable,
+  p: ContextualParagraph,
+  li: ({ node: _node, children, ...props }) => <li {...props}><ContextualTaskLinkified>{children}</ContextualTaskLinkified></li>,
+  td: ({ node: _node, children, ...props }) => <td {...props}><ContextualTaskLinkified>{children}</ContextualTaskLinkified></td>,
+  th: ({ node: _node, children, ...props }) => <th {...props}><ContextualTaskLinkified>{children}</ContextualTaskLinkified></th>,
+  blockquote: ({ node: _node, children, ...props }) => <blockquote {...props}><ContextualTaskLinkified>{children}</ContextualTaskLinkified></blockquote>,
+  strong: ({ node: _node, children, ...props }) => <strong {...props}><ContextualTaskLinkified>{children}</ContextualTaskLinkified></strong>,
+  em: ({ node: _node, children, ...props }) => <em {...props}><ContextualTaskLinkified>{children}</ContextualTaskLinkified></em>,
+  del: ({ node: _node, children, ...props }) => <del {...props}><ContextualTaskLinkified>{children}</ContextualTaskLinkified></del>,
+  h1: ({ node: _node, children, ...props }) => <h1 {...props}><ContextualTaskLinkified>{children}</ContextualTaskLinkified></h1>,
+  h2: ({ node: _node, children, ...props }) => <h2 {...props}><ContextualTaskLinkified>{children}</ContextualTaskLinkified></h2>,
+  h3: ({ node: _node, children, ...props }) => <h3 {...props}><ContextualTaskLinkified>{children}</ContextualTaskLinkified></h3>,
+  h4: ({ node: _node, children, ...props }) => <h4 {...props}><ContextualTaskLinkified>{children}</ContextualTaskLinkified></h4>,
+  h5: ({ node: _node, children, ...props }) => <h5 {...props}><ContextualTaskLinkified>{children}</ContextualTaskLinkified></h5>,
+  h6: ({ node: _node, children, ...props }) => <h6 {...props}><ContextualTaskLinkified>{children}</ContextualTaskLinkified></h6>,
+  code: ({ node: _node, children, ...props }) => <ContextualInlineCode {...props}>{children}</ContextualInlineCode>,
+  pre: ContextualPre,
+  a: ContextualAnchor,
+  // Same-origin project file images, raster data:image/ and blob: render inline with lightbox;
+  // external URLs stay plain links so third-party images are never auto-fetched.
+  img: ContextualImage,
+};
 
 function MarkdownView({
   text,
@@ -420,20 +441,25 @@ function MarkdownView({
   files?: readonly ProjectFileSummary[];
   taskMap: ReadonlyMap<string, Task>;
 }) {
-  const components = useMemo(() => buildComponents(projectId, files, taskMap), [projectId, files, taskMap]);
+  const renderCtx = useMemo<MarkdownRenderContextValue>(
+    () => ({ projectId, files, taskMap }),
+    [projectId, files, taskMap],
+  );
 
   return (
-    <div className={cn('prose', className)}>
-      <ReactMarkdown
-        remarkPlugins={REMARK_PLUGINS}
-        rehypePlugins={REHYPE_PLUGINS}
-        components={components}
-        urlTransform={safeUrlTransform}
-        skipHtml
-      >
-        {String(text ?? '')}
-      </ReactMarkdown>
-    </div>
+    <MarkdownRenderContext value={renderCtx}>
+      <div className={cn('prose', className)}>
+        <ReactMarkdown
+          remarkPlugins={REMARK_PLUGINS}
+          rehypePlugins={REHYPE_PLUGINS}
+          components={MARKDOWN_COMPONENTS}
+          urlTransform={safeUrlTransform}
+          skipHtml
+        >
+          {String(text ?? '')}
+        </ReactMarkdown>
+      </div>
+    </MarkdownRenderContext>
   );
 }
 

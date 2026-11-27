@@ -16,6 +16,7 @@ import {
   blankTier, defaultEffortOf, effortChoices, effortUnsupported, modelChoices, modelMissing, modelsFor, tierEditorOf,
   type AccountForm, type TierEditor, type TierProblem, type TierRow,
 } from '@/lib/accounts';
+import { useI18n } from '@/lib/i18n';
 import type { Account, AccountModels, AccountsAndMachines, MachineCheck, MachineLogin, Tier } from '@/lib/types';
 
 // What one login's card is doing while the page is open: its open form, why the last change
@@ -132,6 +133,7 @@ function Tiers({ owner, rows, editor: declared, hidden = [], models, routeOption
   disabled: boolean;
   onChange: (rows: TierRow[]) => void;
 }) {
+  const { t } = useI18n();
   const editor = declared && hidden.length > 0 ? { ...declared, fields: declared.fields.filter((field) => !hidden.includes(field)) } : declared;
   const [routeInput, setRouteInput] = useState('');
   const showQuickRoute = Boolean(editor && editor.fields.includes('provider'));
@@ -190,12 +192,12 @@ function Tiers({ owner, rows, editor: declared, hidden = [], models, routeOption
       {showQuickRoute ? (
         <div className="grid gap-2 rounded-lg border border-border/80 bg-muted/40 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-xs font-medium text-foreground">快捷设置线路（一键应用到全部档位，或清空以跟随本机默认）</span>
+            <span className="text-xs font-medium text-foreground">{t('acct.form.quickRouteHeading')}</span>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
             <Input
-              aria-label="统一线路名"
-              placeholder="输入任意线路名，如 deepseek 或自定义网关名…"
+              aria-label={t('acct.form.quickRouteInputAria')}
+              placeholder={t('acct.form.quickRoutePlaceholder')}
               className="h-8 min-w-44 flex-1 font-mono text-xs"
               value={routeInput}
               disabled={disabled}
@@ -208,7 +210,7 @@ function Tiers({ owner, rows, editor: declared, hidden = [], models, routeOption
               disabled={disabled || routeInput.trim() === ''}
               onClick={() => { applyProviderToAll(routeInput.trim()); setRouteInput(''); }}
             >
-              应用到全部档位
+              {t('acct.form.applyAllTiers')}
             </Button>
             <Button
               type="button"
@@ -217,12 +219,12 @@ function Tiers({ owner, rows, editor: declared, hidden = [], models, routeOption
               disabled={disabled}
               onClick={() => applyProviderToAll('')}
             >
-              跟随本机默认
+              {t('acct.form.followLocalDefault')}
             </Button>
           </div>
           {quickChoices.length > 0 ? (
             <div className="flex flex-wrap items-center gap-1.5 text-xs">
-              <span className="text-faint">本机自动识别渠道：</span>
+              <span className="text-faint">{t('acct.form.detectedRoutesLabel')}</span>
               {quickChoices.map((choice) => {
                 const isActive = singleActiveProvider === choice.id;
                 return (
@@ -230,7 +232,7 @@ function Tiers({ owner, rows, editor: declared, hidden = [], models, routeOption
                     key={choice.id}
                     type="button"
                     disabled={disabled}
-                    title={`一键切换全部档位到 ${choice.id}`}
+                    title={t('acct.form.switchAllRoutesTitle', { id: choice.id })}
                     onClick={() => applyProviderToAll(choice.id)}
                     className={`cursor-pointer inline-flex items-center gap-1 rounded border px-2 py-0.5 text-2xs transition-colors disabled:opacity-50 ${
                       isActive
@@ -254,10 +256,10 @@ function Tiers({ owner, rows, editor: declared, hidden = [], models, routeOption
         const rowProblem = problem?.at === index ? problem.message : null;
         if (decl === undefined) {
           return (
-            <div key={`${row.name}:${index}`} role="group" aria-label={`第 ${place} 个档位`} className={`${TIER_BOX} border-waiting-border bg-waiting-soft`}>
+            <div key={`${row.name}:${index}`} role="group" aria-label={t('acct.form.tierPlaceAria', { place })} className={`${TIER_BOX} border-waiting-border bg-waiting-soft`}>
               <div className="flex flex-wrap items-center gap-2">
                 <Mono>{row.name}</Mono>
-                <Note className="text-xs">{tierText.stale}：{tierText.staleNote}</Note>
+                <Note className="text-xs">{t('acct.pairColon', { label: tierText.stale, value: tierText.staleNote })}</Note>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {TIERS.map((tier) => (
@@ -265,7 +267,7 @@ function Tiers({ owner, rows, editor: declared, hidden = [], models, routeOption
                     key={tier.id}
                     size="sm"
                     disabled={disabled}
-                    aria-label={`把第 ${place} 个档位${tierText.moveTo(tier.label)}`}
+                    aria-label={t('acct.form.moveTierAria', { place, action: tierText.moveTo(tier.label) })}
                     onClick={() => move(index, tier.id)}
                   >
                     {tierText.moveTo(tier.label)}
@@ -364,6 +366,7 @@ function TierRowEditor({ owner, place, row, decl, editor, models, problem, disab
   disabled: boolean;
   onChange: (change: Partial<TierRow>) => void;
 }) {
+  const { t } = useI18n();
   const values = editor ? editor.parse(row.value) : undefined;
   const advanced = editor ? editor.advanced(row.value) : 0;
   const blank = blankTier(row);
@@ -382,13 +385,13 @@ function TierRowEditor({ owner, place, row, decl, editor, models, problem, disab
   );
   const fallback = defaultEffortOf(models, values?.model ?? '');
   return (
-    <div role="group" aria-label={`第 ${place} 个档位`} className={`${TIER_BOX} border-border`}>
+    <div role="group" aria-label={t('acct.form.tierPlaceAria', { place })} className={`${TIER_BOX} border-border`}>
       <div>
         <div className="flex flex-wrap items-baseline gap-x-2">
           <strong className="text-sm font-semibold">{decl.label}</strong>
           <Note className="text-xs">{decl.use}</Note>
         </div>
-        <Note className="mt-0.5 text-xs">{blank ? (row.held ? tierText.blankHeld : decl.id === 'operate' ? tierText.blankOperate : tierText.blank) : `${tierText.legend}内容：${decl.recommend}`}</Note>
+        <Note className="mt-0.5 text-xs">{blank ? (row.held ? tierText.blankHeld : decl.id === 'operate' ? tierText.blankOperate : tierText.blank) : t('acct.form.tierContentRecommend', { legend: tierText.legend, recommend: decl.recommend })}</Note>
       </div>
       {editor ? (
         values === undefined ? <Note>{tierText.unreadable}</Note> : (
@@ -399,7 +402,7 @@ function TierRowEditor({ owner, place, row, decl, editor, models, problem, disab
                   <span className="text-xs text-muted-foreground">{tierText[field]}</span>
                   {field === 'effort' ? (
                     <Select wrapperClassName="flex" value={values.effort} disabled={disabled || (noEffortSupported && values.effort === '')} onChange={(change) => set(field, change.target.value)}>
-                      <Option value="">{noEffortSupported ? '该模型不支持推理强度' : fallback === undefined ? tierText.effortAny : modelText.defaultEffort(fallback)}</Option>
+                      <Option value="">{noEffortSupported ? t('acct.form.effortUnsupportedOption') : fallback === undefined ? tierText.effortAny : modelText.defaultEffort(fallback)}</Option>
                       {/* A strength the model does not list is the owner's own: it stays, and is offered back. */}
                       {[...new Set([...efforts, values.effort])].filter((effort) => effort !== '').map((effort) => (
                         <Option key={effort} value={effort}>{effort}</Option>
@@ -417,8 +420,8 @@ function TierRowEditor({ owner, place, row, decl, editor, models, problem, disab
             {effortMismatch ? (
               <Note className="text-xs text-waiting-foreground">
                 {noEffortSupported
-                  ? `当前模型不支持推理强度，建议清空「${values.effort}」改为留空。`
-                  : `推理强度「${values.effort}」不在当前模型已探测的支持列表（${efforts.join(' / ')}）中，派发时可能被执行器拒绝。`}
+                  ? t('acct.form.effortUnsupportedWarn', { effort: values.effort })
+                  : t('acct.form.effortMismatchWarn', { effort: values.effort, supported: efforts.join(' / ') })}
               </Note>
             ) : null}
           </>
@@ -426,7 +429,7 @@ function TierRowEditor({ owner, place, row, decl, editor, models, problem, disab
       ) : null}
       <Details id={`tier-raw:${owner}:${place}`} summaryClassName="min-h-7 text-xs" title={<>{tierText.advanced}{advanced > 0 ? ` · ${tierText.advancedNote(advanced)}` : ''}</>}>
         <Textarea
-          aria-label={`第 ${place} 个档位的内容`}
+          aria-label={t('acct.form.tierContentAria', { place })}
           className="mt-1 max-h-[50vh] overflow-y-auto font-mono text-xs"
           rows={6}
           spellCheck={false}
@@ -445,9 +448,9 @@ function TierRowEditor({ owner, place, row, decl, editor, models, problem, disab
 // before this form opens, so only what tycho adds to it — the tiers, the permission mode
 // and the limits — is here. A machine's own login is the machine's executor as it is signed in
 // there, and the same applies.
-// The form carries its own 保存 and 取消: wherever it stands (a drawer, a window), submitting
+// The form carries its own Save and Cancel: wherever it stands (a drawer, a window), submitting
 // it is the same one request.
-export function LoginEditor({ account, own, onMachine = own !== undefined, signedIn, chosen, models, form, saving, busy, page, problem, cancelLabel = '取消', secret, before, hidden, onEdit, onSave, onCancel }: {
+export function LoginEditor({ account, own, onMachine = own !== undefined, signedIn, chosen, models, form, saving, busy, page, problem, cancelLabel, secret, before, hidden, onEdit, onSave, onCancel }: {
   account?: Account | undefined;
   // The machine's own login this form is about, instead of an account.
   own?: MachineLogin | undefined;
@@ -481,7 +484,9 @@ export function LoginEditor({ account, own, onMachine = own !== undefined, signe
   onSave: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useI18n();
   const prefix = useId();
+  const resolvedCancelLabel = cancelLabel ?? t('common.cancel');
   // Which fields there are depends on the executor chosen: only an executor whose own
   // command takes permission modes has that field, and it offers the ones it takes.
   const permissionModes = page.permission_modes[form.executor] ?? [];
@@ -501,9 +506,9 @@ export function LoginEditor({ account, own, onMachine = own !== undefined, signe
     >
       {/* A new account is not asked for a name: the service names it, and it is changed here later. */}
       {onMachine || signedIn ? null : <fieldset className="grid gap-4">
-        <legend className="mb-3 text-sm font-semibold">基本</legend>
+        <legend className="mb-3 text-sm font-semibold">{t('acct.form.basicLegend')}</legend>
         {chosen ? null : (
-          <Field htmlFor={`${prefix}-name`} label="名字" hint="可以随时改名，项目和任务仍然使用同一份登录。">
+          <Field htmlFor={`${prefix}-name`} label={t('acct.form.nameLabel')} hint={t('acct.form.nameHint')}>
             <Input {...box('name')} />
           </Field>
         )}
@@ -514,11 +519,11 @@ export function LoginEditor({ account, own, onMachine = own !== undefined, signe
               onChange={(event) => onEdit('credential', event.target.value)} />
           </Field>
         )}
-        <Note className="text-xs">账号可以在任何在线、装了这个执行器的机器上跑，每轮把这份登录交给那一轮。项目和任务可以再限定用哪几台机器。</Note>
+        <Note className="text-xs">{t('acct.form.accountScopeNote')}</Note>
       </fieldset>}
 
       <Tiers
-        owner={own?.id ?? account?.id ?? form.name ?? '新账号'}
+        owner={own?.id ?? account?.id ?? (form.name || 'new')}
         rows={form.tiers}
         editor={tierEditorOf(page.tier_forms, form.executor)}
         hidden={hidden}
@@ -533,23 +538,23 @@ export function LoginEditor({ account, own, onMachine = own !== undefined, signe
       />
 
       {/* 不常用的项收在这里：需要时才打开，日常改的是上面那几项。 */}
-      <Details id={`login-more:${own?.id ?? account?.id ?? 'new'}`} title="更多设置">
+      <Details id={`login-more:${own?.id ?? account?.id ?? 'new'}`} title={t('acct.form.moreSettings')}>
         <div className="grid gap-4 pt-2">
           {permissionModes.length > 0 ? (
-            <Field htmlFor={`${prefix}-permission_mode`} label="权限模式" hint="不填就用这个执行器跑 Worker 时的默认模式。">
+            <Field htmlFor={`${prefix}-permission_mode`} label={t('acct.form.permModeLabel')} hint={t('acct.form.permModeHint')}>
               <Select wrapperClassName="flex" {...box('permission_mode')}>
-                <Option value="">默认</Option>
+                <Option value="">{t('acct.form.defaultOption')}</Option>
                 {permissionModes.map((mode) => <Option key={mode} value={mode}>{mode}</Option>)}
               </Select>
             </Field>
           ) : null}
-          <Field htmlFor={`${prefix}-timeout`} label="单次执行时限" hint="单位是分钟。可以不填，不填就按设置页的“单次执行时限”。">
+          <Field htmlFor={`${prefix}-timeout`} label={t('acct.form.timeoutLabel')} hint={t('acct.form.timeoutHint')}>
             <Input {...box('timeout')} inputMode="decimal" />
           </Field>
           <Field
             htmlFor={`${prefix}-max_runs`}
-            label="同时最多几轮执行"
-            hint="可以不填，不填就不限。到了这个数，新的任务先等着，有一轮结束就接着派；没指定登录的任务会换到项目里别的登录上。"
+            label={t('acct.form.maxRunsLabel')}
+            hint={t('acct.form.maxRunsHint')}
           >
             <Input {...box('max_runs')} inputMode="numeric" />
           </Field>
@@ -557,8 +562,8 @@ export function LoginEditor({ account, own, onMachine = own !== undefined, signe
       </Details>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="submit" variant="primary" disabled={busy}>{saving ? '保存中' : '保存'}</Button>
-        <Button variant="ghost" disabled={saving} onClick={onCancel}>{cancelLabel}</Button>
+        <Button type="submit" variant="primary" disabled={busy}>{saving ? t('acct.action.saving') : t('common.save')}</Button>
+        <Button variant="ghost" disabled={saving} onClick={onCancel}>{resolvedCancelLabel}</Button>
       </div>
     </form>
   );

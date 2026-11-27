@@ -2,6 +2,7 @@
 // messages, the Router's replies under the message they answer, internal events and triggers'
 // messages as one gray line, what an unfinished request had committed, the Tasks a turn created, and
 // question cards where they were asked. Days are told apart by a line between them.
+import { t } from '@shared/i18n.ts';
 import { eventHeadline } from '@shared/labels.ts';
 import { fromOwner } from '@shared/triggers.ts';
 import type { Approval, Change, Message, ProjectFileSummary, TaskCapsule, TurnChanges } from './types.ts';
@@ -35,11 +36,15 @@ const sameDay = (a: Date, b: Date): boolean =>
 
 export function dateLabel(value: string | number, now: Date = new Date()): string {
   const date = new Date(value);
-  if (sameDay(date, now)) return '今天';
+  if (sameDay(date, now)) return t('proj.conv.today');
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  if (sameDay(date, yesterday)) return '昨天';
-  return `${date.getFullYear()} 年 ${date.getMonth() + 1} 月 ${date.getDate()} 日`;
+  if (sameDay(date, yesterday)) return t('proj.conv.yesterday');
+  return t('proj.conv.dateYmd', {
+    year: date.getFullYear(),
+    month: date.getMonth() + 1,
+    day: date.getDate(),
+  });
 }
 
 // A message the Router has taken up: only these have a turn whose changes can be read.
@@ -126,8 +131,8 @@ export function conversationItems({ messages, changes, approvals, sending, sendi
 
 export function summaryLine({ delivered, running, waiting }: { delivered: number; running: number; waiting: number }): string {
   const parts: string[] = [];
-  if (delivered) parts.push(`交付 ${delivered} 件`);
-  if (running) parts.push(`${running} 项在推进`);
-  if (waiting) parts.push(`${waiting} 件等你决定`);
-  return parts.length ? `上次打开以来：${parts.join('，')}` : '';
+  if (delivered) parts.push(t('proj.conv.summaryDelivered', { count: delivered }));
+  if (running) parts.push(t('proj.conv.summaryRunning', { count: running }));
+  if (waiting) parts.push(t('proj.conv.summaryWaiting', { count: waiting }));
+  return parts.length ? t('proj.conv.summarySinceOpen', { details: parts.join(t('proj.conv.summarySep')) }) : '';
 }

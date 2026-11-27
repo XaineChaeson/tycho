@@ -6,22 +6,23 @@
 // What a role holds beyond its default tier: what it hands over is checked at settlement and
 // whether it needs an independent review gates acceptance (§9 step 3); a read-only role only
 // goes to a machine whose own probe says the executor's read-only way starts there (step 4).
+import { localeMap, onLocaleChange, t } from './i18n.ts';
 import type { TierId } from './tiers.ts';
 import { loginName } from './logins.ts';
 
 const PERMISSION_IDS = ['read', 'write'] as const;
 export type PermissionId = (typeof PERMISSION_IDS)[number];
 export const PERMISSIONS: readonly { id: PermissionId; label: string }[] = [
-  { id: 'read', label: '只读' },
-  { id: 'write', label: '可写' },
+  { id: 'read', get label(): string { return t('sh.roles.permission.read'); } },
+  { id: 'write', get label(): string { return t('sh.roles.permission.write'); } },
 ];
 
 const DELIVERABLE_IDS = ['commit', 'report', 'verdict'] as const;
 export type DeliverableId = (typeof DELIVERABLE_IDS)[number];
 export const DELIVERABLES: readonly { id: DeliverableId; label: string }[] = [
-  { id: 'commit', label: '提交' },
-  { id: 'report', label: '报告' },
-  { id: 'verdict', label: '结论' },
+  { id: 'commit', get label(): string { return t('sh.roles.deliverable.commit'); } },
+  { id: 'report', get label(): string { return t('sh.roles.deliverable.report'); } },
+  { id: 'verdict', get label(): string { return t('sh.roles.deliverable.verdict'); } },
 ];
 
 export const isPermissionId = (value: unknown): value is PermissionId => (PERMISSION_IDS as readonly unknown[]).includes(value);
@@ -30,7 +31,7 @@ export const permissionLabel = (id: string): string => PERMISSIONS.find((each) =
 // What whoever hands out work has to know about a read-only role (§5): commands run, but how
 // far depends on the executor's own read-only way, and a round that changes its code is not
 // taken. Work that has to write goes to a writable role.
-export const READ_ONLY_ROUND_TEXT = '只读职能不改代码仓';
+export let READ_ONLY_ROUND_TEXT: string = t('sh.roles.readOnlyRound');
 export const deliverableLabel = (id: string): string => DELIVERABLES.find((each) => each.id === id)?.label ?? id;
 
 // A role as the ledger, the tools and the console all see it.
@@ -57,33 +58,58 @@ export const VERIFY_ROLE_ID = 'verify';
 // sub-workflows using machine-local skills and environment.
 export const ORCHESTRATE_ROLE_ID = 'orchestrate';
 export const REVIEW_SHAPE = { permission: 'read', deliverable: 'verdict' } as const;
-export const REVIEW_SHAPE_TEXT = '审阅的权限只能是只读、交付物只能是结论，这一条不能改';
-export const REVIEW_KEEP_TEXT = '审阅这个职能不能删：它是独立审阅那一方的任务类型';
+export let REVIEW_SHAPE_TEXT: string = t('sh.roles.reviewShape');
+export let REVIEW_KEEP_TEXT: string = t('sh.roles.reviewKeep');
 // What the roles page says of the review role's own tier (roles-and-tiers.md §11.5).
-export const REVIEW_TIER_TEXT = '实际档位跟着被审的那一轮，默认档位只用在旧数据上';
+export let REVIEW_TIER_TEXT: string = t('sh.roles.reviewTier');
 
 // Only the four that differ in permission, deliverable or review (§3.1). Design, diagnosis
 // and research are shaped like analysis; the owner adds them as data when wanted.
 export const PRESET_ROLES: readonly RoleConfig[] = [
   {
-    id: 'implement', name: '实现', default_tier: 'execute', permission: 'write', deliverable: 'commit', needs_review: true,
-    description: '改代码、写测试并交付提交。',
+    id: 'implement',
+    get name(): string { return t('sh.roles.preset.implement.name'); },
+    default_tier: 'execute',
+    permission: 'write',
+    deliverable: 'commit',
+    needs_review: true,
+    get description(): string { return t('sh.roles.preset.implement.desc'); },
   },
   {
-    id: REVIEW_ROLE_ID, name: '审阅', default_tier: 'decide', permission: 'read', deliverable: 'verdict', needs_review: false,
-    description: '对已有产物进行独立审阅并给出结论（只读）。',
+    id: REVIEW_ROLE_ID,
+    get name(): string { return t('sh.roles.preset.review.name'); },
+    default_tier: 'decide',
+    permission: 'read',
+    deliverable: 'verdict',
+    needs_review: false,
+    get description(): string { return t('sh.roles.preset.review.desc'); },
   },
   {
-    id: 'analyse', name: '分析', default_tier: 'decide', permission: 'read', deliverable: 'report', needs_review: false,
-    description: '调研、设计、诊断分析并交付报告（只读）。',
+    id: 'analyse',
+    get name(): string { return t('sh.roles.preset.analyse.name'); },
+    default_tier: 'decide',
+    permission: 'read',
+    deliverable: 'report',
+    needs_review: false,
+    get description(): string { return t('sh.roles.preset.analyse.desc'); },
   },
   {
-    id: VERIFY_ROLE_ID, name: '验证', default_tier: 'operate', permission: 'write', deliverable: 'report', needs_review: false,
-    description: '执行测试、复现或运维操作并交付报告。',
+    id: VERIFY_ROLE_ID,
+    get name(): string { return t('sh.roles.preset.verify.name'); },
+    default_tier: 'operate',
+    permission: 'write',
+    deliverable: 'report',
+    needs_review: false,
+    get description(): string { return t('sh.roles.preset.verify.desc'); },
   },
   {
-    id: ORCHESTRATE_ROLE_ID, name: '协调者', default_tier: 'decide', permission: 'write', deliverable: 'report', needs_review: false,
-    description: '在指定机器上借助本机工具与技能协调完成复杂工作流并交付报告。',
+    id: ORCHESTRATE_ROLE_ID,
+    get name(): string { return t('sh.roles.preset.orchestrate.name'); },
+    default_tier: 'decide',
+    permission: 'write',
+    deliverable: 'report',
+    needs_review: false,
+    get description(): string { return t('sh.roles.preset.orchestrate.desc'); },
   },
 ];
 
@@ -93,19 +119,28 @@ export const PRESET_ROLES: readonly RoleConfig[] = [
 export type TierSource = 'default' | 'override' | 'escalated' | 'reviewed';
 // `reviewed`: a review Task whose tier comes from the round it reviews (roles-and-tiers.md
 // §11.5), rather than from its own role's default.
-export const TIER_SOURCE_TEXT: Record<TierSource, string> = { default: '职能默认', override: '单独指定', escalated: '审阅打回后升档', reviewed: '跟着被审的那一轮' };
+export const TIER_SOURCE_TEXT: Readonly<Record<TierSource, string>> = localeMap({
+  default: 'sh.roles.tierSource.default',
+  override: 'sh.roles.tierSource.override',
+  escalated: 'sh.roles.tierSource.escalated',
+  reviewed: 'sh.roles.tierSource.reviewed',
+});
 
 // Why a Task that names no role waits, wherever the owner meets it.
-export const NO_ROLE_REASON = '这个任务还没有职能，选一个职能再继续';
+export let NO_ROLE_REASON: string = t('sh.roles.noRoleReason');
 // Why a Run out of contact is neither judged nor continued while its Task has no role and
 // names no account: nothing says where its continuation could go.
-export const NO_ROLE_LOST_TEXT = '这个任务还没有职能，选一个职能后才能核实和接续失联的那一轮';
+export let NO_ROLE_LOST_TEXT: string = t('sh.roles.noRoleLost');
 // How far an executor's read-only way reaches (§5): its tool set, the operating system's
 // file access, or the native harness with post-round code-baseline verification. Declared
 // by the adapter; the pages say it as it is.
 const READ_ONLY_LAYER_IDS = ['tools', 'filesystem', 'contract'] as const;
 export type ReadOnlyLayer = (typeof READ_ONLY_LAYER_IDS)[number];
-export const READ_ONLY_LAYERS: Record<ReadOnlyLayer, string> = { tools: '工具层', filesystem: '文件系统层', contract: '事后核对层' };
+export const READ_ONLY_LAYERS: Readonly<Record<ReadOnlyLayer, string>> = localeMap({
+  tools: 'sh.roles.readOnlyLayer.tools',
+  filesystem: 'sh.roles.readOnlyLayer.filesystem',
+  contract: 'sh.roles.readOnlyLayer.contract',
+});
 export const isReadOnlyLayer = (value: unknown): value is ReadOnlyLayer => (READ_ONLY_LAYER_IDS as readonly unknown[]).includes(value);
 
 // How one round was actually run, as its snapshot records it: read-only by the executor's
@@ -113,7 +148,9 @@ export const isReadOnlyLayer = (value: unknown): value is ReadOnlyLayer => (READ
 // with the machine as its boundary. A snapshot from before step 4 has none: it ran writable.
 export type RunAccess = { permission: 'read'; layer: ReadOnlyLayer; args: string[] } | { permission: 'write' };
 export const accessText = (access: RunAccess | undefined): string =>
-  access?.permission === 'read' ? `只读：${READ_ONLY_LAYERS[access.layer] ?? access.layer}` : '可写';
+  access?.permission === 'read'
+    ? t('sh.roles.access.read', { layer: READ_ONLY_LAYERS[access.layer] ?? access.layer })
+    : t('sh.roles.access.write');
 
 // What a read-only round found of a folder source's directory, read only
 // (docs/design/code-sources.md §8.1, §8.2): the commit HEAD names and `git status --porcelain`
@@ -140,36 +177,48 @@ export const codeCheckAdopted = (check: CodeCheck): boolean => check.result === 
 // What a check's words go into — the Run's error, the Task's reason, a push — is shown as one
 // stretch, so a long list of changes is cut here and nowhere else, and says it was cut.
 const CODE_CHECK_TEXT_MAX = 1000;
-const CODE_CHECK_TEXT_CUT = '……（太长，截断了）';
 export function codeCheckText(check: CodeCheck): string {
   const text = ((): string => {
     switch (check.result) {
-      case 'same': return '代码没变';
-      case 'no-code': return `这一轮没有代码，无可核对${folderChangeText(check.folder_change)}`;
-      case 'changed': return `代码被改，结果没有采用：${check.changes.join('；')}`;
-      case 'unverifiable': return `核对不了，结果没有采用：${check.why}`;
+      case 'same': return t('sh.roles.codeCheck.same');
+      case 'no-code': return t('sh.roles.codeCheck.noCode', { folderChange: folderChangeText(check.folder_change) });
+      case 'changed': return t('sh.roles.codeCheck.changed', { changes: check.changes.join(t('sh.semicolonSep')) });
+      case 'unverifiable': return t('sh.roles.codeCheck.unverifiable', { why: check.why });
     }
   })();
-  return text.length > CODE_CHECK_TEXT_MAX ? `${text.slice(0, CODE_CHECK_TEXT_MAX)}${CODE_CHECK_TEXT_CUT}` : text;
+  return text.length > CODE_CHECK_TEXT_MAX ? `${text.slice(0, CODE_CHECK_TEXT_MAX)}${t('sh.roles.codeCheck.truncated')}` : text;
 }
 
 // What the folder's own reading adds to a round that had no code of tycho's to check (§8.2):
 // only ever information, so it is said beside the check and never instead of it.
 function folderChangeText(change: FolderChange | undefined): string {
   if (change === undefined) return '';
-  if (change.why !== undefined) return `；这一轮期间目录有没有变化不知道：${change.why}`;
-  return change.changed ? '；这一轮期间目录有变化' : '；这一轮期间目录没有变化';
+  if (change.why !== undefined) return t('sh.roles.codeCheck.folderUnknown', { why: change.why });
+  return change.changed ? t('sh.roles.codeCheck.folderChanged') : t('sh.roles.codeCheck.folderUnchanged');
 }
 // A machine whose client does not check a read-only round's code afterwards takes none.
-export const CHECK_MISSING_TEXT = '机器上的 tycho 太旧：只读那一轮结束后不会核对代码，升级后再看';
+export let CHECK_MISSING_TEXT: string = t('sh.roles.checkMissing');
 
 // Why a read-only Task stops: no machine said the read-only way of an executor that could
 // take it starts there. `details` says, machine by machine, why not.
 export const readOnlyMissingText = (loginId: string, executor: string): string =>
-  `${loginName(loginId)} 的执行器 ${executor} 不提供只读，只读的职能不能交给它`;
-export const noReadOnlyText =(details: string): string => `没有能只读跑的机器和执行器：${details}`;
-export const ENFORCED_TEXT = '只读职能按原生执行器运行，轮次结束后核对代码基线；交付物在结算时核对，需独立审阅的任务须有有效“通过”才能验收。';
+  t('sh.roles.readOnlyMissing', { login: loginName(loginId), executor });
+export const noReadOnlyText = (details: string): string => t('sh.roles.noReadOnly', { details });
+export let ENFORCED_TEXT: string = t('sh.roles.enforced');
 // What a Task that ended before roles existed shows in place of one.
-export const OLD_NO_ROLE_TEXT = '职能未记录';
+export let OLD_NO_ROLE_TEXT: string = t('sh.roles.oldNoRole');
 // Why a Task cannot be created without one.
-export const ROLE_REQUIRED_TEXT = '任务必须选一个职能';
+export let ROLE_REQUIRED_TEXT: string = t('sh.roles.roleRequired');
+
+onLocaleChange(() => {
+  READ_ONLY_ROUND_TEXT = t('sh.roles.readOnlyRound');
+  REVIEW_SHAPE_TEXT = t('sh.roles.reviewShape');
+  REVIEW_KEEP_TEXT = t('sh.roles.reviewKeep');
+  REVIEW_TIER_TEXT = t('sh.roles.reviewTier');
+  NO_ROLE_REASON = t('sh.roles.noRoleReason');
+  NO_ROLE_LOST_TEXT = t('sh.roles.noRoleLost');
+  CHECK_MISSING_TEXT = t('sh.roles.checkMissing');
+  ENFORCED_TEXT = t('sh.roles.enforced');
+  OLD_NO_ROLE_TEXT = t('sh.roles.oldNoRole');
+  ROLE_REQUIRED_TEXT = t('sh.roles.roleRequired');
+});

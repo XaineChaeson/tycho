@@ -12,6 +12,8 @@
 // (operate) to the one that thinks the most (decide). It is used in exactly two places: the
 // next tier an escalation goes to (§10.3) and the substitute a login without operate content
 // gets (§10.2).
+import { onLocaleChange, t } from './i18n.ts';
+
 export const TIER_IDS = ['operate', 'execute', 'decide'] as const;
 
 export type TierId = (typeof TIER_IDS)[number];
@@ -28,9 +30,24 @@ export interface TierDecl {
 }
 
 export const TIERS: readonly TierDecl[] = [
-  { id: 'operate', label: '操作档', use: '操作档：轻量操作与执行', recommend: '最便宜够用的模型，低推理强度' },
-  { id: 'execute', label: '执行档', use: '执行档：常规实现与交付', recommend: '便宜好用的模型，低到中的推理强度' },
-  { id: 'decide', label: '决策档', use: '决策档：复杂分析、设计与审阅', recommend: '更强的模型，中到高的推理强度' },
+  {
+    id: 'operate',
+    get label(): string { return t('sh.tiers.operate.label'); },
+    get use(): string { return t('sh.tiers.operate.use'); },
+    get recommend(): string { return t('sh.tiers.operate.recommend'); },
+  },
+  {
+    id: 'execute',
+    get label(): string { return t('sh.tiers.execute.label'); },
+    get use(): string { return t('sh.tiers.execute.use'); },
+    get recommend(): string { return t('sh.tiers.execute.recommend'); },
+  },
+  {
+    id: 'decide',
+    get label(): string { return t('sh.tiers.decide.label'); },
+    get use(): string { return t('sh.tiers.decide.use'); },
+    get recommend(): string { return t('sh.tiers.decide.recommend'); },
+  },
 ];
 
 export const isTierId = (name: string): name is TierId => (TIER_IDS as readonly string[]).includes(name);
@@ -41,19 +58,34 @@ export const tierDecl = (name: string): TierDecl | undefined => TIERS.find((tier
 // of it, and every page says the same thing about it.
 export const tierLabel = (name: string): string => tierDecl(name)?.label ?? name;
 
+const computeTierNamesText = (): string =>
+  TIERS.map((tier) => t('sh.tiers.nameWithId', { label: tier.label, id: tier.id })).join(t('sh.listSep'));
+
+const TIER_COUNT_KEYS = ['sh.tiers.count.0', 'sh.tiers.count.1', 'sh.tiers.count.2', 'sh.tiers.count.3', 'sh.tiers.count.4', 'sh.tiers.count.5'] as const;
+const computeTierCountText = (): string => {
+  const key = TIER_COUNT_KEYS[TIER_IDS.length];
+  return key ? t(key) : String(TIER_IDS.length);
+};
+
 // The names as the owner reads them, for a refusal: "操作档（operate）、执行档（execute）、决策档（decide）".
-export const tierNamesText = TIERS.map((tier) => `${tier.label}（${tier.id}）`).join('、');
+export let tierNamesText: string = computeTierNamesText();
 
 // How many names there are, in the owner's words. Written out rather than taken from the
 // array's length so that the sentence reads as Chinese; a tier added to TIERS adds its word
 // here once, instead of every refusal saying the old number.
-export const TIER_COUNT_TEXT = ['零', '一', '两', '三', '四', '五'][TIER_IDS.length] ?? String(TIER_IDS.length);
+export let TIER_COUNT_TEXT: string = computeTierCountText();
+
+onLocaleChange(() => {
+  tierNamesText = computeTierNamesText();
+  TIER_COUNT_TEXT = computeTierCountText();
+});
 
 // Why a name outside them cannot be used: one sentence, so an account, a Task and the
 // Router's own tier all refuse in the same words. A name an older layout left standing is
 // told the same thing: what it was is the migration's business (service/db.ts), not the
 // running program's.
-export const tierOnlyText = (name: string): string => `档位只有${tierNamesText}${TIER_COUNT_TEXT}个，不能有 ${name}`;
+export const tierOnlyText = (name: string): string =>
+  t('sh.tiers.onlyText', { names: tierNamesText, count: TIER_COUNT_TEXT, name });
 
 // A held content tier uses the executor's own configuration even when its text is empty.
 // An omitted tier is absent; only an absent operate tier takes the execute content.
@@ -90,4 +122,4 @@ export function tierValueFrom<T extends { kind: string; text: string }>(
 
 // What a page says when a round runs on a substitute (roles-and-tiers.md §10.3): the tier it
 // ran as, and the one its content came from.
-export const tierSubstituteText = (from: string): string => `这个登录没填，用的${tierLabel(from)}内容`;
+export const tierSubstituteText = (from: string): string => t('sh.tiers.substitute', { label: tierLabel(from) });

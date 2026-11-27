@@ -6,7 +6,7 @@ import { Textarea } from '@/components/ui/input';
 import { Tooltip } from '@/components/ui/menu';
 import { messageOf, post } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
-import { trimQuoteExcerpt } from '@/lib/quotes';
+import { trimQuoteExcerpt, type QuoteSourceKey } from '@/lib/quotes';
 import { cn } from '@/lib/utils';
 
 export interface SideAskQuote {
@@ -39,7 +39,7 @@ export function SideAskDrawer({
   open: boolean;
   initialQuote: SideAskQuote | null;
   onClose: () => void;
-  onPromoteToMain: (payload: { source: string; excerpt: string }) => void;
+  onPromoteToMain: (payload: { source: string; sourceKey?: QuoteSourceKey; excerpt: string }) => boolean | void;
 }) {
   const { locale, t } = useI18n();
   const [quote, setQuote] = useState<SideAskQuote | null>(initialQuote);
@@ -50,16 +50,57 @@ export function SideAskDrawer({
   const [promotedId, setPromotedId] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const requestGenRef = useRef(0);
+  const focusTimerRef = useRef<number | undefined>(undefined);
+  const promoteTimerRef = useRef<number | undefined>(undefined);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const wasOpenRef = useRef(false);
+
+  // Reset ephemeral state and invalidate in-flight requests when switching projects.
+  useEffect(() => {
+    requestGenRef.current += 1;
+    setEntries([]);
+    setDraft('');
+    setBusy(false);
+    setError(null);
+    setPromotedId(null);
+    setQuote(null);
+  }, [projectId]);
 
   useEffect(() => {
     if (initialQuote) setQuote(initialQuote);
   }, [initialQuote]);
 
   useEffect(() => {
+    if (open && !wasOpenRef.current && typeof document !== 'undefined') {
+      openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    } else if (!open && wasOpenRef.current) {
+      openerRef.current?.focus();
+      openerRef.current = null;
+    }
+    wasOpenRef.current = open;
     if (open) {
-      window.setTimeout(() => inputRef.current?.focus(), 20);
+      window.clearTimeout(focusTimerRef.current);
+      focusTimerRef.current = window.setTimeout(() => inputRef.current?.focus(), 20);
     }
   }, [open, initialQuote]);
+
+  useEffect(() => () => {
+    requestGenRef.current += 1;
+    window.clearTimeout(focusTimerRef.current);
+    window.clearTimeout(promoteTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      onClose();
+    };
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [open, onClose]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -72,6 +113,7 @@ export function SideAskDrawer({
   async function submit(): Promise<void> {
     const question = draft.trim();
     if (!question || busy) return;
+    const gen = ++requestGenRef.current;
     const history = entries.map(({ role, text }) => ({ role, text }));
     const userEntry: SideAskEntry = { id: `u-${Date.now()}`, role: 'user', text: question };
     setEntries((prev) => [...prev, userEntry]);
@@ -85,6 +127,7 @@ export function SideAskDrawer({
         ...(history.length > 0 ? { history } : {}),
         locale,
       });
+      if (gen !== requestGenRef.current) return;
       setEntries((prev) => [
         ...prev,
         {
@@ -96,9 +139,10 @@ export function SideAskDrawer({
         },
       ]);
     } catch (err) {
+      if (gen !== requestGenRef.current) return;
       setError(messageOf(err));
     } finally {
-      setBusy(false);
+      if (gen === requestGenRef.current) setBusy(false);
     }
   }
 
@@ -109,19 +153,22 @@ export function SideAskDrawer({
   }
 
   function promote(entry: SideAskEntry): void {
-    onPromoteToMain({
+    const accepted = onPromoteToMain({
       source: t('sideAsk.title'),
+      sourceKey: 'sideAsk',
       excerpt: trimQuoteExcerpt(entry.text, 600),
     });
+    if (accepted === false) return;
     setPromotedId(entry.id);
-    window.setTimeout(() => setPromotedId((cur) => (cur === entry.id ? null : cur)), 2000);
+    window.clearTimeout(promoteTimerRef.current);
+    promoteTimerRef.current = window.setTimeout(() => setPromotedId((cur) => (cur === entry.id ? null : cur)), 2000);
   }
 
   return (
     <aside
       role="dialog"
       aria-label={t('sideAsk.title')}
-      className="fixed right-4 bottom-4 z-40 flex h-[min(560px,calc(100vh-96px))] w-[min(430px,calc(100vw-32px))] flex-col overflow-hidden rounded-2xl border border-border bg-raised shadow-dialog"
+      className="fixed right-4 bottom-4 z-[25] flex h-[min(560px,calc(var(--app-height,100dvh)-96px))] w-[min(430px,calc(100vw-32px))] flex-col overflow-hidden rounded-2xl border border-border bg-raised shadow-dialog"
     >
       <header className="flex flex-none items-center justify-between gap-2 border-b border-border bg-muted/50 px-3.5 py-2.5">
         <div className="min-w-0">
@@ -139,7 +186,9 @@ export function SideAskDrawer({
                 size="icon-sm"
                 aria-label={t('sideAsk.clear')}
                 onClick={() => {
+                  requestGenRef.current += 1;
                   setEntries([]);
+                  setBusy(false);
                   setError(null);
                 }}
               >

@@ -4,6 +4,7 @@
 // the newer. The lock is the console's, not the page's: a change sent before the owner
 // left the page holds the next one until it is answered, also once they are back.
 import { useIsMutating, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
+import { onLocaleChange, t } from '@shared/i18n.ts';
 import { useMounted } from '@/hooks/use-mounted';
 
 interface Change<Page> {
@@ -13,8 +14,15 @@ interface Change<Page> {
   taken: (page: Page, answer: unknown) => Page;
 }
 
+export function earlierChangeText(): string {
+  return t('core.change.earlier');
+}
+
 // Said by a page that finds a change on its way and has no row of its own that says so.
-export const EARLIER_CHANGE = '上一次的改动还没有结果，等它回来才能再改。';
+export let EARLIER_CHANGE = t('core.change.earlier');
+onLocaleChange(() => {
+  EARLIER_CHANGE = t('core.change.earlier');
+});
 
 export function useChange<Page>({ mutationKey, queryKey, reread = false }: {
   mutationKey: QueryKey;

@@ -8,6 +8,7 @@ import { Confirm } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api, del, messageOf, put } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { PAGE } from '@/lib/queries';
 
 export interface PassphraseStatus {
@@ -17,23 +18,22 @@ export interface PassphraseStatus {
 const PASSPHRASE_QUERY_KEY = [PAGE, 'auth-passphrase'] as const;
 const MIN_LENGTH = 8;
 const MAX_LENGTH = 128;
-const EXPLANATION =
-  '开启后，在微信浏览器、新浏览器或新设备打开登录页时，可直接输入主人口令进入控制台，无需每次找另一台设备输入 6 位放行码。口令仅以 scrypt 加盐哈希存放在主机私钥目录，6 位码放行仍可作为备用。';
 
-function validatePassphrase(passphrase: string, confirm: string): string | null {
+function validatePassphrase(passphrase: string, confirm: string, t: ReturnType<typeof useI18n>['t']): string | null {
   if (passphrase.length < MIN_LENGTH) {
-    return `主人口令至少需要 ${MIN_LENGTH} 位字符。`;
+    return t('set.pass.tooShort', { min: MIN_LENGTH });
   }
   if (passphrase.length > MAX_LENGTH) {
-    return `主人口令长度不能超过 ${MAX_LENGTH} 位字符。`;
+    return t('set.pass.tooLong', { max: MAX_LENGTH });
   }
   if (passphrase !== confirm) {
-    return '两次输入的口令不一致，请重新确认。';
+    return t('set.pass.mismatch');
   }
   return null;
 }
 
 export function PassphraseSetup() {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: PASSPHRASE_QUERY_KEY,
@@ -64,11 +64,11 @@ export function PassphraseSetup() {
 
   if (query.error && !query.data) {
     return (
-      <Card id="setting-auth.passphrase" className="mt-4 grid justify-items-start gap-3" aria-label="主人口令直登">
-        <h3 className="text-sm font-semibold text-foreground">主人口令直登</h3>
+      <Card id="setting-auth.passphrase" className="mt-4 grid justify-items-start gap-3" aria-label={t('set.pass.title')}>
+        <h3 className="text-sm font-semibold text-foreground">{t('set.pass.title')}</h3>
         <Problem role="alert">{messageOf(query.error)}</Problem>
         <Button size="sm" disabled={query.isFetching} onClick={() => void query.refetch()}>
-          重试读取
+          {t('set.retryRead')}
         </Button>
       </Card>
     );
@@ -95,7 +95,7 @@ export function PassphraseSetup() {
     event.preventDefault();
     if (submitting || disabling) return;
 
-    const invalid = validatePassphrase(passphrase, confirm);
+    const invalid = validatePassphrase(passphrase, confirm, t);
     if (invalid) {
       setFormError(invalid);
       setNotice(null);
@@ -113,7 +113,7 @@ export function PassphraseSetup() {
     try {
       await put<PassphraseStatus>('/api/auth/passphrase', { passphrase: nextPassphrase });
       setChanging(false);
-      setNotice('主人口令已保存');
+      setNotice(t('set.pass.saved'));
       queryClient.setQueryData<PassphraseStatus>(PASSPHRASE_QUERY_KEY, { enabled: true });
       await queryClient.invalidateQueries({ queryKey: PASSPHRASE_QUERY_KEY });
     } catch (err) {
@@ -136,7 +136,7 @@ export function PassphraseSetup() {
       setPassphrase('');
       setConfirm('');
       setFormError(null);
-      setNotice('已关闭口令登录');
+      setNotice(t('set.pass.disabledNotice'));
       queryClient.setQueryData<PassphraseStatus>(PASSPHRASE_QUERY_KEY, { enabled: false });
       await queryClient.invalidateQueries({ queryKey: PASSPHRASE_QUERY_KEY });
     } catch (err) {
@@ -146,18 +146,18 @@ export function PassphraseSetup() {
     }
   }
 
-  const firstLabel = enabled ? '新口令' : '主人口令';
-  const secondLabel = enabled ? '确认新口令' : '确认口令';
+  const firstLabel = enabled ? t('set.pass.newLabel') : t('set.pass.ownerLabel');
+  const secondLabel = enabled ? t('set.pass.confirmNewLabel') : t('set.pass.confirmLabel');
 
   return (
     <>
-      <Card id="setting-auth.passphrase" className="mt-4 grid gap-3.5" aria-label="主人口令直登">
+      <Card id="setting-auth.passphrase" className="mt-4 grid gap-3.5" aria-label={t('set.pass.title')}>
         <div className="grid gap-1.5">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold text-foreground">主人口令直登</h3>
-            <Badge tone={enabled ? 'success' : 'plain'}>{enabled ? '已开启' : '未开启'}</Badge>
+            <h3 className="text-sm font-semibold text-foreground">{t('set.pass.title')}</h3>
+            <Badge tone={enabled ? 'success' : 'plain'}>{enabled ? t('set.pass.enabledBadge') : t('set.pass.disabledBadge')}</Badge>
           </div>
-          <Note className="text-xs">{EXPLANATION}</Note>
+          <Note className="text-xs">{t('set.pass.explanation')}</Note>
         </div>
 
         {enabled ? (
@@ -165,7 +165,7 @@ export function PassphraseSetup() {
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted px-3 py-2.5">
               <div className="flex min-w-0 items-center gap-2 text-xs text-foreground">
                 <Dot tone="success" />
-                <span>已设置主人口令，可在新浏览器或新设备登录页直接输入进入。</span>
+                <span>{t('set.pass.configuredHint')}</span>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button
@@ -174,7 +174,7 @@ export function PassphraseSetup() {
                   disabled={submitting || disabling || changing}
                   onClick={openChangeForm}
                 >
-                  更换口令
+                  {t('set.pass.changeBtn')}
                 </Button>
                 <Button
                   size="sm"
@@ -185,7 +185,7 @@ export function PassphraseSetup() {
                     setConfirmDisable(true);
                   }}
                 >
-                  关闭口令登录
+                  {t('set.pass.disableBtn')}
                 </Button>
               </div>
             </div>
@@ -202,7 +202,7 @@ export function PassphraseSetup() {
                       type="password"
                       autoComplete="new-password"
                       aria-label={firstLabel}
-                      placeholder="至少 8 位字符（支持空格和中文）"
+                      placeholder={t('set.pass.placeholder')}
                       value={passphrase}
                       disabled={submitting}
                       onChange={(event) => {
@@ -221,7 +221,7 @@ export function PassphraseSetup() {
                       type="password"
                       autoComplete="new-password"
                       aria-label={secondLabel}
-                      placeholder="再输入一次确认"
+                      placeholder={t('set.pass.confirmPlaceholder')}
                       value={confirm}
                       disabled={submitting}
                       onChange={(event) => {
@@ -234,10 +234,10 @@ export function PassphraseSetup() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Button type="submit" variant="primary" disabled={submitting}>
-                    {submitting ? '保存中…' : '保存新口令'}
+                    {submitting ? t('common.saving') : t('set.pass.saveNewBtn')}
                   </Button>
                   <Button variant="ghost" disabled={submitting} onClick={cancelChangeForm}>
-                    取消
+                    {t('common.cancel')}
                   </Button>
                 </div>
                 {formError ? <Problem role="alert">{formError}</Problem> : null}
@@ -256,7 +256,7 @@ export function PassphraseSetup() {
                   type="password"
                   autoComplete="new-password"
                   aria-label={firstLabel}
-                  placeholder="至少 8 位字符（支持空格和中文）"
+                  placeholder={t('set.pass.placeholder')}
                   value={passphrase}
                   disabled={submitting}
                   onChange={(event) => {
@@ -275,7 +275,7 @@ export function PassphraseSetup() {
                   type="password"
                   autoComplete="new-password"
                   aria-label={secondLabel}
-                  placeholder="再输入一次确认"
+                  placeholder={t('set.pass.confirmPlaceholder')}
                   value={confirm}
                   disabled={submitting}
                   onChange={(event) => {
@@ -288,7 +288,7 @@ export function PassphraseSetup() {
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Button type="submit" variant="primary" disabled={submitting}>
-                {submitting ? '保存中…' : '开启口令登录'}
+                {submitting ? t('common.saving') : t('set.pass.enableBtn')}
               </Button>
             </div>
             {formError ? <Problem role="alert">{formError}</Problem> : null}
@@ -305,9 +305,9 @@ export function PassphraseSetup() {
 
       <Confirm
         open={confirmDisable}
-        title="关闭主人口令直登？"
-        description="关闭后将清除已保存的主人口令。之后在新浏览器或新设备打开登录页时，需通过 6 位放行码完成放行。"
-        confirm={disabling ? '关闭中…' : '确认关闭'}
+        title={t('set.pass.disableConfirmTitle')}
+        description={t('set.pass.disableConfirmDesc')}
+        confirm={disabling ? t('set.pass.disabling') : t('set.pass.confirmDisable')}
         danger
         busy={disabling}
         error={disableError}

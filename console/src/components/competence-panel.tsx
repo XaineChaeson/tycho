@@ -9,10 +9,12 @@ import {
   type CompetenceReport,
   type CompetenceRow,
 } from '@shared/competence.ts';
-import { tierLabel } from '@shared/tiers.ts';
+import { t as translate } from '@shared/i18n.ts';
+import { tierDisplayLabel } from '@shared/labels.ts';
 import { Empty, Mono, Note, Problem, SectionTitle } from '@/components/bits';
 import { Badge, type BadgeTone } from '@/components/ui/badge';
 import { api, messageOf } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { formatDuration, formatTokens, formatUsd, rangeOf, type Range } from '@/lib/usage';
 import { cn } from '@/lib/utils';
 
@@ -36,21 +38,21 @@ function formatAvgDuration(ms: number | null): string {
   if (ms === null) return '—';
   if (ms < 60_000) {
     const seconds = Math.max(1, Math.round(ms / 1000));
-    return ms === 0 ? '0 秒' : `${seconds} 秒`;
+    return translate('acct.comp.sec', { seconds: ms === 0 ? 0 : seconds });
   }
   return formatDuration(ms);
 }
 
-function displayTier(tier: string): string {
-  return tier === 'unspecified' ? '未指定' : tierLabel(tier);
+function displayTier(tier: string, locale: string): string {
+  return tier === 'unspecified' ? translate('acct.comp.unspecifiedTier') : tierDisplayLabel(tier, locale);
 }
 
 function formatRowCost(row: CompetenceRow): { text: string; faint: boolean } {
   if (row.total_tokens === 0 && row.list_cost_usd === 0 && row.unpriced_rounds === row.rounds) {
-    return { text: '无报价', faint: true };
+    return { text: translate('acct.usage.unpriced'), faint: true };
   }
   if (row.list_cost_usd === 0 && row.unpriced_rounds > 0) {
-    return { text: '无报价', faint: true };
+    return { text: translate('acct.usage.unpriced'), faint: true };
   }
   if (row.list_cost_usd === 0) {
     return { text: '—', faint: true };
@@ -62,6 +64,7 @@ function formatRowCost(row: CompetenceRow): { text: string; faint: boolean } {
 }
 
 export function CompetencePanel({ days }: { days: Range }) {
+  const { t } = useI18n();
   const [loaded, setLoaded] = useState<{ days: Range; report: CompetenceReport } | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -96,23 +99,23 @@ export function CompetencePanel({ days }: { days: Range }) {
   return (
     <section aria-labelledby="competence-title" className="mt-9">
       <SectionTitle id="competence-title" count={report ? report.rows.length : undefined}>
-        胜任力与成本证据
+        {t('acct.comp.title')}
       </SectionTitle>
       <Note className="mb-3 text-xs">
-        {`基于所选时间窗内的实际工作轮次、评审结论与标价成本（不计审阅任务本身）；已评审样本 < ${minSample} 轮仅作观察。`}
+        {t('acct.comp.note', { minSample })}
       </Note>
 
       {error ? <Problem role="alert" className="mb-3">{error}</Problem> : null}
 
       {loading && report === null ? (
         <div className="rounded-xl bg-raised px-4 py-6 text-sm text-muted-foreground shadow-card" role="status" aria-live="polite">
-          正在统计各登录与档位的胜任力表现…
+          {t('acct.comp.loading')}
         </div>
       ) : null}
 
       {!loading && error === null && report !== null && report.rows.length === 0 ? (
-        <Empty title="这段时间没有工作轮次">
-          选定时间窗内暂无已结束的非审阅工作轮次；产生执行与评审记录后，会在此展示各登录与档位的胜任力与成本证据。
+        <Empty title={t('acct.comp.emptyTitle')}>
+          {t('acct.comp.emptyBody')}
         </Empty>
       ) : null}
 
@@ -122,7 +125,7 @@ export function CompetencePanel({ days }: { days: Range }) {
           <CompetenceTable rows={report.rows} />
           {hasPartialPricing ? (
             <Note className="-mt-1 text-xs">
-              * 这一行有一部分轮次执行器没有报价（Codex、dsh、Gemini 或未上报用量），金额只算报了的那些。
+              {t('acct.comp.partialPriceFootnote')}
             </Note>
           ) : null}
         </div>
@@ -132,14 +135,15 @@ export function CompetencePanel({ days }: { days: Range }) {
 }
 
 function SummaryTiles({ summary }: { summary: CompetenceReport['summary'] }) {
+  const { t } = useI18n();
   const tiles = [
-    { label: '工作轮次', value: `${summary.total_rounds} 轮`, detail: '已结束的非审阅执行轮次' },
-    { label: '已评审', value: `${summary.reviewed_rounds} 轮`, detail: '有通过结论或打回返工记录' },
-    { label: '触发升档', value: `${summary.escalated_rounds} 次`, detail: '审阅打回并自动升至更高档位' },
+    { label: t('acct.comp.tileRounds'), value: t('acct.telemetry.runsCount', { count: summary.total_rounds }), detail: t('acct.comp.tileRoundsDetail') },
+    { label: t('acct.comp.tileReviewed'), value: t('acct.telemetry.runsCount', { count: summary.reviewed_rounds }), detail: t('acct.comp.tileReviewedDetail') },
+    { label: t('acct.comp.tileEscalated'), value: t('acct.comp.timesCount', { count: summary.escalated_rounds }), detail: t('acct.comp.tileEscalatedDetail') },
     {
-      label: '标价折算',
-      value: summary.total_list_cost_usd > 0 ? formatUsd(summary.total_list_cost_usd) : '无数据',
-      detail: '仅含执行器上报 API 标价的轮次',
+      label: t('acct.usage.metricCost'),
+      value: summary.total_list_cost_usd > 0 ? formatUsd(summary.total_list_cost_usd) : t('acct.usage.noData'),
+      detail: t('acct.comp.tileCostDetail'),
     },
   ];
   return (
@@ -164,21 +168,22 @@ function SummaryTiles({ summary }: { summary: CompetenceReport['summary'] }) {
 }
 
 function CompetenceTable({ rows }: { rows: readonly CompetenceRow[] }) {
+  const { t, locale } = useI18n();
   const head = 'px-3 py-2 text-right text-xs font-medium text-muted-foreground whitespace-nowrap';
   const cell = 'px-3 py-2.5 text-right align-top tabular-nums whitespace-nowrap';
   return (
     <div className="overflow-x-auto rounded-xl bg-raised shadow-card">
       <table className="w-full min-w-[820px] border-collapse text-sm">
-        <caption className="sr-only">各登录与档位的胜任力与成本证据</caption>
+        <caption className="sr-only">{t('acct.comp.tableCaption')}</caption>
         <thead>
           <tr className="border-b border-border">
-            <th scope="col" className={cn(head, 'text-left')}>登录 × 执行器 × 档位</th>
-            <th scope="col" className={head}>轮次（完成/失败）</th>
-            <th scope="col" className={head}>一次通过率</th>
-            <th scope="col" className={head}>打回 / 升档</th>
-            <th scope="col" className={head}>平均耗时</th>
-            <th scope="col" className={head} title="Token 总计与执行器按 API 标价折算；* 表示部分轮次无报价">Token / 标价</th>
-            <th scope="col" className={cn(head, 'text-left')}>建议与依据</th>
+            <th scope="col" className={cn(head, 'text-left')}>{t('acct.comp.colIdentity')}</th>
+            <th scope="col" className={head}>{t('acct.comp.colRounds')}</th>
+            <th scope="col" className={head}>{t('acct.comp.colFirstPass')}</th>
+            <th scope="col" className={head}>{t('acct.comp.colReworkEscalate')}</th>
+            <th scope="col" className={head}>{t('acct.comp.colAvgDuration')}</th>
+            <th scope="col" className={head} title={t('acct.comp.colTokensCostHint')}>{t('acct.comp.colTokensCost')}</th>
+            <th scope="col" className={cn(head, 'text-left')}>{t('acct.comp.colAdvice')}</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -192,13 +197,13 @@ function CompetenceTable({ rows }: { rows: readonly CompetenceRow[] }) {
                   <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
                     <Mono className="text-muted-foreground">{row.executor}</Mono>
                     <span aria-hidden="true">·</span>
-                    <span>{displayTier(row.tier)}</span>
+                    <span>{displayTier(row.tier, locale)}</span>
                   </div>
                 </th>
                 <td className={cell}>
-                  <div className="font-medium">{`${row.rounds} 轮`}</div>
+                  <div className="font-medium">{t('acct.telemetry.runsCount', { count: row.rounds })}</div>
                   <div className="mt-0.5 text-xs text-faint">
-                    {`完成 ${row.completed_rounds} / 失败 ${row.failed_rounds}`}
+                    {t('acct.comp.doneFailed', { done: row.completed_rounds, failed: row.failed_rounds })}
                     {row.failed_rounds > 0 ? ` (${formatPercent(row.failure_rate)})` : ''}
                   </div>
                 </td>
@@ -207,12 +212,12 @@ function CompetenceTable({ rows }: { rows: readonly CompetenceRow[] }) {
                     {row.first_pass_rate === null ? '—' : formatPercent(row.first_pass_rate)}
                   </div>
                   <div className="mt-0.5 text-xs text-faint">
-                    {row.reviewed_rounds > 0 ? `${row.first_pass_count}/${row.reviewed_rounds} 已评` : '未评审'}
+                    {row.reviewed_rounds > 0 ? t('acct.comp.reviewedRatio', { pass: row.first_pass_count, total: row.reviewed_rounds }) : t('acct.comp.unreviewed')}
                   </div>
                 </td>
                 <td className={cell}>
                   <div className="font-medium">{`${row.rework_count} / ${row.escalated_count}`}</div>
-                  <div className="mt-0.5 text-xs text-faint">打回 / 升档</div>
+                  <div className="mt-0.5 text-xs text-faint">{t('acct.comp.colReworkEscalate')}</div>
                 </td>
                 <td className={cn(cell, row.avg_duration_ms === null && 'text-faint')}>
                   {formatAvgDuration(row.avg_duration_ms)}

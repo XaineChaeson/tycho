@@ -5,13 +5,14 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
-import { normalizeLocale } from '@shared/i18n.ts';
+import { DEFAULT_LOCALE, normalizeLocale } from '@shared/i18n.ts';
 import { changedByText, projectRouterErrors, routerLine, tierText } from '@shared/labels.ts';
 import { loginName } from '@shared/logins.ts';
 import { formatTime } from '@shared/time.ts';
 import { TIER_IDS, isTierId, tierLabel, tierValueFrom, type TierId } from '@shared/tiers.ts';
 import { Copyable, Fact, Facts, Note, Problem } from '@/components/bits';
 import { GitHubSetup } from '@/components/github-setup';
+import { LocalePackManager } from '@/components/locale-pack-manager';
 import { PageBar } from '@/components/page';
 import { PassphraseSetup } from '@/components/passphrase-setup';
 import { ImChannelsPanel, type ImChannelsTab } from '@/components/im-channels-panel';
@@ -37,24 +38,78 @@ const ROUTER_START_KEYS = ['router.cli', 'router.account', 'router.tier'];
 // computer's own login and the executor's own default tier.
 const ROUTER_ACCOUNT = 'router.account';
 const ROUTER_TIER = 'router.tier';
-const NO_ACCOUNT = '不绑定：用这台电脑自己的登录和默认档位';
-const NO_TIER = '不指定，用执行器自己的默认档位';
 // Rows of the settings page that are no item of the list. They share its one-save lock.
 const SECRET = 'wecom.secret';
 const RESTART = 'router.restart';
 const CHANGE = ['settings-change'];
-// How long a row says 已保存 after its answer landed.
+// How long a row says saved after its answer landed.
 const SAVED_MS = 2000;
-// The page of what the service is, beside the groups of what can be changed.
-const DEPLOYMENT = '部署信息';
+// Backend `item.group` wire/URL identifiers sent by `service/settings.ts`.
+const DEPLOYMENT = '部署信息'; // i18n-ignore
 const GITHUB = 'GitHub';
-const LOGIN = '登录';
-const IM_CHANNELS = '消息通道';
-const LEGACY_WECOM = '企业微信';
-const LEGACY_WEIXIN = '微信';
-const SECRET_HELP = '企业微信智能机器人的 Secret。只能填，填了以后不会再显示。它单独存在服务所在的电脑上，不进账本，所以备份里也没有它。保存后马上按新值重连。';
+const LOGIN = '登录'; // i18n-ignore
+const IM_CHANNELS = '消息通道'; // i18n-ignore
+const LEGACY_WECOM = '企业微信'; // i18n-ignore
+const LEGACY_WEIXIN = '微信'; // i18n-ignore
+const GROUP_LABEL_KEYS: Record<string, string> = {
+  '执行': 'set.group.runs', // i18n-ignore
+  '账号': 'set.group.accounts', // i18n-ignore
+  '机器': 'set.group.machines', // i18n-ignore
+  '负责人': 'set.group.router', // i18n-ignore
+  '消息通道': 'set.group.im', // i18n-ignore
+  '通知': 'set.group.notices', // i18n-ignore
+  '登录': 'set.group.login', // i18n-ignore
+  '服务': 'set.group.service', // i18n-ignore
+  '上线': 'set.group.release', // i18n-ignore
+  '门牌': 'set.group.gateway', // i18n-ignore
+  '备份': 'set.group.backup', // i18n-ignore
+  '保留': 'set.group.retention', // i18n-ignore
+  '知识': 'set.group.knowledge', // i18n-ignore
+  '触发器': 'set.group.triggers', // i18n-ignore
+  '入站来源': 'set.group.inbound', // i18n-ignore
+  '部署信息': 'set.group.deployment', // i18n-ignore
+  '企业微信': 'set.group.wecom', // i18n-ignore
+  '微信': 'set.group.weixin', // i18n-ignore
+};
 // Values the owner reads as paths rather than prose.
 const PATHS = ['file', 'directory', 'url'];
+
+type Translate = ReturnType<typeof useI18n>['t'];
+
+function displayGroup(group: string, t: Translate): string {
+  const key = GROUP_LABEL_KEYS[group];
+  return key ? t(key) : group;
+}
+
+function itemTitle(item: Pick<Setting, 'key' | 'title'>, locale: string, hasOverride: boolean, t: Translate): string {
+  if (item.key === 'ui.locale') return t('settings.languageTitle');
+  if (locale !== DEFAULT_LOCALE || hasOverride) {
+    const key = `set.item.${item.key}.title`;
+    const translated = t(key);
+    if (translated !== key) return translated;
+  }
+  return item.title;
+}
+
+function itemHelp(item: Pick<Setting, 'key' | 'help'>, locale: string, hasOverride: boolean, t: Translate): string {
+  if (item.key === 'ui.locale') return t('settings.languageHint');
+  if (locale !== DEFAULT_LOCALE || hasOverride) {
+    const key = `set.item.${item.key}.help`;
+    const translated = t(key);
+    if (translated !== key) return translated;
+  }
+  return item.help;
+}
+
+function itemEmpty(item: Pick<Setting, 'key' | 'empty'>, locale: string, hasOverride: boolean, t: Translate): string | undefined {
+  if (item.empty === undefined) return undefined;
+  if (locale !== DEFAULT_LOCALE || hasOverride) {
+    const key = `set.item.${item.key}.empty`;
+    const translated = t(key);
+    if (translated !== key) return translated;
+  }
+  return item.empty;
+}
 
 // By key: a row keeps what was typed and why it failed across the page's own reads.
 interface Draft {
@@ -84,10 +139,27 @@ const tiersOf = (accounts: Pick<Account, 'id' | 'tiers'>[] | undefined, bound: s
 // the service says an empty value stands for, so the row and its choice say one thing.
 // `held` is the value in force: one this version will not take is offered back under its
 // own name, marked as such, so the owner sees what the Router is stopped on.
-function routerChoices(key: string, accounts: (Pick<Account, 'id' | 'name' | 'tiers' | 'executor' | 'can_route'> & { reason?: string })[] | undefined, bound: string, empty?: string, held = ''): [string, string][] {
-  const none = empty ?? (key === ROUTER_ACCOUNT ? NO_ACCOUNT : NO_TIER);
+function routerChoices(
+  key: string,
+  accounts: (Pick<Account, 'id' | 'name' | 'tiers' | 'executor' | 'can_route'> & { reason?: string })[] | undefined,
+  bound: string,
+  t: Translate,
+  empty?: string,
+  held = '',
+): [string, string][] {
+  const none = empty ?? (key === ROUTER_ACCOUNT ? t('set.router.noAccount') : t('set.router.noTier'));
   if (key === ROUTER_ACCOUNT) {
-    return [['', none], ...(accounts ?? []).map(({ id, name, executor, can_route, reason }): [string, string] => [id, `${name}（${executor}${reason ? `，${reason}` : can_route ? '' : '，不支持负责人'}）`])];
+    return [
+      ['', none],
+      ...(accounts ?? []).map(({ id, name, executor, can_route, reason }): [string, string] => [
+        id,
+        reason
+          ? t('set.router.accountOptionReason', { name, executor, reason })
+          : can_route
+            ? t('set.router.accountOption', { name, executor })
+            : t('set.router.accountOptionUnsupported', { name, executor }),
+      ]),
+    ];
   }
   const offered = tiersOf(accounts, bound);
   return [
@@ -97,13 +169,13 @@ function routerChoices(key: string, accounts: (Pick<Account, 'id' | 'name' | 'ti
     // own name, and a name the system no longer uses is marked as such.
     ...(held === '' || offered.includes(held as TierId)
       ? []
-      : [[held, isTierId(held) ? held : `${held}（${tierText.stale}）`] as [string, string]]),
+      : [[held, isTierId(held) ? held : t('set.router.tierStale', { tier: held, stale: tierText.stale })] as [string, string]]),
   ];
 }
 
 // One item: what it is called and what it is now on the left, with what it means behind
-// 说明; the control on the right, and — only once something has been typed — the buttons
-// that send or drop it. Enter in the box is the same as the 保存 button.
+// details; the control on the right, and — only once something has been typed — the buttons
+// that send or drop it. Enter in the box is the same as the save button.
 function Row({ id, label, current, summary, help, extra, control, actions, failure, onSubmit }: {
   id: string;
   label: string;
@@ -116,6 +188,7 @@ function Row({ id, label, current, summary, help, extra, control, actions, failu
   failure?: string | undefined;
   onSubmit?: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <form
       id={id}
@@ -133,7 +206,7 @@ function Row({ id, label, current, summary, help, extra, control, actions, failu
           {extra}
           {help ? (
             <details className="mt-1 text-xs">
-              <summary className="inline-flex min-h-6 cursor-pointer list-none items-center text-faint underline decoration-border-strong underline-offset-3 hover:text-foreground [&::-webkit-details-marker]:hidden">说明</summary>
+              <summary className="inline-flex min-h-6 cursor-pointer list-none items-center text-faint underline decoration-border-strong underline-offset-3 hover:text-foreground [&::-webkit-details-marker]:hidden">{t('common.help')}</summary>
               <div className="mt-1 text-muted-foreground wrap-anywhere">{help}</div>
             </details>
           ) : null}
@@ -161,23 +234,32 @@ function SettingRow({ item, current, draft, saving, saved, busy, save, edit, acc
   // The account the tier row is about: the account row's draft, or the account saved.
   bound: string;
 }) {
-  const { t, bi } = useI18n();
+  const { locale, pack, packs, t } = useI18n();
+  const hasOverride = Boolean(pack?.hasOverride);
+  const label = itemTitle(item, locale, hasOverride, t);
+  const help = itemHelp(item, locale, hasOverride, t);
+  const resolvedEmpty = itemEmpty(item, locale, hasOverride, t);
+  const localizedItem = resolvedEmpty === item.empty ? item : { ...item, empty: resolvedEmpty };
   const path = `/api/settings/${encodeURIComponent(item.key)}`;
-  const field = draft.field ?? settingField(item, item.value, logins);
+  const field = draft.field ?? settingField(localizedItem, item.value, logins);
   const mine = saving === item.key;
   // The Router's account and tier are picked, not typed: what they offer is the empty
   // choice and what the service knows of accounts. A tier belongs to an account, so with
   // none bound, or one that has no tiers, the row has nothing to offer but empty.
   const picked = item.key === ROUTER_ACCOUNT || item.key === ROUTER_TIER;
   const held = typeof item.value === 'string' ? item.value : '';
-  const localeChoiceLabel = (choice: string): string => (choice === 'en' ? 'English (en)' : choice === 'zh-CN' ? '简体中文 (zh-CN)' : choice);
-  const options = picked ? routerChoices(item.key, accounts, bound, item.empty, held)
-    : item.type === 'choice' ? (item.choices ?? []).map((choice): [string, string] => [choice, item.key === 'ui.locale' ? localeChoiceLabel(choice) : choice])
+  const localeChoiceLabel = (choice: string): string => {
+    const found = packs.find((p) => p.id === choice);
+    return found ? `${found.nativeName} (${found.id})` : choice;
+  };
+  const options = picked ? routerChoices(item.key, accounts, bound, t, resolvedEmpty, held)
+    : item.key === 'ui.locale' ? packs.map((p): [string, string] => [p.id, `${p.nativeName} (${p.id})`])
+    : item.type === 'choice' ? (item.choices ?? []).map((choice): [string, string] => [choice, choice])
       : null;
   // Closed when there is nothing to pick from: no tier of the bound account, and nothing
   // in force either (an older name is shown so it can be seen and cleared).
   const closed = item.key === ROUTER_TIER && tiersOf(accounts, bound).length === 0 && held === '';
-  const dirty = draft.field !== undefined && draft.field !== settingField(item, item.value, logins);
+  const dirty = draft.field !== undefined && draft.field !== settingField(localizedItem, item.value, logins);
   const away = !sameSetting(item.value, item.default);
   // A stored value this version will not take is nowhere to be seen as the current value,
   // so it has no "away from the default" to show: it is put back by the same small button.
@@ -186,37 +268,43 @@ function SettingRow({ item, current, draft, saving, saved, busy, save, edit, acc
   // summary and the choice say the same thing (docs/design/roles-and-tiers.md §2).
   const shownValue = (): string => {
     if (item.key === 'ui.locale' && typeof item.value === 'string') return localeChoiceLabel(item.value);
-    const text = settingShown(item, item.value, logins);
+    const text = settingShown(localizedItem, item.value, logins);
     return item.key === ROUTER_TIER && typeof item.value === 'string' && item.value !== '' ? tierLabel(item.value) : text;
   };
-  const facts = [`${bi('现在：', 'Current: ')}${shownValue()}`];
-  if (away) facts.push(`${bi('默认：', 'Default: ')}${item.key === 'ui.locale' && typeof item.default === 'string' ? localeChoiceLabel(item.default) : settingShown(item, item.default, logins)}`);
-  if (item.restart) facts.push(bi('重启后生效（需重启 Tycho 服务进程）', 'Requires Tycho service restart'));
+  const facts = [t('set.row.current', { value: shownValue() })];
+  if (away) {
+    facts.push(t('set.row.default', {
+      value: item.key === 'ui.locale' && typeof item.default === 'string'
+        ? localeChoiceLabel(item.default)
+        : settingShown(localizedItem, item.default, logins),
+    }));
+  }
+  if (item.restart) facts.push(t('set.row.restartRequired'));
   if (item.updated_at) facts.push(`${formatTime(item.updated_at)} ${changedByText(item.updated_by ?? '')}`);
   const unit = unitLabel(item);
   return (
     <Row
       id={`setting-${item.key}`}
-      label={item.key === 'ui.locale' ? t('settings.languageTitle') : item.title}
+      label={label}
       current={current}
       summary={facts.join(' · ')}
-      help={item.key === 'ui.locale' ? t('settings.languageHint') : item.help}
+      help={help}
       extra={
         <>
           {/* The operate tier is offered, not refused: the owner may want it anyway
               (roles-and-tiers.md §10.3). */}
-          {item.key === ROUTER_TIER && field === 'operate' ? <Note className="mt-1 text-xs text-waiting-foreground">负责人的活全是判断，不建议用操作档。</Note> : null}
+          {item.key === ROUTER_TIER && field === 'operate' ? <Note className="mt-1 text-xs text-waiting-foreground">{t('set.router.operateTierWarn')}</Note> : null}
           {item.stored && !item.overridden
-            ? <Note className="mt-1 text-xs text-waiting-foreground">账本里存着一个这个版本不接受的值，现在按默认值生效。点“恢复默认”可以把它清掉。</Note>
+            ? <Note className="mt-1 text-xs text-waiting-foreground">{t('set.row.staleStoredWarn')}</Note>
             : null}
         </>
       }
       failure={draft.error}
-      onSubmit={() => { if (dirty) void save(item.key, () => put<{ settings: Setting[] }>(path, { value: settingValue(item, field, logins) }), listOf); }}
+      onSubmit={() => { if (dirty) void save(item.key, () => put<{ settings: Setting[] }>(path, { value: settingValue(localizedItem, field, logins) }), listOf); }}
       control={
         item.type === 'boolean' ? (
           <Switch
-            aria-label={item.title}
+            aria-label={label}
             disabled={busy}
             checked={item.value === true}
             onCheckedChange={(on) => {
@@ -224,13 +312,13 @@ function SettingRow({ item, current, draft, saving, saved, busy, save, edit, acc
             }}
           />
         ) : options ? (
-          <Select aria-label={item.title} wrapperClassName="min-w-24 flex-1" className="w-full" value={field} disabled={mine || closed} onChange={(event) => edit(item.key, event.target.value)}>
+          <Select aria-label={label} wrapperClassName="min-w-24 flex-1" className="w-full" value={field} disabled={mine || closed} onChange={(event) => edit(item.key, event.target.value)}>
             {options.map(([value, shown]) => <Option key={value} value={value} disabled={item.key === ROUTER_ACCOUNT && accounts?.find(({ id }) => id === value)?.can_route === false}>{shown}</Option>)}
           </Select>
         ) : (
           // Text, not number: what cannot be read as one goes to the service as typed.
           <Input
-            aria-label={item.title}
+            aria-label={label}
             className={cn('w-auto min-w-24 flex-1', PATHS.includes(item.type) && 'font-mono text-xs', isNumber(item) && 'max-w-32 tabular-nums')}
             inputMode={isNumber(item) ? 'decimal' : undefined}
             value={field}
@@ -242,16 +330,16 @@ function SettingRow({ item, current, draft, saving, saved, busy, save, edit, acc
       actions={
         <>
           {unit ? <span className="text-sm text-muted-foreground">{unit}</span> : null}
-          {item.type === 'boolean' && mine ? <span className="text-xs text-muted-foreground">{bi('保存中', 'Saving')}</span> : null}
+          {item.type === 'boolean' && mine ? <span className="text-xs text-muted-foreground">{t('set.saving')}</span> : null}
           {item.type !== 'boolean' && dirty ? (
             <>
               {/* The one send path: Enter in the box and this button are the same submit. */}
-              <Button type="submit" variant="primary" disabled={busy}>{mine ? bi('保存中', 'Saving') : t('common.save')}</Button>
-              <Button variant="ghost" disabled={mine} onClick={() => edit(item.key, settingField(item, item.value, logins))}>{bi('撤销', 'Revert')}</Button>
+              <Button type="submit" variant="primary" disabled={busy}>{mine ? t('set.saving') : t('common.save')}</Button>
+              <Button variant="ghost" disabled={mine} onClick={() => edit(item.key, settingField(localizedItem, item.value, logins))}>{t('common.revert')}</Button>
             </>
           ) : null}
           {clearable ? (
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void save(item.key, () => del<{ settings: Setting[] }>(path), listOf)}>{bi('恢复默认', 'Reset default')}</Button>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => void save(item.key, () => del<{ settings: Setting[] }>(path), listOf)}>{t('common.resetDefault')}</Button>
           ) : null}
           {saved === item.key ? <span role="status" className="text-xs text-success-foreground">{t('common.saved')}</span> : null}
         </>
@@ -271,6 +359,7 @@ function SecretRow({ current, set, draft, saving, busy, save, edit }: {
   save: Save;
   edit: (key: string, field: string) => void;
 }) {
+  const { t } = useI18n();
   const mine = saving === SECRET;
   const typed = (draft.field ?? '') !== '';
   return (
@@ -278,8 +367,8 @@ function SecretRow({ current, set, draft, saving, busy, save, edit }: {
       id={`setting-${SECRET}`}
       current={current}
       label="Secret"
-      summary={`现在：${set ? '已设置' : '未设置'}`}
-      help={SECRET_HELP}
+      summary={t('set.row.current', { value: set ? t('set.wecom.secretSet') : t('set.wecom.secretUnset') })}
+      help={t('set.wecom.secretHelp')}
       failure={draft.error}
       control={
         <Input
@@ -287,7 +376,7 @@ function SecretRow({ current, set, draft, saving, busy, save, edit }: {
           autoComplete="new-password"
           aria-label="Secret"
           className="w-auto min-w-24 flex-1 font-mono text-xs"
-          placeholder={set ? '填新的来替换' : ''}
+          placeholder={set ? t('set.wecom.secretPlaceholder') : ''}
           value={draft.field ?? ''}
           disabled={mine}
           onChange={(event) => edit(SECRET, event.target.value)}
@@ -296,8 +385,8 @@ function SecretRow({ current, set, draft, saving, busy, save, edit }: {
       actions={
         typed ? (
           <>
-            <Button type="submit" variant="primary" disabled={busy}>{mine ? '保存中' : '保存'}</Button>
-            <Button variant="ghost" disabled={mine} onClick={() => edit(SECRET, '')}>撤销</Button>
+            <Button type="submit" variant="primary" disabled={busy}>{mine ? t('set.saving') : t('common.save')}</Button>
+            <Button variant="ghost" disabled={mine} onClick={() => edit(SECRET, '')}>{t('common.revert')}</Button>
           </>
         ) : null
       }
@@ -306,9 +395,12 @@ function SecretRow({ current, set, draft, saving, busy, save, edit }: {
   );
 }
 
-const routerHelp = (page: Listing): string => {
-  const names = page.settings.filter(({ key }) => ROUTER_START_KEYS.includes(key)).map(({ title }) => title).join('、');
-  return `${names}这几项改了以后，下次启动负责人时才生效。点“重启负责人”，负责人就按现在的设置重新启动。`;
+const routerHelp = (page: Listing, locale: string, hasOverride: boolean, t: Translate): string => {
+  const names = page.settings
+    .filter(({ key }) => ROUTER_START_KEYS.includes(key))
+    .map((item) => itemTitle(item, locale, hasOverride, t))
+    .join(t('set.listSep'));
+  return t('set.router.processHelp', { names });
 };
 
 function RouterPanel({ current, page, draft, busy, save }: {
@@ -318,6 +410,8 @@ function RouterPanel({ current, page, draft, busy, save }: {
   busy: boolean;
   save: Save;
 }) {
+  const { locale, pack, t } = useI18n();
+  const hasOverride = Boolean(pack?.hasOverride);
   const { router: state } = page;
   // The answer is the Router's new state: restarting, and the turn it waits for if any.
   const restart = (): Promise<void> => save(
@@ -329,12 +423,12 @@ function RouterPanel({ current, page, draft, busy, save }: {
     <Row
       id={`setting-${RESTART}`}
       current={current}
-      label="负责人进程"
+      label={t('set.router.processLabel')}
       summary={(state.error || projectRouterErrors(state).length > 0) && !state.restarting ? <span className="text-destructive">{routerLine(state)}</span> : <>{routerLine(state)}</>}
-      help={routerHelp(page)}
+      help={routerHelp(page, locale, hasOverride, t)}
       failure={draft.error}
       control={<></>}
-      actions={<Button type="submit" disabled={busy || state.restarting}>重启负责人</Button>}
+      actions={<Button type="submit" disabled={busy || state.restarting}>{t('project.routerRestart')}</Button>}
       onSubmit={() => { if (!busy && !state.restarting) void restart(); }}
     />
   );
@@ -362,32 +456,37 @@ function imTabFor(place: string | undefined, marked: string | undefined): ImChan
   return 'overview';
 }
 
-function entriesOf(page: Listing): Entry[] {
+function entriesOf(page: Listing, locale: string, hasOverride: boolean, t: Translate): Entry[] {
   const groupOf = (key: string): string | undefined => page.settings.find((item) => item.key === key)?.group;
-  const rows: Entry[] = page.settings.map(({ key, title, help, group }) => ({ key, title, help, group }));
+  const rows: Entry[] = page.settings.map((item) => ({
+    key: item.key,
+    title: itemTitle(item, locale, hasOverride, t),
+    help: itemHelp(item, locale, hasOverride, t),
+    group: item.group,
+  }));
   const secret = groupOf('wecom.botId');
   const router = groupOf('router.cli');
-  if (secret) rows.push({ key: SECRET, title: 'Secret', help: SECRET_HELP, group: secret });
-  if (router) rows.push({ key: RESTART, title: '负责人进程', help: routerHelp(page), group: router });
+  if (secret) rows.push({ key: SECRET, title: 'Secret', help: t('set.wecom.secretHelp'), group: secret });
+  if (router) rows.push({ key: RESTART, title: t('set.router.processLabel'), help: routerHelp(page, locale, hasOverride, t), group: router });
   const imGroup = imGroupOf(page.settings);
   if (imGroup) {
     rows.push(
       {
         key: 'im.permissions',
-        title: '通道权限矩阵',
-        help: '按通道控制企业微信与微信的项目对话、主动通知和放行控制台登录权限。',
+        title: t('set.entry.imPermissions.title'),
+        help: t('set.entry.imPermissions.help'),
         group: imGroup,
       },
       {
         key: 'im.weixin.setup',
-        title: '微信连接',
-        help: '使用手机微信扫码连接 ClawBot，开启微信私聊对话、群聊绑定与控制台登录放行。',
+        title: t('set.wx.sectionLabel'),
+        help: t('set.entry.imWeixin.help'),
         group: imGroup,
       },
       {
         key: 'im.groups',
-        title: '群聊绑定',
-        help: '将企业微信或微信群绑定到指定项目，配置 @ 触发、关键词快通道、发送者白名单与告警播报。',
+        title: t('set.im.tab.groups'),
+        help: t('set.entry.imGroups.help'),
         group: imGroup,
       },
     );
@@ -395,15 +494,15 @@ function entriesOf(page: Listing): Entry[] {
   if (page.settings.some((item) => item.group === LOGIN)) {
     rows.push({
       key: 'auth.passphrase',
-      title: '主人口令直登',
-      help: '开启后，在微信浏览器、新浏览器或新设备打开登录页时，可直接输入主人口令进入控制台。',
+      title: t('set.pass.title'),
+      help: t('set.entry.passphrase.help'),
       group: LOGIN,
     });
   }
   rows.push({
     key: 'github.integration',
-    title: 'GitHub 集成',
-    help: '连接 GitHub 账号（PAT 或 Device Flow），为任务按轮次自动注入临时凭据并查询 PR 与 CI 状态。',
+    title: t('set.entry.github.title'),
+    help: t('set.entry.github.help'),
     group: GITHUB,
   });
   return rows;
@@ -414,6 +513,7 @@ const placeLink = (place: string): string => `/settings/${encodeURIComponent(pla
 // The groups, one page each: down the side on a wide screen, a row that slides sideways on a
 // phone. It stands outside the part of the page that scrolls, so it is always in sight.
 function GroupNav({ groups, current, dirtyGroups }: { groups: string[]; current: string; dirtyGroups?: ReadonlySet<string> }) {
+  const { t } = useI18n();
   const box = useRef<HTMLElement>(null);
   // A link straight to a group far along the row (or down the column) finds it slid into
   // sight. Not scrollIntoView: that would move every scrolling box around it too.
@@ -426,7 +526,7 @@ function GroupNav({ groups, current, dirtyGroups }: { groups: string[]; current:
     if (at.top < around.top || at.bottom > around.bottom) view.scrollTop += at.top - around.top - 8;
   }, [current]);
   return (
-    <nav ref={box} aria-label="设置分组" className="min-h-0 min-w-0 overflow-auto px-3 pb-2 shell:px-0 shell:pb-0">
+    <nav ref={box} aria-label={t('set.navAria')} className="min-h-0 min-w-0 overflow-auto px-3 pb-2 shell:px-0 shell:pb-0">
       <ul className="flex gap-0.5 shell:flex-col">
         {groups.map((group) => {
           const isDirty = dirtyGroups?.has(group) ?? false;
@@ -438,9 +538,9 @@ function GroupNav({ groups, current, dirtyGroups }: { groups: string[]; current:
                 data-dirty={isDirty ? 'true' : undefined}
                 className="flex min-h-hit items-center gap-1.5 rounded-md px-2.5 text-sm whitespace-nowrap text-muted-foreground no-underline transition-colors duration-100 hover:bg-hover hover:text-foreground focus-visible:-outline-offset-2 aria-[current=page]:bg-brand-soft aria-[current=page]:font-medium aria-[current=page]:text-brand-foreground"
               >
-                {group}
+                {displayGroup(group, t)}
                 {isDirty ? (
-                  <span aria-hidden="true" data-slot="dirty-dot" title="有未保存改动" className="ml-auto size-1.5 flex-none rounded-full bg-primary" />
+                  <span aria-hidden="true" data-slot="dirty-dot" title={t('set.dirtyDotTitle')} className="ml-auto size-1.5 flex-none rounded-full bg-primary" />
                 ) : null}
               </Link>
             </li>
@@ -454,6 +554,7 @@ function GroupNav({ groups, current, dirtyGroups }: { groups: string[]; current:
 // One box over every group: what matches by name, meaning or key, under the group it is
 // in. Picking one opens its group at it.
 function SettingsSearch({ entries, groups, onPick }: { entries: Entry[]; groups: string[]; onPick: (key: string) => void }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const needle = query.trim().toLowerCase();
@@ -464,10 +565,10 @@ function SettingsSearch({ entries, groups, onPick }: { entries: Entry[]; groups:
       onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}
     >
       {/* Its own filter: cmdk's matches the value alone, and ranks. */}
-      <Command shouldFilter={false} label="搜索设置">
+      <Command shouldFilter={false} label={t('set.searchAria')}>
         <CommandInput
-          aria-label="搜索设置"
-          placeholder="搜设置：名称、说明或键名"
+          aria-label={t('set.searchAria')}
+          placeholder={t('set.searchPlaceholder')}
           wrapperClassName="rounded-md border border-input bg-background px-2.5 shadow-xs focus-within:border-ring focus-within:outline-[3px] focus-within:outline-ring/20"
           value={query}
           onValueChange={(next) => { setQuery(next); setOpen(true); }}
@@ -477,20 +578,21 @@ function SettingsSearch({ entries, groups, onPick }: { entries: Entry[]; groups:
         />
         {open && needle ? (
           <CommandList
-            label="搜索结果"
+            label={t('set.searchResultsAria')}
             className="absolute inset-x-0 top-full z-20 mt-1 min-w-64 rounded-lg bg-raised p-1 shadow-pop"
             // The box keeps the keyboard while a result is pressed.
             onMouseDown={(event) => event.preventDefault()}
           >
-            <CommandEmpty>没有匹配“{query.trim()}”的设置。</CommandEmpty>
+            <CommandEmpty>{t('set.searchEmpty', { query: query.trim() })}</CommandEmpty>
             {groups.map((group) => {
               const items = found.filter((entry) => entry.group === group);
+              const groupLabel = displayGroup(group, t);
               return items.length ? (
-                <CommandGroup key={group} heading={group}>
+                <CommandGroup key={group} heading={groupLabel}>
                   {items.map((entry) => (
                     <CommandItem key={entry.key} value={entry.key} className="flex-col items-start gap-0" onSelect={() => { setOpen(false); onPick(entry.key); }}>
                       <span>{entry.title}</span>
-                      <span className="text-xs text-faint wrap-anywhere">{group} · <span className="font-mono">{entry.key}</span></span>
+                      <span className="text-xs text-faint wrap-anywhere">{groupLabel} · <span className="font-mono">{entry.key}</span></span>
                     </CommandItem>
                   ))}
                 </CommandGroup>
@@ -504,7 +606,8 @@ function SettingsSearch({ entries, groups, onPick }: { entries: Entry[]; groups:
 }
 
 export function SettingsPage() {
-  const { setLocale, t, bi } = useI18n();
+  const { locale, pack, setLocale, t } = useI18n();
+  const hasOverride = Boolean(pack?.hasOverride);
   const queryClient = useQueryClient();
   // A group, or one item: a link to an item opens its group at it.
   const { place } = useParams();
@@ -527,7 +630,7 @@ export function SettingsPage() {
   const revealed = useRef<string | null>(null);
   const flash = useRef<number | undefined>(undefined);
 
-  const entries = data ? entriesOf(data) : [];
+  const entries = data ? entriesOf(data, locale, hasOverride, t) : [];
   const imGroup = data ? imGroupOf(data.settings) : null;
   const groups = data ? [...new Set(data.settings.map(({ group }) => group)), DEPLOYMENT] : [];
   const marked = entries.find(({ key }) => key === place)?.key;
@@ -664,6 +767,8 @@ export function SettingsPage() {
       ]
     : undefined;
 
+  const currentHeading = displayGroup(current, t);
+
   return (
     <>
       <PageBar title={t('settings.title')} />
@@ -680,8 +785,8 @@ export function SettingsPage() {
           </div>
           <div className="flex min-h-0 min-w-0 items-center shell:flex-col shell:items-stretch shell:gap-2">
             <GroupNav groups={groups} current={current} dirtyGroups={dirtyGroups} />
-            <nav aria-label={bi('外部集成', 'Integrations')} className="flex flex-none items-center pr-3 pb-2 shell:flex-col shell:items-stretch shell:border-t shell:border-border shell:px-0 shell:pt-2 shell:pb-0">
-              <span className="hidden px-2.5 pb-1 text-2xs font-medium tracking-wide text-faint uppercase shell:block">{bi('外部集成', 'Integrations')}</span>
+            <nav aria-label={t('set.integrations')} className="flex flex-none items-center pr-3 pb-2 shell:flex-col shell:items-stretch shell:border-t shell:border-border shell:px-0 shell:pt-2 shell:pb-0">
+              <span className="hidden px-2.5 pb-1 text-2xs font-medium tracking-wide text-faint uppercase shell:block">{t('set.integrations')}</span>
               <Link
                 to={placeLink(GITHUB)}
                 aria-current={current === GITHUB ? 'page' : undefined}
@@ -697,8 +802,8 @@ export function SettingsPage() {
             {error ? <Problem role="alert" className="mb-3">{error.message}</Problem> : null}
             {/* A save sent before the owner left and came back: no row here says it is being saved. */}
             {change.busy && saving === null ? <Note role="status" className="mb-3">{EARLIER_CHANGE}</Note> : null}
-            <section aria-label={current}>
-              <h2 className="text-xl font-semibold tracking-[-0.01em]">{current}</h2>
+            <section aria-label={currentHeading}>
+              <h2 className="text-xl font-semibold tracking-[-0.01em]">{currentHeading}</h2>
               {isImGroup ? (
                 <ImChannelsPanel
                   initialTab={imTabFor(place, marked)}
@@ -740,7 +845,7 @@ export function SettingsPage() {
                 />
               ) : current === GITHUB ? <GitHubSetup /> : current === DEPLOYMENT ? (
                 <>
-                  <Note className="mt-1 mb-4">这些是服务现在实际的情况，只能看，不能在这里改。</Note>
+                  <Note className="mt-1 mb-4">{t('set.deploymentNote')}</Note>
                   <Facts className="rounded-xl bg-raised p-4 shadow-card">
                     {data.deployment.map(({ title, value }) => <Fact key={title} label={title}><Copyable value={value} /></Fact>)}
                   </Facts>
@@ -749,8 +854,8 @@ export function SettingsPage() {
                 <>
                   <Note className="mt-1 mb-4">
                     {has('router.cli')
-                      ? '改完即时生效；负责人的路径、账号与档位需点下方“重启负责人”，标着“重启后生效”的需重启 Tycho 服务进程。'
-                      : '改完即时生效；标着“重启后生效”的需重启 Tycho 服务进程后生效。'}
+                      ? t('set.groupNoteRouter')
+                      : t('set.groupNoteDefault')}
                   </Note>
                   <div className="overflow-hidden rounded-xl bg-raised shadow-card">
                     {items.map((item) => <SettingRow key={item.key} item={item} current={marked === item.key} accounts={routerAccounts} logins={allLogins} bound={bound} {...row} {...{ draft: drafts[item.key] ?? {} }} />)}
@@ -758,6 +863,7 @@ export function SettingsPage() {
                     {has('router.cli') ? <RouterPanel current={marked === RESTART} page={data} {...row} {...{ draft: drafts[RESTART] ?? {} }} /> : null}
                   </div>
                   {current === LOGIN ? <PassphraseSetup /> : null}
+                  {has('ui.locale') ? <LocalePackManager /> : null}
                 </>
               )}
             </section>

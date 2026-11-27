@@ -3,6 +3,7 @@
 // service follows, so moving a source is an edit of the list, never of where the code is.
 // A project's list of logins only says which may be used; which one comes first is the
 // tier's global order, so the list has no order of its own (roles-and-tiers.md §11).
+import { t } from '@shared/i18n.ts';
 import type { Source } from '@shared/sources.ts';
 import type { LoginMode, Project } from './types.ts';
 
@@ -158,9 +159,7 @@ export const newProjectBody = (draft: NewProjectDraft): Record<string, unknown> 
 // A project's machine list that names machines deleted since: they match nothing, so a list
 // of only them lets the project run nowhere, which is not what an empty list means.
 export const machinesGoneText = (gone: number, left: number): string =>
-  `有 ${gone} 台已删除的机器仍在限制这个项目` +
-  (left === 0 ? '，现在哪台机器都不会接它的活。' : '，它们不匹配任何机器。') +
-  '保存其他设置会保留这些条目；重新选择机器或明确去掉这些条目后保存，才会替换机器清单。';
+  t(left === 0 ? 'proj.settings.machinesGoneNoneLeft' : 'proj.settings.machinesGoneSomeLeft', { gone });
 
 export const archivedProjectIds = (projects: readonly Pick<Project, 'id' | 'archived_at'>[]): Set<string> =>
   new Set(projects.filter((project) => project.archived_at != null).map((project) => project.id));

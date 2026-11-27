@@ -1,6 +1,7 @@
 // Review (docs/design/roles-and-tiers.md §4, §6): what a review Task is bound to, the three
 // verdicts it can hand over, and the words the service and the console both use about it.
 // Declared once here: the service settles by this vocabulary and the pages show it.
+import { localeMap, onLocaleChange, t } from './i18n.ts';
 import { tierLabel, type TierId } from './tiers.ts';
 import { loginName } from './logins.ts';
 import { formatTime } from './time.ts';
@@ -9,7 +10,11 @@ import type { ReviewedCommit } from './sources.ts';
 
 const VERDICT_IDS = ['pass', 'reject', 'cannot'] as const;
 type VerdictId = (typeof VERDICT_IDS)[number];
-export const VERDICT_LABELS: Record<VerdictId, string> = { pass: '通过', reject: '打回', cannot: '审不了' };
+export const VERDICT_LABELS: Readonly<Record<VerdictId, string>> = localeMap({
+  pass: 'sh.review.verdict.pass',
+  reject: 'sh.review.verdict.reject',
+  cannot: 'sh.review.verdict.cannot',
+});
 export const isVerdictId = (value: unknown): value is VerdictId => (VERDICT_IDS as readonly unknown[]).includes(value);
 
 // One requirement a rejected product breaks: which, what shows it, and what has to change.
@@ -87,39 +92,48 @@ export interface VerdictRecord extends Verdict {
 // Why a rejection moves the reviewed Task up a tier, in the words of the tier it goes to
 // (roles-and-tiers.md §6, §10.3): the operate tier's product goes to execute, the execute
 // tier's to decide. A Task already on the highest tier is the owner's to settle, below.
-export const escalatedReason = (tier: TierId): string => `审阅打回，升到${tierLabel(tier)}`;
+export const escalatedReason = (tier: TierId): string => t('sh.review.escalatedReason', { tier: tierLabel(tier) });
 // The reason an execute-tier product used to be given, and the one the owner's own ledger
 // already holds. Kept as the same sentence, so history reads as it was written.
-export const ESCALATED_REASON = escalatedReason('decide');
+export let ESCALATED_REASON: string = escalatedReason('decide');
 // Why the Router cannot move an escalated Task back down: it was put on this tier by the
 // service, and only the owner changes that (§6).
-export const reviewTierLockText = (tier: string): string => `这个任务是审阅打回后由系统升到${tierLabel(tier)}的，你不能把它改回上一档或去掉覆盖；要改由主人在控制台改`;
-export const REVIEW_NEEDS_TARGET_TEXT = '审阅任务要指名被审的任务（review_of）';
-export const REVIEW_ONLY_TEXT = '只有审阅职能的任务能指名被审的任务';
-export const REVIEW_ROLE_LOCK_TEXT = '审阅任务的职能不能改成别的，别的任务也不能改成审阅：审阅要在建任务时指名被审的任务';
-export const REVIEW_OWNER_TEXT = '这个任务的产物在决策档又被审阅打回了，正在等主人回答怎么办：回答之前你不能改它的目标、验收标准、范围或档位，也不能让它继续';
-export const ACCEPT_WITHOUT_REVIEW_LABEL = '不经审阅验收';
+export const reviewTierLockText = (tier: string): string => t('sh.review.tierLock', { tier: tierLabel(tier) });
+export let REVIEW_NEEDS_TARGET_TEXT: string = t('sh.review.needsTarget');
+export let REVIEW_ONLY_TEXT: string = t('sh.review.onlyReview');
+export let REVIEW_ROLE_LOCK_TEXT: string = t('sh.review.roleLock');
+export let REVIEW_OWNER_TEXT: string = t('sh.review.ownerPending');
+export let ACCEPT_WITHOUT_REVIEW_LABEL: string = t('sh.review.acceptWithoutReview');
 
-export const listText = (items: readonly string[]): string => items.length === 0 ? '（没有）' : items.join('、');
+export const listText = (items: readonly string[]): string => items.length === 0 ? t('sh.review.listEmpty') : items.join(t('sh.listSep'));
 
 // Why a review Task stops: no other login can take the tier the reviewed round ran on, and the
 // executors that wrote the product cannot review it either, not even in a new session (§4 ②).
 export const noReviewerText = (writers: readonly string[], tier: string | null): string =>
-  `没有能审的登录：其余登录没有${tier === null ? '这一档' : tierLabel(tier)}，被审产物用过的执行器 ${listText(writers)} 也审不了（没有这一档，或不能只读）`;
+  t('sh.review.noReviewer', { tier: tier === null ? t('sh.review.thisTier') : tierLabel(tier), writers: listText(writers) });
 
 // Why one login of another executor could not review when a review fell back (§4 ②).
 export type OutReason = 'missing_credential' | 'rejected' | 'resting' | 'no_machine';
 export function otherOutText(name: string, why: OutReason, restUntil?: string, now: Date = new Date()): string {
-  if (why === 'missing_credential') return `${loginName(name)} 凭据缺失`;
-  if (why === 'rejected') return `${loginName(name)} 登录已失效`;
-  if (why === 'resting') return `${loginName(name)} 额度歇到 ${restUntil === undefined ? '（时间不明）' : formatTime(restUntil, now)}`;
-  return `${loginName(name)} 没有能用的机器`;
+  const login = loginName(name);
+  if (why === 'missing_credential') return t('sh.review.otherOut.missingCredential', { login });
+  if (why === 'rejected') return t('sh.review.otherOut.rejected', { login });
+  if (why === 'resting') {
+    const until = restUntil === undefined ? t('sh.review.otherOut.restingUnknown') : formatTime(restUntil, now);
+    return t('sh.review.otherOut.resting', { login, until });
+  }
+  return t('sh.review.otherOut.noMachine', { login });
 }
 
 // What a review that runs on an executor that wrote its product says, on its round and its
 // timeline: it is not independent of the author's executor, and why (§4 ②).
 export const sameExecutorText = (executor: string, others: readonly string[]): string =>
-  `未换执行器：${others.length ? `别的执行器现在都审不了（${others.join('；')}）` : '项目里没有别的执行器能审它的登录'}，由写它的 ${executor} 开新会话来审`;
+  t('sh.review.sameExecutor', {
+    why: others.length
+      ? t('sh.review.sameExecutorOthers', { others: others.join(t('sh.semicolonSep')) })
+      : t('sh.review.sameExecutorNone'),
+    executor,
+  });
 
 // What a run fell back to, as its snapshot and its run.create record keep it.
 export interface SameExecutor {
@@ -128,10 +142,10 @@ export interface SameExecutor {
 }
 
 // A verdict's mark for a review that ran on an executor that wrote the product.
-export const SAME_EXECUTOR_LABEL = '未换执行器';
+export let SAME_EXECUTOR_LABEL: string = t('sh.review.sameExecutorLabel');
 
-export const excludedLoginText =(loginId: string, executor: string): string =>
-  `${loginName(loginId)} 用的执行器 ${executor} 写过被审的产物，不能审它`;
+export const excludedLoginText = (loginId: string, executor: string): string =>
+  t('sh.review.excludedLogin', { login: loginName(loginId), executor });
 
 // Why accepting, or putting a release in place, is refused for a Task that needs review.
 export type ReviewGateKind = 'no_review' | 'in_review' | 'review_held' | 'stale_pass';
@@ -143,29 +157,54 @@ export interface ReviewGateInfo {
   review_reason?: string | null;
 }
 
-export const NEEDS_PASS_TEXT = '这个任务要独立审阅：当前产物还没有有效的“通过”。先派一个审阅任务指名它；只有主人能在控制台“不经审阅验收”';
-export const REVIEW_IN_PROGRESS_TEXT = '这个任务要独立审阅：正在独立审阅中，审阅通过后即可验收；只有主人能在控制台“不经审阅验收”';
+export let NEEDS_PASS_TEXT: string = t('sh.review.needsPass');
+export let REVIEW_IN_PROGRESS_TEXT: string = t('sh.review.inProgress');
 export const reviewHeldGateText = (reason?: string | null): string =>
-  `这个任务要独立审阅：独立审阅已停住${reason ? `（${reason}）` : ''}：先处理审阅任务，或由主人“不经审阅验收”`;
-export const RELEASE_NEEDS_PASS_TEXT = '这个包所在的任务要独立审阅，但这个包不在一份有效“通过”的审阅对象里：先审阅这一轮的产物，或者由主人“不经审阅验收”';
+  reason ? t('sh.review.heldGateWithReason', { reason }) : t('sh.review.heldGate');
+export let RELEASE_NEEDS_PASS_TEXT: string = t('sh.review.releaseNeedsPass');
 
-export const DECIDE_REWORK_OPTION = '按审阅意见在决策档再改一轮';
-export const DECIDE_ACCEPT_OPTION = '不经审阅直接验收';
-export const DECIDE_ABANDON_OPTION = '放弃这个任务';
-export const DECIDE_REJECTION_OPTIONS = [DECIDE_REWORK_OPTION, DECIDE_ACCEPT_OPTION, DECIDE_ABANDON_OPTION] as const;
+export let DECIDE_REWORK_OPTION: string = t('sh.review.decideReworkOption');
+export let DECIDE_ACCEPT_OPTION: string = t('sh.review.decideAcceptOption');
+export let DECIDE_ABANDON_OPTION: string = t('sh.review.decideAbandonOption');
+const decideRejectionOptions: [string, string, string] = [DECIDE_REWORK_OPTION, DECIDE_ACCEPT_OPTION, DECIDE_ABANDON_OPTION];
+export const DECIDE_REJECTION_OPTIONS: readonly [string, string, string] = decideRejectionOptions;
+
+onLocaleChange(() => {
+  ESCALATED_REASON = escalatedReason('decide');
+  REVIEW_NEEDS_TARGET_TEXT = t('sh.review.needsTarget');
+  REVIEW_ONLY_TEXT = t('sh.review.onlyReview');
+  REVIEW_ROLE_LOCK_TEXT = t('sh.review.roleLock');
+  REVIEW_OWNER_TEXT = t('sh.review.ownerPending');
+  ACCEPT_WITHOUT_REVIEW_LABEL = t('sh.review.acceptWithoutReview');
+  SAME_EXECUTOR_LABEL = t('sh.review.sameExecutorLabel');
+  NEEDS_PASS_TEXT = t('sh.review.needsPass');
+  REVIEW_IN_PROGRESS_TEXT = t('sh.review.inProgress');
+  RELEASE_NEEDS_PASS_TEXT = t('sh.review.releaseNeedsPass');
+  DECIDE_REWORK_OPTION = t('sh.review.decideReworkOption');
+  DECIDE_ACCEPT_OPTION = t('sh.review.decideAcceptOption');
+  DECIDE_ABANDON_OPTION = t('sh.review.decideAbandonOption');
+  decideRejectionOptions[0] = DECIDE_REWORK_OPTION;
+  decideRejectionOptions[1] = DECIDE_ACCEPT_OPTION;
+  decideRejectionOptions[2] = DECIDE_ABANDON_OPTION;
+});
 
 // What the reviewed Task's next round is told, as its input, when a review sends it back.
 export function rejectionInput(verdict: Verdict): string {
   const lines = (verdict.violations ?? []).map((each, index) =>
-    `${index + 1}. 违反的要求：${each.requirement}\n   证据：${each.evidence}\n   要改的范围：${each.scope}`);
-  return `独立审阅打回了上一轮的产物：${verdict.summary}\n\n${lines.join('\n')}\n\n按这些意见改，改完照常交回执。`;
+    t('sh.review.rejectionViolationItem', {
+      index: index + 1,
+      requirement: each.requirement,
+      evidence: each.evidence,
+      scope: each.scope,
+    }));
+  return t('sh.review.rejectionInput', { summary: verdict.summary, lines: lines.join('\n') });
 }
 
 // Why a Task decided on the decide tier and still rejected stops: the owner decides.
 export const rejectedOnDecideText = (verdict: Verdict): string => {
   const count = verdict.violations?.length ?? 0;
-  const countPart = count > 0 ? `（${count} 项问题）` : '';
-  return `审阅在${tierLabel('decide')}的产物上又打回了${countPart}，系统不再升档，要你来定`;
+  const countPart = count > 0 ? t('sh.review.rejectedOnDecideCount', { count }) : '';
+  return t('sh.review.rejectedOnDecide', { tier: tierLabel('decide'), countPart });
 };
 
 // Structured Markdown detail of a decide-tier rejection for the owner's approval card
@@ -173,18 +212,22 @@ export const rejectedOnDecideText = (verdict: Verdict): string => {
 export function rejectedOnDecideAbout(verdict: Verdict): string {
   const parts: string[] = [];
   const summary = verdict.summary.trim();
-  if (summary) parts.push(`**审阅结论**：${summary}`);
-  const items = (verdict.violations ?? []).map((each, index) => [
-    `${index + 1}. **违反要求**：${each.requirement}`,
-    `   - **证据**：${each.evidence}`,
-    `   - **修改范围**：${each.scope}`,
-  ].join('\n'));
+  if (summary) parts.push(t('sh.review.rejectedAboutSummary', { summary }));
+  const items = (verdict.violations ?? []).map((each, index) =>
+    t('sh.review.rejectedAboutItem', {
+      index: index + 1,
+      requirement: each.requirement,
+      evidence: each.evidence,
+      scope: each.scope,
+    }));
   if (items.length > 0) parts.push(items.join('\n'));
   return parts.join('\n\n');
 }
 
-export const cannotReviewText = (verdict: Verdict): string => `审不了：${verdict.missing ?? verdict.summary}。补上材料后继续`;
+export const cannotReviewText = (verdict: Verdict): string =>
+  t('sh.review.cannotReview', { detail: verdict.missing ?? verdict.summary });
 
 // Why a round that ended saying "done" is not ready to be accepted: its role's deliverable
 // is not in the receipt.
-export const shortDeliveryText = (role: string, problem: string): string => `交付不齐：职能“${role}”要交${problem}`;
+export const shortDeliveryText = (role: string, problem: string): string =>
+  t('sh.review.shortDelivery', { role, problem });

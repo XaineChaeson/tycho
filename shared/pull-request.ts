@@ -5,6 +5,8 @@
 // merge entry, the task page and the settlement that takes a round's delivery, so none of them
 // can come to a different conclusion about the same receipt.
 
+import { onLocaleChange, t } from './i18n.ts';
+
 // Basic URL hygiene for a pull/merge request address: valid http(s) URL without whitespace or control chars.
 const UNSAFE_URL_CHARS = /[\s\u0000-\u001F\u007F]/;
 
@@ -18,9 +20,14 @@ function isValidPullRequestUrl(link: string): boolean {
   }
 }
 
-export const PULL_REQUEST_FORM = '有效的 http:// 或 https:// 网址';
-export const pullRequestCountText = (count: number): string => `这一轮的回执里有 ${count} 个 PR：说不清合哪一个，不合`;
-export const pullRequestShapeText = `这一轮回执里的 PR 不是有效的网址（${PULL_REQUEST_FORM}）：不合`;
+export let PULL_REQUEST_FORM: string = t('sh.pullRequest.form');
+export const pullRequestCountText = (count: number): string => t('sh.pullRequest.count', { count });
+export let pullRequestShapeText: string = t('sh.pullRequest.shape', { form: PULL_REQUEST_FORM });
+
+onLocaleChange(() => {
+  PULL_REQUEST_FORM = t('sh.pullRequest.form');
+  pullRequestShapeText = t('sh.pullRequest.shape', { form: PULL_REQUEST_FORM });
+});
 
 // The one pull request a receipt names, why what it names cannot be told, or none. More than
 // one is a problem, not a choice for the caller to make.

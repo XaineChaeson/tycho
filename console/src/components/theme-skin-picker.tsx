@@ -5,12 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/input';
 import { Tooltip } from '@/components/ui/menu';
+import { useI18n } from '@/lib/i18n';
 import {
   getHostThemesDir,
+  getSampleThemePackJson,
   installThemePack,
   listThemePacks,
   readThemeSkin,
-  SAMPLE_THEME_PACK_JSON,
   saveThemeSkin,
   subscribeThemePacks,
   syncDirectoryThemePacks,
@@ -30,6 +31,7 @@ function PackGrid({
   onSelect: (id: string) => void;
   onRemove: (pack: ThemePack) => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
       {packs.map((pack) => {
@@ -70,15 +72,15 @@ function PackGrid({
                   />
                 ))}
                 {pack.source === 'directory' ? (
-                  <span className="ml-auto font-mono text-2xs text-faint">目录插件</span>
+                  <span className="ml-auto font-mono text-2xs text-faint">{t('core.themePicker.dirPlugin')}</span>
                 ) : null}
               </span>
             </button>
             {!pack.builtin ? (
               <button
                 type="button"
-                aria-label={`删除主题 ${pack.name}`}
-                title="删除自定义主题包"
+                aria-label={t('core.themePicker.deleteAria', { name: pack.name })}
+                title={t('core.themePicker.deleteTitle')}
                 onClick={() => onRemove(pack)}
                 className="absolute right-2 bottom-2 rounded-xs p-1 text-faint opacity-75 transition-opacity hover:bg-failed-soft hover:text-destructive hover:opacity-100"
               >
@@ -93,6 +95,7 @@ function PackGrid({
 }
 
 export function ThemeSkinPicker() {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [packs, setPacks] = useState<ThemePack[]>(listThemePacks);
   const [activeId, setActiveId] = useState<string>(readThemeSkin);
@@ -112,6 +115,7 @@ export function ThemeSkinPicker() {
   const hybridPacks = packs.filter((p) => p.group === 'hybrid');
   const signaturePacks = packs.filter((p) => p.group === 'signature');
   const customPacks = packs.filter((p) => p.group === 'custom');
+  const sampleJson = getSampleThemePackJson();
 
   const openPicker = (): void => {
     setPacks(listThemePacks());
@@ -154,11 +158,11 @@ export function ThemeSkinPicker() {
 
   return (
     <>
-      <Tooltip text={`切换界面主题（当前：${activePack?.name ?? '测控星盘'}）`}>
+      <Tooltip text={t('core.themePicker.tooltip', { name: activePack?.name ?? t('core.theme.pack.hud.name') })}>
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="切换界面主题"
+          aria-label={t('core.themePicker.switchLabel')}
           onClick={openPicker}
           className="flex-none text-muted-foreground hover:text-foreground"
         >
@@ -168,21 +172,21 @@ export function ThemeSkinPicker() {
 
       <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next) { setImportOpen(false); setImportError(null); } }}>
         <DialogContent
-          title="界面主题与目录插件"
-          description="内置 9 套特色主题（均支持浅色 / 深色模式即时切换），也支持主机目录 JSON 主题插件跨设备自动同步。"
+          title={t('core.themePicker.dialogTitle')}
+          description={t('core.themePicker.dialogDesc')}
           className="max-w-[600px]"
         >
-          <div className="space-y-4" role="radiogroup" aria-label="界面主题">
+          <div className="space-y-4" role="radiogroup" aria-label={t('core.themePicker.groupAria')}>
             <section className="space-y-2">
               <h3 className="font-mono text-2xs font-semibold tracking-wider text-muted-foreground uppercase">
-                高密度工作台
+                {t('core.themePicker.sectionHybrid')}
               </h3>
               <PackGrid packs={hybridPacks} activeId={activeId} onSelect={selectPack} onRemove={handleRemove} />
             </section>
 
             <section className="space-y-2">
               <h3 className="font-mono text-2xs font-semibold tracking-wider text-muted-foreground uppercase">
-                个性主题风格
+                {t('core.themePicker.sectionSignature')}
               </h3>
               <PackGrid packs={signaturePacks} activeId={activeId} onSelect={selectPack} onRemove={handleRemove} />
             </section>
@@ -190,7 +194,7 @@ export function ThemeSkinPicker() {
             {customPacks.length > 0 ? (
               <section className="space-y-2">
                 <h3 className="font-mono text-2xs font-semibold tracking-wider text-muted-foreground uppercase">
-                  已安装主题插件
+                  {t('core.themePicker.sectionCustom')}
                 </h3>
                 <PackGrid packs={customPacks} activeId={activeId} onSelect={selectPack} onRemove={handleRemove} />
               </section>
@@ -201,50 +205,50 @@ export function ThemeSkinPicker() {
                 <div className="flex items-center gap-1.5 rounded-md border border-border bg-muted/60 px-2.5 py-1.5 text-2xs text-muted-foreground">
                   <FolderCog className="size-3.5 flex-none text-primary" aria-hidden="true" />
                   <span className="min-w-0 flex-1 truncate">
-                    插件目录：<code className="font-mono text-foreground">{hostDir}</code>（放入 .json 跨设备自动生效）
+                    {t('core.themePicker.pluginDirPrefix')}<code className="font-mono text-foreground">{hostDir}</code>{t('core.themePicker.pluginDirSuffix')}
                   </span>
                 </div>
               ) : null}
 
               {!importOpen ? (
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-muted-foreground">导入的 JSON 主题包会自动写入主机插件目录，Web 与桌面端同步可见</span>
+                  <span className="text-xs text-muted-foreground">{t('core.themePicker.importHint')}</span>
                   <Button
                     size="sm"
                     variant="secondary"
                     onClick={() => { setImportOpen(true); setImportError(null); }}
                   >
                     <Plus className="size-3.5" aria-hidden="true" />
-                    导入主题包
+                    {t('core.themePicker.importBtn')}
                   </Button>
                 </div>
               ) : (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium text-foreground">粘贴主题包 JSON</span>
+                    <span className="text-xs font-medium text-foreground">{t('core.themePicker.pasteJson')}</span>
                     <button
                       type="button"
-                      onClick={() => { setDraft(SAMPLE_THEME_PACK_JSON); setImportError(null); }}
+                      onClick={() => { setDraft(sampleJson); setImportError(null); }}
                       className="text-xs text-link hover:underline"
                     >
-                      填入示例模板
+                      {t('core.themePicker.fillSample')}
                     </button>
                   </div>
                   <Textarea
-                    aria-label="主题包 JSON"
+                    aria-label={t('core.themePicker.jsonAria')}
                     rows={7}
                     value={draft}
                     onChange={(event) => setDraft(event.target.value)}
-                    placeholder={SAMPLE_THEME_PACK_JSON}
+                    placeholder={sampleJson}
                     className="font-mono text-xs"
                   />
                   {importError ? <p role="alert" className="text-xs text-destructive">{importError}</p> : null}
                   <div className="flex justify-end gap-2">
                     <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setImportOpen(false); setImportError(null); }}>
-                      取消
+                      {t('common.cancel')}
                     </Button>
                     <Button size="sm" variant="primary" disabled={busy} onClick={() => { void handleImport(); }}>
-                      {busy ? '安装中…' : '安装并启用'}
+                      {busy ? t('core.themePicker.installing') : t('core.themePicker.installAndUse')}
                     </Button>
                   </div>
                 </div>

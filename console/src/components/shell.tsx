@@ -2,7 +2,7 @@
 // the banners that say the service is not in its normal state, and one place for an
 // action's failure.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Languages, Monitor, Moon, Pause, Plus, Search, Sun, X } from 'lucide-react';
+import { Check, Languages, Monitor, Moon, Pause, Plus, Search, Settings2, Sun, X } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router';
 import { bannerNotes, PROJECT_PAUSED_LABEL, restoreHeadline, WORK_GROUPS, workGroup, type BannerNote } from '@shared/labels.ts';
@@ -20,10 +20,10 @@ import { Palette } from '@/components/palette';
 import { formatAssignmentSummary } from '@/components/task-identity-strip';
 import { ThemeSkinPicker } from '@/components/theme-skin-picker';
 import { Button } from '@/components/ui/button';
-import { Tooltip } from '@/components/ui/menu';
+import { Menu, MenuContent, MenuItem, MenuTrigger, Tooltip } from '@/components/ui/menu';
 import { Segmented } from '@/components/ui/segmented';
 import { messageOf, post, put } from '@/lib/api';
-import { useI18n } from '@/lib/i18n';
+import { syncDirectoryLocalePacks, useI18n } from '@/lib/i18n';
 import { useLive, useLiveState } from '@/lib/live-context';
 import { activeProjects, archivedProjectIds } from '@/lib/projects';
 import { PAGE, overviewQuery, projectsQuery, stateQuery, tasksQuery } from '@/lib/queries';
@@ -173,6 +173,7 @@ function ProjectLink({ project, onNavigate }: { project: Project; onNavigate: ()
 }
 
 function Banner({ notes, title, wecomError }: { notes: readonly BannerNote[]; title: string; wecomError?: boolean }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectError, setReconnectError] = useState<string | null>(null);
@@ -208,7 +209,7 @@ function Banner({ notes, title, wecomError }: { notes: readonly BannerNote[]; ti
             }
           }}
         >
-          {reconnecting ? '重连中…' : '重新连接'}
+          {reconnecting ? t('core.shell.reconnecting') : t('core.shell.reconnect')}
         </Button>
       ) : null}
       {reconnectError ? <span role="alert" className="text-xs text-destructive">{reconnectError}</span> : null}
@@ -217,6 +218,7 @@ function Banner({ notes, title, wecomError }: { notes: readonly BannerNote[]; ti
 }
 
 function RestoreBanner({ restore }: { restore: NonNullable<ServiceState['restore']> }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const live = useLive();
   const held = restore.held_tasks.length;
@@ -226,7 +228,7 @@ function RestoreBanner({ restore }: { restore: NonNullable<ServiceState['restore
       <Button
         size="sm"
         disabled={held > 0}
-        title={held > 0 ? `还有 ${held} 个任务等你确认` : undefined}
+        title={held > 0 ? t('core.shell.restoreTasksWaiting', { count: held }) : undefined}
         onClick={async () => {
           try {
             await post('/api/restore/confirm');
@@ -236,7 +238,7 @@ function RestoreBanner({ restore }: { restore: NonNullable<ServiceState['restore
           }
         }}
       >
-        确认清点完成
+        {t('core.shell.restoreConfirm')}
       </Button>
     </div>
   );
@@ -272,29 +274,54 @@ function ThemeSwitch() {
 }
 
 function LanguageSwitch() {
-  const { locale, setLocale, t } = useI18n();
+  const { locale, pack, packs, setLocale, t } = useI18n();
   const client = useQueryClient();
-  const next = locale === 'en' ? 'zh-CN' : 'en';
-  function toggle(): void {
-    setLocale(next);
-    void put('/api/settings/ui.locale', { value: next })
+  function choose(nextId: string): void {
+    setLocale(nextId);
+    void put('/api/settings/ui.locale', { value: nextId })
       .then(() => client.invalidateQueries({ queryKey: stateQuery.queryKey }))
       .catch(() => { /* local preference remains applied */ });
   }
   return (
-    <Tooltip text={t('common.switchLanguage')}>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        type="button"
-        aria-label={t('common.switchLanguage')}
-        onClick={toggle}
-        className="h-7 w-auto gap-0.5 px-1.5 font-mono text-2xs text-muted-foreground hover:text-foreground"
-      >
-        <Languages className="size-3.5" aria-hidden="true" />
-        <span>{locale === 'en' ? 'EN' : '中'}</span>
-      </Button>
-    </Tooltip>
+    <Menu>
+      <Tooltip text={t('common.switchLanguage')}>
+        <MenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            type="button"
+            aria-label={t('common.switchLanguage')}
+            className="h-7 w-auto gap-0.5 px-1.5 font-mono text-2xs text-muted-foreground hover:text-foreground"
+          >
+            <Languages className="size-3.5" aria-hidden="true" />
+            <span>{pack?.shortLabel ?? locale}</span>
+          </Button>
+        </MenuTrigger>
+      </Tooltip>
+      <MenuContent align="end" side="top" className="min-w-48">
+        {packs.map((item) => {
+          const active = item.id === locale;
+          return (
+            <MenuItem key={item.id} onSelect={() => choose(item.id)} className="flex items-center justify-between gap-2">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <Check className={cn('size-3.5 flex-none', active ? 'opacity-100 text-primary' : 'opacity-0')} aria-hidden="true" />
+                <span className="truncate font-medium">{item.nativeName}</span>
+                <span className="font-mono text-2xs text-faint">{item.id}</span>
+              </span>
+              {!item.builtin ? (
+                <span className="rounded bg-muted px-1 py-0.5 text-2xs text-muted-foreground">{t('nav.customLocale')}</span>
+              ) : null}
+            </MenuItem>
+          );
+        })}
+        <MenuItem asChild className="mt-1 border-t border-border pt-1.5 text-xs text-muted-foreground">
+          <Link to="/settings/ui.locale">
+            <Settings2 className="size-3.5" aria-hidden="true" />
+            {t('nav.manageLocales')}
+          </Link>
+        </MenuItem>
+      </MenuContent>
+    </Menu>
   );
 }
 
@@ -358,6 +385,7 @@ export function Shell() {
 
   useEffect(() => {
     void syncDirectoryThemePacks();
+    void syncDirectoryLocalePacks();
   }, []);
 
   useEffect(() => {
@@ -533,7 +561,10 @@ export function Shell() {
       </aside>
 
       <MenuContext value={menuContext}>
-        <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+        <main
+          inert={menu || undefined}
+          className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background"
+        >
           <Banner notes={notes} title={lastUpdate ? fullTime(lastUpdate) : ''} wecomError={Boolean(service?.channels?.wecom?.error)} />
           <ConsoleVersionNotice pageVersion={VERSION} serviceVersion={!stateFailed ? service?.version : undefined}
             onRefresh={() => window.location.reload()} />

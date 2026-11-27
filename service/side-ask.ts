@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { decodeCodexOAuthLease, formatCodexAuthFile, isCodexOAuthLease, isCodexOAuthSecret, writeCodexAuthHome } from '../adapters/codex-auth.ts';
 import { codexSettings } from '../adapters/tier.ts';
 import { hider } from '../runner/redact.ts';
-import { getActiveLocale, type Locale } from '../shared/i18n.ts';
+import { DEFAULT_LOCALE, getActiveLocale, getLocalePack, type Locale } from '../shared/i18n.ts';
 import { codexRouterEnv } from './codex-router-safety.ts';
 import { rootSpawnOptions } from './processes.ts';
 import type { RouterLaunch } from './session-host.ts';
@@ -49,12 +49,14 @@ function clip(text: string, max: number): string {
 export function buildSideAskPrompt(context: SideAskContext, input: SideAskInput): string {
   const locale = input.locale ?? getActiveLocale();
   const lines: string[] = [];
-  if (locale === 'en') {
+  if (locale !== DEFAULT_LOCALE) {
+    const pack = getLocalePack(locale);
+    const langName = pack?.name ?? locale;
     lines.push(
       'You are answering a quick, read-only Side Ask inside Tycho.',
       'Be direct, accurate, and concise. Answer based on the project context and quoted excerpt below.',
       'Do NOT run commands, do NOT edit files, and do NOT propose creating tasks unless asked.',
-      'Respond in English unless the user writes in another language.',
+      `Respond in ${langName} unless the user writes in another language.`,
     );
   } else {
     lines.push(

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowUpCircle, CheckCircle2, Clock, RefreshCw, ShieldCheck, SlidersHorizontal, Terminal, TriangleAlert } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   DEFAULT_EXECUTOR_AUTO_UPDATE_POLICY,
   highestSemver,
@@ -17,7 +17,7 @@ import { Callout, Card, Dot, Mono, Note, Problem } from '@/components/bits';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { messageOf, post, put } from '@/lib/api';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type I18nContextValue } from '@/lib/i18n';
 import { accountsQuery, executorUpdatesQuery } from '@/lib/queries';
 import type { Machine } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -25,6 +25,12 @@ import { cn } from '@/lib/utils';
 const EXECUTOR_ORDER = ['codex', 'claude', 'gemini', 'dsh'];
 const REMOTE_INSTALLABLE = new Set(['codex', 'claude', 'gemini']);
 const INTERVAL_OPTIONS = [6, 12, 24, 48, 72, 168];
+
+function renderWithMono(template: string, value: string): ReactNode {
+  const idx = template.indexOf('\u0000');
+  if (idx === -1) return template;
+  return <>{template.slice(0, idx)}<Mono>{value}</Mono>{template.slice(idx + 1)}</>;
+}
 
 function canRemoteInstall(exec: string): boolean {
   return REMOTE_INSTALLABLE.has(exec);
@@ -44,28 +50,28 @@ function shortPlatform(platform: string | null | undefined): string {
   return first;
 }
 
-function stateBadge(job: ExecutorUpdateJobView) {
+function stateBadge(job: ExecutorUpdateJobView, t: I18nContextValue['t']) {
   const installing = !job.before_version;
   switch (job.state) {
     case 'waiting_idle':
-      return <Badge tone="waiting" className="text-[11px]"><Clock className="mr-1 size-3" />等空闲</Badge>;
+      return <Badge tone="waiting" className="text-[11px]"><Clock className="mr-1 size-3" />{t('mach.cli.stateWaitingIdle')}</Badge>;
     case 'updating':
-      return <Badge tone="plain" className="text-[11px]"><RefreshCw className="mr-1 size-3 animate-spin" />{installing ? '安装中' : '更新中'}</Badge>;
+      return <Badge tone="plain" className="text-[11px]"><RefreshCw className="mr-1 size-3 animate-spin" />{installing ? t('mach.cli.stateInstalling') : t('mach.cli.stateUpdating')}</Badge>;
     case 'succeeded':
       return (
         <Badge tone="success" className="text-[11px]">
           <CheckCircle2 className="mr-1 size-3" />
           {installing && job.after_version
-            ? `已装 ${shortVer(job.after_version)}`
+            ? t('mach.cli.stateInstalled', { ver: shortVer(job.after_version) })
             : job.updated
-              ? `已升 ${shortVer(job.after_version)}`
-              : '已是最新'}
+              ? t('mach.cli.stateUpgraded', { ver: shortVer(job.after_version) })
+              : t('mach.cli.stateUpToDate')}
         </Badge>
       );
     case 'unsupported':
-      return <Badge tone="plain" className="text-[11px] text-muted-foreground">{job.method === 'disabled' ? '已禁用' : '需手动更新'}</Badge>;
+      return <Badge tone="plain" className="text-[11px] text-muted-foreground">{job.method === 'disabled' ? t('mach.cli.stateDisabled') : t('cli.manualUpdate')}</Badge>;
     case 'failed':
-      return <Badge tone="failed" className="text-[11px]"><TriangleAlert className="mr-1 size-3" />失败</Badge>;
+      return <Badge tone="failed" className="text-[11px]"><TriangleAlert className="mr-1 size-3" />{t('mach.cli.stateFailed')}</Badge>;
   }
 }
 
@@ -94,7 +100,7 @@ export function countOutdatedCliCells(machines: Machine[], fleet: ExecutorFleetS
 }
 
 export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
-  const { t, bi } = useI18n();
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const { data: fleet, isPending, error } = useQuery(executorUpdatesQuery);
   const [checking, setChecking] = useState(false);
@@ -231,7 +237,7 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                 {t('cli.matrixBadge')}
               </Badge>
               {activeCount > 0 ? (
-                <Badge tone="waiting" className="text-[11px]">{bi(`${activeCount} 项进行中`, `${activeCount} running`)}</Badge>
+                <Badge tone="waiting" className="text-[11px]">{t('mach.cli.activeRunning', { count: activeCount })}</Badge>
               ) : null}
             </div>
             <Note className="mt-0.5 text-xs">
@@ -264,33 +270,39 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                   disabled={savingPolicy}
                   onChange={(e) => void handleSavePolicy({ enabled: e.target.checked })}
                 />
-                启用空闲自动更新（默认关闭；仅更新在线且当前无运行任务的落后机器）
+                {t('mach.cli.autoUpdateEnable')}
               </label>
               <span className="text-faint">
-                自定义源/内网包可在本机 <Mono>~/.tycho/executor-updaters.json</Mono> 覆写
+                {renderWithMono(t('mach.cli.customUpdaterHint', { path: '\u0000' }), '~/.tycho/executor-updaters.json')}
               </span>
             </div>
 
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
               <label className="flex items-center gap-1.5 text-muted-foreground">
-                <span>检查间隔</span>
+                <span>{t('mach.cli.checkInterval')}</span>
                 <select
-                  aria-label="自动更新检查间隔"
+                  aria-label={t('mach.cli.checkIntervalAria')}
                   className="h-7 rounded-md border border-border bg-raised px-2 text-xs text-foreground"
                   value={policy.intervalHours}
                   disabled={savingPolicy}
                   onChange={(e) => void handleSavePolicy({ intervalHours: Number(e.target.value) })}
                 >
                   {INTERVAL_OPTIONS.map((h) => (
-                    <option key={h} value={h}>每 {h} 小时{h === 24 ? '（每天）' : h === 168 ? '（每周）' : ''}</option>
+                    <option key={h} value={h}>
+                      {h === 24
+                        ? t('mach.cli.intervalDaily', { hours: h })
+                        : h === 168
+                          ? t('mach.cli.intervalWeekly', { hours: h })
+                          : t('mach.cli.intervalHours', { hours: h })}
+                    </option>
                   ))}
                 </select>
               </label>
 
               <div className="flex items-center gap-1.5 text-muted-foreground">
-                <span>维护时段</span>
+                <span>{t('mach.cli.maintWindow')}</span>
                 <select
-                  aria-label="维护时段开始小时"
+                  aria-label={t('mach.cli.maintStartAria')}
                   className="h-7 rounded-md border border-border bg-raised px-2 text-xs text-foreground"
                   value={policy.windowStartHour}
                   disabled={savingPolicy}
@@ -300,9 +312,9 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                     <option key={h} value={h}>{String(h).padStart(2, '0')}:00</option>
                   ))}
                 </select>
-                <span>至</span>
+                <span>{t('mach.cli.windowTo')}</span>
                 <select
-                  aria-label="维护时段结束小时"
+                  aria-label={t('mach.cli.maintEndAria')}
                   className="h-7 rounded-md border border-border bg-raised px-2 text-xs text-foreground"
                   value={policy.windowEndHour}
                   disabled={savingPolicy}
@@ -313,13 +325,13 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                   ))}
                 </select>
                 {policy.windowStartHour === policy.windowEndHour ? (
-                  <span className="text-faint">（起止相同 = 全天空闲即可）</span>
+                  <span className="text-faint">{t('mach.cli.windowAllDay')}</span>
                 ) : null}
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-muted-foreground">参与自动更新的执行器：</span>
+              <span className="text-muted-foreground">{t('mach.cli.autoUpdateExecutors')}</span>
               {(executors.length > 0 ? executors : EXECUTOR_ORDER).map((exec) => {
                 const on = policy.executors[exec] === true;
                 return (
@@ -345,9 +357,9 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
         ) : null}
 
         {isPending && !fleet ? (
-          <Note>正在读取执行器版本矩阵…</Note>
+          <Note>{t('mach.cli.loadingMatrix')}</Note>
         ) : executors.length === 0 ? (
-          <Note>当前没有机器上报已安装的执行器。</Note>
+          <Note>{t('mach.cli.noReportedExecutors')}</Note>
         ) : (
           <div className="overflow-x-auto rounded-lg border border-border/80">
             <table className="w-full border-collapse text-left text-xs">
@@ -380,7 +392,7 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                               ) : null}
                             </div>
                             {upstream?.error ? (
-                              <p className="mt-0.5 text-[10px] font-normal text-faint" title={upstream.error}>{bi('上游未连上（按机群比对）', 'Upstream unreachable (using fleet max)')}</p>
+                              <p className="mt-0.5 text-[10px] font-normal text-faint" title={upstream.error}>{t('mach.cli.upstreamUnreachable')}</p>
                             ) : null}
                           </div>
                           <Button
@@ -388,7 +400,7 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                             variant="ghost"
                             className="h-6 flex-none whitespace-nowrap px-2 text-[11px]"
                             disabled={onlineUpdatableCount === 0 || busyAll}
-                            title={onlineUpdatableCount === 0 ? bi(`${exec} 当前没有支持自动批量更新的在线机器`, `No online machines support batch update for ${exec}`) : bi(`更新所有在线机器上的 ${exec}`, `Update ${exec} on all online machines`)}
+                            title={onlineUpdatableCount === 0 ? t('mach.cli.noBatchMachines', { executor: exec }) : t('mach.cli.updateAllTitle', { executor: exec })}
                             onClick={() => void handleRunUpdate(exec)}
                           >
                             <ArrowUpCircle className="size-3" />
@@ -409,7 +421,7 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                         <div className="min-w-0">
                           <div className="truncate font-medium text-foreground">{machine.id}</div>
                           <div className="text-[11px] text-faint">
-                            {shortPlatform(machine.node.platform)}{machine.node.connected ? '' : ' · 离线'}
+                            {shortPlatform(machine.node.platform)}{machine.node.connected ? '' : ` · ${t('common.offline')}`}
                           </div>
                         </div>
                       </div>
@@ -433,7 +445,7 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                                   className="text-faint"
                                   title={
                                     exec === 'gemini'
-                                      ? 'Antigravity 桌面端 / IDE 不内置 agy CLI，需单独安装独立 CLI（可点右侧「安装」一键远程安装）'
+                                      ? t('mach.cli.geminiNotBundled')
                                       : undefined
                                   }
                                 >
@@ -443,10 +455,10 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                                   <button
                                     type="button"
                                     className="cursor-pointer"
-                                    title={job.error ?? job.output ?? bi('查看详情', 'View details')}
+                                    title={job.error ?? job.output ?? t('mach.cli.viewDetails')}
                                     onClick={() => setExpandedJobId((cur) => (cur === job.id ? null : job.id))}
                                   >
-                                    {stateBadge(job)}
+                                    {stateBadge(job, t)}
                                   </button>
                                 ) : null}
                               </div>
@@ -458,8 +470,8 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                                   disabled={busyCell}
                                   title={
                                     exec === 'gemini'
-                                      ? bi(`在 ${machine.id} 上一键安装 Antigravity CLI (agy)`, `Install Antigravity CLI (agy) on ${machine.id}`)
-                                      : bi(`在 ${machine.id} 上一键安装 ${exec} CLI`, `Install ${exec} CLI on ${machine.id}`)
+                                      ? t('mach.cli.installGeminiTitle', { machine: machine.id })
+                                      : t('mach.cli.installTitle', { machine: machine.id, executor: exec })
                                   }
                                   onClick={() => void handleRunUpdate(exec, [machine.id])}
                                 >
@@ -483,16 +495,16 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                                   <Badge tone="waiting" className="text-[10px]">{t('cli.behind')}</Badge>
                                 ) : null}
                                 {!job && isLikelyManualUpdate(exec, status.path) ? (
-                                  <Badge tone="plain" className="text-[10px] text-faint" title={bi('该执行器由桌面安装包管理，需通过对应桌面端或本机配置更新', 'Managed by desktop installer; update via desktop app or local config')}>{t('cli.manualUpdate')}</Badge>
+                                  <Badge tone="plain" className="text-[10px] text-faint" title={t('mach.cli.manualUpdateTitle')}>{t('cli.manualUpdate')}</Badge>
                                 ) : null}
                                 {job ? (
                                   <button
                                     type="button"
                                     className="cursor-pointer"
-                                    title={job.error ?? job.output ?? bi('查看详情', 'View details')}
+                                    title={job.error ?? job.output ?? t('mach.cli.viewDetails')}
                                     onClick={() => setExpandedJobId((cur) => (cur === job.id ? null : job.id))}
                                   >
-                                    {stateBadge(job)}
+                                    {stateBadge(job, t)}
                                   </button>
                                 ) : null}
                               </div>
@@ -502,7 +514,7 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                                   variant="ghost"
                                   className="h-6 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
                                   disabled={busyCell}
-                                  title={bi(`更新 ${machine.id} 上的 ${exec}`, `Update ${exec} on ${machine.id}`)}
+                                  title={t('mach.cli.updateMachineTitle', { machine: machine.id, executor: exec })}
                                   onClick={() => void handleRunUpdate(exec, [machine.id])}
                                 >
                                   {t('cli.update')}
@@ -536,16 +548,16 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                 <li key={job.id} className="grid gap-1 py-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
-                      {stateBadge(job)}
+                      {stateBadge(job, t)}
                       <span className="font-medium text-foreground">{job.machine_id}</span>
                       <Mono>{job.executor}</Mono>
                       {job.method ? <span className="text-[11px] text-faint">via {job.method}</span> : null}
                       {job.before_version || job.after_version ? (
                         <span className="font-mono text-[11px] text-muted-foreground">
-                          {job.before_version ? shortVer(job.before_version) : '未安装'} → {shortVer(job.after_version ?? job.before_version)}
+                          {job.before_version ? shortVer(job.before_version) : t('cli.notInstalled')} → {shortVer(job.after_version ?? job.before_version)}
                         </span>
                       ) : null}
-                      {job.trigger === 'auto' ? <Badge tone="plain" className="text-[10px]">自动</Badge> : null}
+                      {job.trigger === 'auto' ? <Badge tone="plain" className="text-[10px]">{t('mach.cli.triggerAuto')}</Badge> : null}
                     </div>
                     <div className="flex items-center gap-2 text-[11px] text-faint">
                       <span>{formatTime(job.finished_at ?? job.started_at)}</span>
@@ -555,7 +567,7 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                           className="text-primary hover:underline"
                           onClick={() => setExpandedJobId(open ? null : job.id)}
                         >
-                          {open ? '收起日志' : '看详情'}
+                          {open ? t('mach.cli.hideLogs') : t('mach.cli.showDetails')}
                         </button>
                       ) : null}
                     </div>

@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { taskLine } from '@shared/labels.ts';
 import { StatusDot, toneOf, type Tone } from '@/components/bits';
+import { useI18n } from '@/lib/i18n';
 import type { Task } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
@@ -13,16 +14,50 @@ const SEGMENTS: Record<Tone, string> = { running: 'bg-running', waiting: 'bg-wai
 export const workPath = (id: string): string => `/work/${encodeURIComponent(id)}`;
 export const taskPath = (id: string): string => `/task/${encodeURIComponent(id)}`;
 
+const MAX_INDIVIDUAL_SEGMENTS = 16;
+const TONE_ORDER: readonly Tone[] = ['success', 'running', 'waiting', 'failed', 'ended'];
+
 export function Progress({ tasks, className }: { tasks: readonly Task[]; className?: string }) {
+  const { t } = useI18n();
   if (!tasks.length) return null;
+  const label = t('tsk.workRow.progress', { done: tasks.filter((child) => child.state === 'done').length, total: tasks.length });
+
+  if (tasks.length > MAX_INDIVIDUAL_SEGMENTS) {
+    const counts = new Map<Tone, number>();
+    for (const child of tasks) {
+      const tone = toneOf(child.state);
+      counts.set(tone, (counts.get(tone) ?? 0) + 1);
+    }
+    return (
+      <span
+        role="img"
+        aria-label={label}
+        className={cn('flex h-1 w-16 flex-none overflow-hidden rounded-full bg-muted', className)}
+      >
+        {TONE_ORDER.map((tone) => {
+          const count = counts.get(tone) ?? 0;
+          if (count === 0) return null;
+          return (
+            <span
+              key={tone}
+              data-tone={tone}
+              style={{ flexGrow: count }}
+              className={cn('h-full min-w-0', SEGMENTS[tone])}
+            />
+          );
+        })}
+      </span>
+    );
+  }
+
   return (
     <span
       role="img"
-      aria-label={`子任务进度，${tasks.filter((child) => child.state === 'done').length}/${tasks.length} 已完成`}
-      className={cn('flex h-1 w-16 flex-none gap-0.5', className)}
+      aria-label={label}
+      className={cn('flex h-1 w-16 flex-none gap-0.5 overflow-hidden', className)}
     >
       {tasks.map((child) => (
-        <span key={child.id} data-tone={toneOf(child.state)} title={`${child.title}：${taskLine(child)}`} className={cn('min-w-0.5 flex-1 rounded-full', SEGMENTS[toneOf(child.state)])} />
+        <span key={child.id} data-tone={toneOf(child.state)} title={t('tsk.workRow.childTitle', { title: child.title, line: taskLine(child) })} className={cn('min-w-0 flex-1 rounded-full', SEGMENTS[toneOf(child.state)])} />
       ))}
     </span>
   );
@@ -43,6 +78,7 @@ export function WorkRow({ task, children = [], to, onSelect, selected = false, p
   dense?: boolean;
   className?: string;
 }) {
+  useI18n();
   const line = taskLine(task);
   const rowClassName = cn(
     'group/row flex items-start gap-2.5 px-3 text-sm no-underline transition-colors duration-100 hover:bg-muted focus-visible:-outline-offset-2',
@@ -54,9 +90,9 @@ export function WorkRow({ task, children = [], to, onSelect, selected = false, p
     <>
       <StatusDot state={task.summary?.dot ?? task.state} className="mt-[3px]" />
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-2">
-          <span className="min-w-0 truncate font-medium">{task.title}</span>
-          {project ? <span className="hidden flex-none rounded-xs bg-muted px-1 text-2xs text-muted-foreground group-hover/row:bg-hover sm:inline">{project}</span> : null}
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="min-w-0 flex-1 truncate font-medium">{task.title}</span>
+          {project ? <span title={project} className="hidden max-w-[14ch] flex-none truncate rounded-xs bg-muted px-1 text-2xs text-muted-foreground group-hover/row:bg-hover sm:inline">{project}</span> : null}
         </span>
         <span className="block truncate text-xs text-muted-foreground" title={line}>{line}</span>
       </span>

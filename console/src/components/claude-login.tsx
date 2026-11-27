@@ -17,6 +17,7 @@ import { Dialog, DialogActions, DialogContent } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { accountBody, newAccountForm, tierEditorOf, tierRefusal, type AccountForm, type TierProblem } from '@/lib/accounts';
 import { api, messageOf, post } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { accountsQuery, PAGE } from '@/lib/queries';
 import { isTychoDesktop, openExternalUrl } from '@/lib/utils';
 import type { AccountLoginOffer } from '@shared/logins.ts';
@@ -59,6 +60,7 @@ export function ClaudeLoginSteps({ target, page, seen, onDone, onBack }: {
   // Back to where the way was picked, when a login could not even be started.
   onBack?: (() => void) | undefined;
 }) {
+  const { t } = useI18n();
   const prefix = useId();
   const client = useQueryClient();
   const active = useRef(false);
@@ -179,8 +181,8 @@ export function ClaudeLoginSteps({ target, page, seen, onDone, onBack }: {
         {error ? <Problem role="alert">{error}</Problem> : <Waiting>{`${LOGIN_STATE_TEXT.preparing}…`}</Waiting>}
         {error ? (
           <DialogActions>
-            {onBack ? <Button variant="ghost" disabled={busy} onClick={onBack}>上一步</Button> : null}
-            <Button variant="primary" disabled={busy} onClick={() => void start()}>重新授权</Button>
+            {onBack ? <Button variant="ghost" disabled={busy} onClick={onBack}>{t('acct.action.prevStep')}</Button> : null}
+            <Button variant="primary" disabled={busy} onClick={() => void start()}>{t('acct.oauth.reauthorize')}</Button>
           </DialogActions>
         ) : null}
       </div>
@@ -188,58 +190,68 @@ export function ClaudeLoginSteps({ target, page, seen, onDone, onBack }: {
   }
 
   const again = (
-    <Button variant="primary" disabled={busy} onClick={() => void start()}>重新授权</Button>
+    <Button variant="primary" disabled={busy} onClick={() => void start()}>{t('acct.oauth.reauthorize')}</Button>
   );
   // Opens in a tab of its own: the window stays where the code is to be pasted.
   const authorize = login.url ? (
     <Button asChild variant="primary" className="justify-self-start">
-      <a href={login.url} target="_blank" rel="noopener noreferrer">前往 Claude 授权</a>
+      <a href={login.url} target="_blank" rel="noopener noreferrer">{t('acct.claude.goAuthorize')}</a>
     </Button>
   ) : null;
   return (
     <div className="grid gap-4">
-      {login.state === 'preparing' ? <Waiting>{login.url ? '等待 CLI 准备接收授权码…' : `${LOGIN_STATE_TEXT.preparing}，等待授权网址…`}</Waiting> : null}
+      {login.state === 'preparing' ? <Waiting>{login.url ? t('acct.claude.waitingCliReady') : t('acct.claude.waitingUrl', { preparing: LOGIN_STATE_TEXT.preparing })}</Waiting> : null}
       {(login.state === 'preparing' || login.state === 'waiting_code') && login.url ? (
         <Callout tone="plain" className="flex items-start gap-2 text-xs">
-          <p className="min-w-0 flex-1 text-muted-foreground">当前浏览器会使用已经登录的 claude.ai 账号。要登录另一个账号，请用无痕窗口或另一个浏览器打开这个网址，在那里登录想加的账号再授权。</p>
-          <CopyButton value={login.url} label="复制网址" />
+          <p className="min-w-0 flex-1 text-muted-foreground">{t('acct.claude.incognitoHint')}</p>
+          <CopyButton value={login.url} label={t('acct.oauth.copyUrl')} />
         </Callout>
       ) : null}
       {login.state === 'preparing' ? authorize : null}
       {login.state === 'waiting_code' && login.url ? (
         <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-          <p>点下面的按钮，在你自己的浏览器里完成授权，再把页面给的授权码贴到这里。</p>
+          <p>{t('acct.claude.pasteCodePrompt')}</p>
           {authorize}
-          <Field htmlFor={`${prefix}-code`} label="授权码" hint="一次登录只交一次授权码。">
+          <Field htmlFor={`${prefix}-code`} label={t('acct.claude.codeLabel')} hint={t('acct.claude.codeHint')}>
             <Input id={`${prefix}-code`} autoComplete="off" spellCheck={false} className="font-mono text-xs" value={code} disabled={busy} onChange={(event) => setCode(event.target.value)} />
           </Field>
           <DialogActions>
-            <Button type="submit" variant="primary" disabled={busy || code.trim() === ''}>提交授权码</Button>
+            <Button type="submit" variant="primary" disabled={busy || code.trim() === ''}>{t('acct.claude.submitCode')}</Button>
           </DialogActions>
         </form>
       ) : null}
       {login.state === 'exchanging' ? <Waiting>{`${LOGIN_STATE_TEXT.exchanging}…`}</Waiting> : null}
       {login.state === 'signed_in' && login.mode === 'new' ? (
         <div className="grid gap-1">
-          {login.models.refreshing ? <Note>正在读取模型和账号资料…</Note>
-            : login.identity.organizationId ? <Note>组织标识：{login.identity.organizationId}</Note>
-              : <Note>认不出是哪个 Claude 账号</Note>}
-          {login.duplicate !== null ? <Problem>{duplicateAccountText(login.duplicate)}。</Problem> : null}
+          {login.models.refreshing ? <Note>{t('acct.claude.loadingModels')}</Note>
+            : login.identity.organizationId ? <Note>{t('acct.claude.orgId', { id: login.identity.organizationId })}</Note>
+              : <Note>{t('acct.claude.unknownAccount')}</Note>}
+          {login.duplicate !== null ? <Problem>{t('acct.sentencePeriod', { text: duplicateAccountText(login.duplicate) })}</Problem> : null}
         </div>
       ) : null}
       {login.state === 'signed_in' && login.mode === 'relogin' ? (
         <>
-          <p role="status">{LOGIN_STATE_TEXT.signed_in}。新令牌已经换上，之后的任务用它。</p>
-          <DialogActions><Button variant="primary" onClick={onDone}>完成</Button></DialogActions>
+          <p role="status">{t('acct.oauth.reloginDone', { signedIn: LOGIN_STATE_TEXT.signed_in })}</p>
+          <DialogActions><Button variant="primary" onClick={onDone}>{t('acct.action.done')}</Button></DialogActions>
         </>
       ) : null}
       {login.state === 'signed_in' && login.mode === 'new' && !login.saved ? (
         <>
           <Callout tone="plain">
-            <p role="status" className="font-semibold">{LOGIN_STATE_TEXT.signed_in}。{login.duplicate === null ? '填好档位，保存后账号就建好了。' : ''}</p>
+            <p role="status" className="font-semibold">
+              {login.duplicate === null
+                ? t('acct.oauth.signedInFillTiers', { signedIn: LOGIN_STATE_TEXT.signed_in })
+                : t('acct.sentencePeriod', { text: LOGIN_STATE_TEXT.signed_in })}
+            </p>
             {/* The name the service gives it, once it has read who this login is. */}
-            {login.duplicate === null && !login.models.refreshing && login.name ? <p className="mt-1">账号会叫 <strong className="font-semibold">{login.name}</strong>，建好后可以随时改名。</p> : null}
-            <Note className="mt-1 text-xs">令牌在服务里暂存，没写到任何地方；关掉这个窗口，这次拿到的令牌就作废，账号也不会建。</Note>
+            {login.duplicate === null && !login.models.refreshing && login.name ? (
+              <p className="mt-1">
+                {t('acct.oauth.autoNamePrefix')}
+                <strong className="font-semibold">{login.name}</strong>
+                {t('acct.oauth.autoNameSuffix')}
+              </p>
+            ) : null}
+            <Note className="mt-1 text-xs">{t('acct.oauth.ephemeralTokenNote')}</Note>
           </Callout>
           {login.duplicate !== null ? <DialogActions>{again}</DialogActions> : form ? (
             <LoginEditor
@@ -260,12 +272,12 @@ export function ClaudeLoginSteps({ target, page, seen, onDone, onBack }: {
           ) : null}
         </>
       ) : null}
-      {login.state === 'signed_in' && login.mode === 'new' && login.saved ? <p role="status">账号 {login.name} 已建好。</p> : null}
+      {login.state === 'signed_in' && login.mode === 'new' && login.saved ? <p role="status">{t('acct.oauth.accountCreated', { name: login.name })}</p> : null}
       {login.state === 'failed' && login.reason ? (
         <>
           <Problem role="alert">{FAIL_TEXT[login.reason]}</Problem>
           {login.shape ? (
-            <Details id={`claude-login-shape:${login.id}`} title="这一屏的形状（字母数字都已换掉，用来修读取）">
+            <Details id={`claude-login-shape:${login.id}`} title={t('acct.claude.screenShapeTitle')}>
               <pre className={PRE}>{login.shape}</pre>
             </Details>
           ) : null}
@@ -287,6 +299,7 @@ export function ClaudeLoginSteps({ target, page, seen, onDone, onBack }: {
 // Signing an account in again, in a window of its own. Closing it is cancelling: whatever the
 // login still holds is let go of. The page reads its accounts again, for a token that was replaced.
 export function ReloginWindow({ target, page, onClose }: { target: Extract<LoginTarget, { mode: 'relogin' }> | null; page: AccountsAndMachines; onClose: () => void }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const seen = useRef<LoginView | undefined>(undefined);
   const close = (): void => {
@@ -301,8 +314,8 @@ export function ReloginWindow({ target, page, onClose }: { target: Extract<Login
       {target ? (
         <DialogContent
           className="max-w-[560px]"
-          title={`重新登录 ${target.name}`}
-          description="新令牌存好了才替换旧的；中途取消或失败，原来的登录不变。"
+          title={t('acct.oauth.reloginTitle', { name: target.name })}
+          description={t('acct.oauth.reloginDesc')}
         >
           <ClaudeLoginSteps target={target} page={page} seen={seen} onDone={close} />
         </DialogContent>

@@ -729,6 +729,21 @@
     }
   }
 
+  /* Direct-child disclosure chevron so an open outer <details> never rotates a closed inner one. */
+  details[open] > summary > [data-slot="details-chevron"] {
+    rotate: 90deg;
+  }
+
+  /* Prevent scroll chaining from modal dialogs and backdrops to underlying scroll containers. */
+  dialog:modal {
+    overscroll-behavior: contain;
+  }
+
+  dialog::backdrop {
+    overflow: hidden;
+    overscroll-behavior: contain;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     *, ::before, ::after {
       animation: none !important;

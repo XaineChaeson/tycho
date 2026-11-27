@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n.ts';
 import type { ProjectFileKind, ProjectFileSummary } from './types.ts';
 
 // The answer goes with the error: a refusal can say more than its sentence, such as
@@ -24,7 +25,7 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
   const response = await fetch(path, init);
   if (response.status === 401) {
     session.toLogin();
-    throw new ApiError('需要登录', 401, {});
+    throw new ApiError(t('core.api.loginRequired'), 401, {});
   }
   // Empty command acknowledgements are valid; every other successful API response
   // must really be JSON. A proxy page or truncated body is an error, not cached data.
@@ -33,11 +34,11 @@ export async function api<T = unknown>(path: string, init?: RequestInit): Promis
   try {
     body = await response.json();
   } catch {
-    if (response.ok) throw new ApiError('服务返回的数据无法读取，请刷新页面重试。', response.status, {});
+    if (response.ok) throw new ApiError(t('core.api.unreadableResponse'), response.status, {});
   }
   if (!response.ok) {
     const detail = body !== null && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
-    throw new ApiError(typeof detail.error === 'string' ? detail.error : `请求失败（${response.status}）`, response.status, detail);
+    throw new ApiError(typeof detail.error === 'string' ? detail.error : t('core.api.requestFailed', { status: response.status }), response.status, detail);
   }
   return body as T;
 }

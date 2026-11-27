@@ -23,9 +23,8 @@ interface Durations {
   temporary_ms: number;
 }
 
-const BOTH = '这个号码同时对上了一台设备和一台机器：只放行你面前显示着这个数字的那一个。';
-
 function AdmitForm() {
+  const { t } = useI18n();
   const client = useQueryClient();
   // How long a device stays signed in is the sessions list's to say.
   const { data: durations } = useQuery({ queryKey: [PAGE, 'console-sessions'], queryFn: () => api<Durations>('/api/console-sessions'), refetchInterval: POLL_MS });
@@ -77,9 +76,9 @@ function AdmitForm() {
   });
 
   return (
-    <section aria-label="放行" className="grid gap-5">
+    <section aria-label={t('nav.admit')} className="grid gap-5">
       <form className="grid gap-2" onSubmit={(event) => { event.preventDefault(); void lookup(); }}>
-        <label htmlFor="admit-code" className="font-medium">六位数字</label>
+        <label htmlFor="admit-code" className="font-medium">{t('core.admit.codeLabel')}</label>
         <div className="flex items-center gap-2">
           <Input
             id="admit-code"
@@ -98,13 +97,13 @@ function AdmitForm() {
               setNotice(null);
             }}
           />
-          <Button type="submit" variant="primary" disabled={busy || !/^[0-9]{6}$/.test(code)}>查找</Button>
+          <Button type="submit" variant="primary" disabled={busy || !/^[0-9]{6}$/.test(code)}>{t('core.admit.lookup')}</Button>
         </div>
-        <p className="text-xs text-muted-foreground">新设备的登录页上、或新机器的加入命令打印的那个数字。</p>
+        <p className="text-xs text-muted-foreground">{t('core.admit.codeHint')}</p>
       </form>
       {failure ? <Problem role="alert">{failure}</Problem> : null}
       {notice ? <Callout tone="plain" role="status">{notice}</Callout> : null}
-      {matches.length > 1 ? <p className="font-medium">{BOTH}</p> : null}
+      {matches.length > 1 ? <p className="font-medium">{t('core.admit.bothMatched')}</p> : null}
       {matches.map((match) => match.kind === 'device'
         ? <DeviceMatch key="device" match={match} durations={durations} busy={busy} onDecide={(approve, temporary) => void decide(match, approve, temporary)} />
         : <MachineMatch key="machine" match={match} busy={busy} onDecide={(approve) => void decide(match, approve)} />)}
@@ -121,20 +120,25 @@ function DeviceMatch({ match, durations, busy, onDecide }: {
   busy: boolean;
   onDecide: (approve: boolean, temporary?: boolean) => void;
 }) {
+  const { t } = useI18n();
   const minutes = Math.max(0, Math.floor((Date.now() - match.created_at) / 60_000));
   return (
-    <section aria-label="等待放行的设备" className={MATCH}>
-      <h2 className="text-xs text-muted-foreground">新设备登录</h2>
+    <section aria-label={t('core.admit.deviceRegion')} className={MATCH}>
+      <h2 className="text-xs text-muted-foreground">{t('core.admit.deviceHeading')}</h2>
       <p className={CODE}>{match.code}</p>
       <p className="font-medium wrap-anywhere">{match.device}</p>
-      <p className="text-muted-foreground">{match.entry === 'outside' ? '从外面' : '在主机这台电脑上'}{' · '}{minutes ? minutes + ' 分钟前发起' : '刚刚发起'}</p>
-      <p>只有你自己面前那台设备上显示着同样的数字时才放行。</p>
+      <p className="text-muted-foreground">
+        {match.entry === 'outside' ? t('core.admit.entryOutside') : t('core.admit.entryInside')}
+        {' · '}
+        {minutes ? t('core.admit.startedMinutesAgo', { minutes }) : t('core.admit.startedJustNow')}
+      </p>
+      <p>{t('core.admit.deviceWarning')}</p>
       <div className="mt-1 flex flex-wrap gap-2">
         {durations ? <>
-          <Button variant="primary" className="h-auto max-w-full whitespace-normal wrap-anywhere" disabled={busy} onClick={() => onDecide(true)}>放行，保持 {durations.session_days} 天</Button>
-          <Button className="h-auto max-w-full whitespace-normal wrap-anywhere" disabled={busy} onClick={() => onDecide(true, true)}>放行，只保持 {loginDurationText(durations.temporary_ms)}</Button>
-        </> : <p className="text-muted-foreground">读取登录保持时间后才能放行。</p>}
-        <Button variant="danger" disabled={busy} onClick={() => onDecide(false)}>不是我</Button>
+          <Button variant="primary" className="h-auto max-w-full whitespace-normal wrap-anywhere" disabled={busy} onClick={() => onDecide(true)}>{t('core.admit.approveDays', { days: durations.session_days })}</Button>
+          <Button className="h-auto max-w-full whitespace-normal wrap-anywhere" disabled={busy} onClick={() => onDecide(true, true)}>{t('core.admit.approveTemporary', { duration: loginDurationText(durations.temporary_ms) })}</Button>
+        </> : <p className="text-muted-foreground">{t('core.admit.loadingDuration')}</p>}
+        <Button variant="danger" disabled={busy} onClick={() => onDecide(false)}>{t('core.admit.notMe')}</Button>
       </div>
     </section>
   );
@@ -145,17 +149,18 @@ function MachineMatch({ match, busy, onDecide }: {
   busy: boolean;
   onDecide: (approve: boolean) => void;
 }) {
+  const { t } = useI18n();
   return (
-    <section aria-label="等待放行的机器" className={MATCH}>
-      <h2 className="text-xs text-muted-foreground">新机器加入</h2>
+    <section aria-label={t('core.admit.machineRegion')} className={MATCH}>
+      <h2 className="text-xs text-muted-foreground">{t('core.admit.machineHeading')}</h2>
       <p className={CODE}>{match.code}</p>
       <p className="font-medium wrap-anywhere">{match.name}</p>
       <p className="text-muted-foreground wrap-anywhere">{match.platform} · {match.hostname}</p>
       <p className="text-muted-foreground">{joinExpiryText(match.expires_at)}</p>
-      <p>只有你自己面前那台机器上显示着同样的数字时才放行。</p>
+      <p>{t('core.admit.machineWarning')}</p>
       <div className="mt-1 flex flex-wrap gap-2">
-        <Button variant="primary" disabled={busy} onClick={() => onDecide(true)}>放行</Button>
-        <Button variant="danger" disabled={busy} onClick={() => onDecide(false)}>拒绝</Button>
+        <Button variant="primary" disabled={busy} onClick={() => onDecide(true)}>{t('nav.admit')}</Button>
+        <Button variant="danger" disabled={busy} onClick={() => onDecide(false)}>{t('core.admit.reject')}</Button>
       </div>
     </section>
   );
@@ -163,12 +168,12 @@ function MachineMatch({ match, busy, onDecide }: {
 
 // The one way to let something in by its six digits, from the foot of the side column.
 export function Admit() {
-  const { t, bi } = useI18n();
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild><Button variant="ghost" size="sm" className="gap-1 px-1.5"><KeyRound />{t('nav.admit')}</Button></SheetTrigger>
-      <SheetContent title={t('nav.admit')} description={bi('放行一台新设备登录控制台，或者一台新机器加入。', 'Approve a new device sign-in or connect a new machine.')} className="w-[min(440px,100%)]">
+      <SheetContent title={t('nav.admit')} description={t('core.admit.sheetDesc')} className="w-[min(440px,100%)]">
         {open ? <AdmitForm /> : null}
       </SheetContent>
     </Sheet>

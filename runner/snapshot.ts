@@ -1,4 +1,4 @@
-import { getActiveLocale } from '../shared/i18n.ts';
+import { DEFAULT_LOCALE, getActiveLocale, getLocalePack } from '../shared/i18n.ts';
 import { FINAL_MESSAGE_REF } from '../shared/report.ts';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
@@ -492,9 +492,11 @@ const DELIVERY: Record<DeliverableId, string> = {
 export type ReviewArtifactBinding = Pick<ReviewOf, 'task_id' | 'run_id' | 'files' | 'report'>;
 
 function languageSection(): string {
-  return getActiveLocale() === 'en'
-    ? '## Language\n\nWrite prose, reports, and receipt summaries in English unless the task explicitly specifies another language.\n\n'
-    : '';
+  const active = getActiveLocale();
+  if (active === DEFAULT_LOCALE) return '';
+  const pack = getLocalePack(active);
+  const langName = pack?.name ?? active;
+  return `## Language\n\nWrite prose, reports, and receipt summaries in ${langName} unless the task explicitly specifies another language.\n\n`;
 }
 
 function deliverySection(role: RoleConfig | undefined): string {

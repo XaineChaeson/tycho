@@ -41,6 +41,7 @@
     "dev:console": "npm --prefix console run dev",
     "test:console": "npm --prefix console test",
     "check:hygiene": "node scripts/check-oss-hygiene.ts",
+    "check:i18n": "node scripts/check-i18n.ts",
     "docs:gen": "node scripts/gen-docs-reference.ts",
     "docs:check": "node scripts/gen-docs-reference.ts --check",
     "docs:site": "node scripts/build-docs-site.ts"

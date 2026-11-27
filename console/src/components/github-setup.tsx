@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Segmented } from '@/components/ui/segmented';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api, del, messageOf, post } from '@/lib/api';
+import { translate, useI18n } from '@/lib/i18n';
 import { PAGE } from '@/lib/queries';
 
 export interface GitHubConnection {
@@ -45,14 +46,9 @@ type AuthTab = 'pat' | 'device';
 
 const GITHUB_QUERY_KEY = [PAGE, 'github'] as const;
 const PAT_CREATE_URL = 'https://github.com/settings/personal-access-tokens/new?description=Tycho';
-const CAPABILITY_NOTE = '派发任务给任意机器时将按轮次自动注入临时 GitHub 凭据（git / gh 免登机配置），负责人也可直接查询 PR 与 CI 状态。';
-
-const AUTH_OPTIONS: readonly { value: AuthTab; label: string }[] = [
-  { value: 'pat', label: 'Fine-Grained PAT（推荐）' },
-  { value: 'device', label: 'Device Flow（设备码）' },
-];
 
 export function GitHubSetup() {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: GITHUB_QUERY_KEY,
@@ -76,6 +72,11 @@ export function GitHubSetup() {
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
+
+  const authOptions: readonly { value: AuthTab; label: string }[] = [
+    { value: 'pat', label: t('set.gh.authPat') },
+    { value: 'device', label: t('set.gh.authDevice') },
+  ];
 
   // Poll the active Device Flow session sequentially; unmount or cancel aborts and stops the timer.
   useEffect(() => {
@@ -121,11 +122,11 @@ export function GitHubSetup() {
         }
         setDeviceSession(null);
         if (result.state === 'expired') {
-          setDeviceError(result.error ?? '设备码已过期，请重新获取。');
+          setDeviceError(result.error ?? translate('set.gh.deviceExpired'));
         } else if (result.state === 'denied') {
-          setDeviceError(result.error ?? '授权已拒绝，如需连接请重新获取设备码。');
+          setDeviceError(result.error ?? translate('set.gh.deviceDenied'));
         } else {
-          setDeviceError(result.error ?? 'GitHub 授权失败，请重试。');
+          setDeviceError(result.error ?? translate('set.gh.authFailed'));
         }
       } catch (err) {
         if (!active || pending.signal.aborted) return;
@@ -157,7 +158,7 @@ export function GitHubSetup() {
       <Card className="mt-4 grid justify-items-start gap-3">
         <Problem role="alert">{messageOf(query.error)}</Problem>
         <Button size="sm" disabled={query.isFetching} onClick={() => void query.refetch()}>
-          重试读取
+          {t('set.retryRead')}
         </Button>
       </Card>
     );
@@ -264,7 +265,7 @@ export function GitHubSetup() {
   if (connection) {
     return (
       <>
-        <Card className="mt-4 grid gap-4" aria-label="GitHub 连接状态">
+        <Card className="mt-4 grid gap-4" aria-label={t('set.gh.statusAria')}>
           <div className="flex flex-wrap items-center gap-2.5">
             <Dot tone="success" />
             <span
@@ -278,14 +279,14 @@ export function GitHubSetup() {
               {connection.name ? <span className="text-sm text-muted-foreground">{connection.name}</span> : null}
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
-              <Badge tone="success">已连接</Badge>
+              <Badge tone="success">{t('set.connected')}</Badge>
               <Badge tone="plain">{connection.mode === 'pat' ? 'PAT' : 'Device Flow'}</Badge>
             </div>
           </div>
 
           {connection.scopes.length > 0 ? (
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs text-muted-foreground">权限范围</span>
+              <span className="text-xs text-muted-foreground">{t('set.gh.scopes')}</span>
               {connection.scopes.map((scope) => (
                 <Badge key={scope} tone="plain" className="font-mono text-2xs">
                   {scope}
@@ -295,16 +296,16 @@ export function GitHubSetup() {
           ) : null}
 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            <span>连接于 <Time at={connection.connected_at} /></span>
+            <span>{t('set.gh.connectedAt')} <Time at={connection.connected_at} /></span>
             <span aria-hidden="true">·</span>
-            <span>最近校验 <Time at={connection.checked_at} /></span>
+            <span>{t('set.gh.checkedAt')} <Time at={connection.checked_at} /></span>
           </div>
 
-          <Note className="text-xs">{CAPABILITY_NOTE}</Note>
+          <Note className="text-xs">{t('set.gh.capabilityNote')}</Note>
 
           <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
             <Button disabled={checking || disconnecting} onClick={() => void checkConnection()}>
-              {checking ? '测试中…' : '测试连接'}
+              {checking ? t('set.gh.testing') : t('set.gh.testConnection')}
             </Button>
             <Button
               variant="danger"
@@ -314,12 +315,12 @@ export function GitHubSetup() {
                 setConfirmDisconnect(true);
               }}
             >
-              断开连接
+              {t('set.disconnect')}
             </Button>
             {checkValid ? (
               <span role="status" className="inline-flex items-center gap-1 text-xs font-medium text-success-foreground">
                 <Check className="size-3.5" aria-hidden="true" />
-                连接有效
+                {t('set.gh.connectionValid')}
               </span>
             ) : null}
           </div>
@@ -329,9 +330,9 @@ export function GitHubSetup() {
 
         <Confirm
           open={confirmDisconnect}
-          title="断开 GitHub 连接？"
-          description="断开后将清除已保存的 GitHub 凭据，新派发的任务将不再自动注入 GitHub 认证。"
-          confirm={disconnecting ? '断开中…' : '确认断开'}
+          title={t('set.gh.disconnectTitle')}
+          description={t('set.gh.disconnectDesc')}
+          confirm={disconnecting ? t('set.gh.disconnecting') : t('set.gh.confirmDisconnect')}
           danger
           busy={disconnecting}
           error={disconnectError}
@@ -344,23 +345,23 @@ export function GitHubSetup() {
 
   return (
     <>
-      <Note className="mt-1 mb-4">{CAPABILITY_NOTE}</Note>
-      <Card className="grid gap-4" aria-label="连接 GitHub">
+      <Note className="mt-1 mb-4">{t('set.gh.capabilityNote')}</Note>
+      <Card className="grid gap-4" aria-label={t('set.gh.connectAria')}>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <Segmented label="GitHub 连接方式" value={tab} options={AUTH_OPTIONS} onChange={switchTab} />
+          <Segmented label={t('set.gh.authMethodLabel')} value={tab} options={authOptions} onChange={switchTab} />
         </div>
 
         {tab === 'pat' ? (
           <div className="grid gap-3">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-              <span>创建仅授予所需仓库权限的 Fine-Grained Token，粘贴到下方即可完成连接。</span>
+              <span>{t('set.gh.patHint')}</span>
               <a
                 href={PAT_CREATE_URL}
                 target="_blank"
                 rel="noreferrer noopener"
                 className="inline-flex items-center gap-1 font-medium text-link hover:underline"
               >
-                去 GitHub 创建 Fine-Grained Token
+                {t('set.gh.patCreateLink')}
                 <ExternalLink className="size-3.5" aria-hidden="true" />
               </a>
             </div>
@@ -369,7 +370,7 @@ export function GitHubSetup() {
                 type="password"
                 autoComplete="off"
                 aria-label="GitHub Token"
-                placeholder="github_pat_... 或 ghp_..."
+                placeholder={t('set.gh.patPlaceholder')}
                 className="flex-1 font-mono text-xs"
                 value={token}
                 disabled={patSubmitting}
@@ -379,7 +380,7 @@ export function GitHubSetup() {
                 }}
               />
               <Button type="submit" variant="primary" disabled={patSubmitting || !token.trim()}>
-                {patSubmitting ? '验证中…' : '验证并连接'}
+                {patSubmitting ? t('set.gh.verifying') : t('set.gh.verifyAndConnect')}
               </Button>
             </form>
             {patError ? <Problem role="alert">{patError}</Problem> : null}
@@ -388,36 +389,36 @@ export function GitHubSetup() {
           <div className="grid gap-3">
             {deviceSession ? (
               <div className="grid gap-3">
-                <Note className="text-xs">复制下方设备码并在 GitHub 授权页中粘贴确认。</Note>
+                <Note className="text-xs">{t('set.gh.deviceCopyHint')}</Note>
                 <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-code px-4 py-3">
                   <code className="font-mono text-2xl font-semibold tracking-[0.14em] text-foreground select-all">
                     {deviceSession.user_code}
                   </code>
-                  <CopyButton value={deviceSession.user_code} label="复制设备码" />
+                  <CopyButton value={deviceSession.user_code} label={t('set.gh.copyDeviceCode')} />
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Button variant="primary" asChild>
                     <a href={deviceSession.verification_uri} target="_blank" rel="noreferrer noopener">
-                      打开 GitHub 授权页
+                      {t('set.gh.openAuthPage')}
                       <ExternalLink className="size-3.5" aria-hidden="true" />
                     </a>
                   </Button>
                   <Button variant="ghost" onClick={cancelDeviceFlow}>
-                    取消
+                    {t('common.cancel')}
                   </Button>
                 </div>
                 <div role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Dot tone="running" />
-                  <span>等待浏览器授权确认…</span>
+                  <span>{t('set.gh.waitingBrowserAuth')}</span>
                 </div>
               </div>
             ) : (
               <>
-                <Note className="text-xs">输入已开启 Device Flow 的 GitHub OAuth App Client ID，在浏览器中完成一次性设备码授权。</Note>
+                <Note className="text-xs">{t('set.gh.deviceClientIdHint')}</Note>
                 <form onSubmit={(event) => void startDeviceFlow(event)} className="flex flex-col gap-2 sm:flex-row sm:items-center">
                   <Input
                     aria-label="GitHub OAuth Client ID"
-                    placeholder="输入 OAuth App Client ID（如 Ov23li...）"
+                    placeholder={t('set.gh.deviceClientIdPlaceholder')}
                     className="flex-1 font-mono text-xs"
                     value={clientId}
                     disabled={startingDevice}
@@ -427,7 +428,7 @@ export function GitHubSetup() {
                     }}
                   />
                   <Button type="submit" variant="primary" disabled={startingDevice || !clientId.trim()}>
-                    {startingDevice ? '获取中…' : '获取设备码'}
+                    {startingDevice ? t('set.gh.requestingCode') : t('set.gh.getDeviceCode')}
                   </Button>
                 </form>
               </>

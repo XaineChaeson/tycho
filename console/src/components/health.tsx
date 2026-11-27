@@ -2,6 +2,7 @@
 // column. When everything is as it should be the whole thing is one line; a part that is
 // not right opens out with what it means and a way to the place where it is put right.
 import { useQuery } from '@tanstack/react-query';
+import { t as translate } from '@shared/i18n.ts';
 import { gatewayNote, projectRouterErrors, routerLine, type GatewayNote, type RouterState } from '@shared/labels.ts';
 import { Dot, HashLink, Time, type Tone } from '@/components/bits';
 import { useI18n } from '@/lib/i18n';
@@ -27,54 +28,58 @@ const line = (l: Line): Line => l;
 // else is wrong with it, so this rides along with the line's own words.
 function afterPause(dispatch: ServiceState['dispatch'], launching: readonly LaunchingRun[]): string {
   if (!dispatch.paused) return '';
-  const means = '正在跑的不受影响，新的不再开始。';
+  const means = translate('core.health.pauseMeans');
   if (!launching.length) return means;
   const runs = launching.map((run) => {
-    const where = [run.host, run.unconfirmed ? '启动未确认，仍可能迟到启动' : null].filter(Boolean).join('，');
-    return `${run.task_title ?? run.id}${where ? `（${where}）` : ''}`;
+    const where = [run.host, run.unconfirmed ? translate('core.health.unconfirmedMayStart') : null].filter(Boolean).join(translate('core.health.commaSep'));
+    return `${run.task_title ?? run.id}${where ? translate('core.health.parenWrap', { value: where }) : ''}`;
   });
-  return `${means}暂停前已取得启动资格、可能随后启动：${runs.join('、')}`;
+  return translate('core.health.pauseLaunching', { means, runs: runs.join(translate('core.health.listSep')) });
 }
 
 function routerLineOf(router: RouterState): Line {
-  if (router.error) return line({ key: 'router', name: '负责人', tone: 'failed', text: '已停摆', detail: routerLine(router), href: '#/settings/router.cli', linkLabel: '去设置' });
+  const name = translate('project.routerSpeaker');
+  if (router.error) return line({ key: 'router', name, tone: 'failed', text: translate('core.health.routerStopped'), detail: routerLine(router), href: '#/settings/router.cli', linkLabel: translate('core.health.goSettings') });
   const failedProjects = projectRouterErrors(router);
   if (failedProjects.length > 0) {
     return line({
       key: 'router',
-      name: '负责人',
+      name,
       tone: 'failed',
-      text: failedProjects.length === 1 ? '项目异常' : `${failedProjects.length} 项异常`,
+      text: failedProjects.length === 1 ? translate('core.health.routerProjectError') : translate('core.health.routerProjectsError', { count: failedProjects.length }),
       detail: routerLine(router),
       href: `#/projects/${encodeURIComponent(failedProjects[0]!.project_id)}/settings`,
-      linkLabel: '去检查',
+      linkLabel: translate('core.health.goInspect'),
     });
   }
-  if (router.restarting) return line({ key: 'router', name: '负责人', tone: 'waiting', text: '重启中', detail: routerLine(router) });
-  if (router.alive) return line({ key: 'router', name: '负责人', tone: 'running', text: '运行中' });
-  return line({ key: 'router', name: '负责人', tone: 'ended', text: '未运行', detail: '有消息来时会自动启动。' });
+  if (router.restarting) return line({ key: 'router', name, tone: 'waiting', text: translate('core.health.routerRestarting'), detail: routerLine(router) });
+  if (router.alive) return line({ key: 'router', name, tone: 'running', text: translate('core.health.routerRunning') });
+  return line({ key: 'router', name, tone: 'ended', text: translate('core.health.routerIdle'), detail: translate('core.health.routerIdleDetail') });
 }
 
 function dispatchLineOf(dispatch: ServiceState['dispatch'], launching: readonly LaunchingRun[]): Line {
-  if (dispatch.degraded) return line({ key: 'dispatch', name: '派发', tone: 'failed', text: '已停止', detail: `账本写入失败，服务处于降级模式。${afterPause(dispatch, launching)}`, href: '#/' });
-  if (dispatch.recovering) return line({ key: 'dispatch', name: '派发', tone: 'waiting', text: '清点中', detail: `恢复清点结束前不派发、不处理消息、不发通知。${afterPause(dispatch, launching)}` });
-  if (dispatch.paused) return line({ key: 'dispatch', name: '派发', tone: 'waiting', text: '已暂停', detail: afterPause(dispatch, launching), href: '#/', linkLabel: '去恢复' });
-  return line({ key: 'dispatch', name: '派发', tone: 'running', text: '正常' });
+  const name = translate('core.health.dispatchName');
+  if (dispatch.degraded) return line({ key: 'dispatch', name, tone: 'failed', text: translate('core.health.stopped'), detail: translate('core.health.dispatchDegradedDetail', { extra: afterPause(dispatch, launching) }).trim(), href: '#/' });
+  if (dispatch.recovering) return line({ key: 'dispatch', name, tone: 'waiting', text: translate('core.health.dispatchRecovering'), detail: translate('core.health.dispatchRecoveringDetail', { extra: afterPause(dispatch, launching) }).trim() });
+  if (dispatch.paused) return line({ key: 'dispatch', name, tone: 'waiting', text: translate('core.health.dispatchPaused'), detail: afterPause(dispatch, launching), href: '#/', linkLabel: translate('core.health.goResume') });
+  return line({ key: 'dispatch', name, tone: 'running', text: translate('core.health.ok') });
 }
 
 function wecomLineOf(wecom: WecomState | null | undefined): Line {
-  if (!wecom) return line({ key: 'wecom', name: '企业微信', tone: 'ended', text: '未接入', detail: '填上企业微信的机器人信息后，就能从手机发消息。', href: '#/settings/wecom.botId', linkLabel: '去设置' });
-  if (wecom.error) return line({ key: 'wecom', name: '企业微信', tone: 'failed', text: '已停止', detail: wecom.error, href: '#/settings/wecom.botId', linkLabel: '去设置' });
-  if (wecom.connected) return line({ key: 'wecom', name: '企业微信', tone: 'running', text: '已连接' });
-  return line({ key: 'wecom', name: '企业微信', tone: 'waiting', text: '重连中', detail: '和企业微信断开了，正在自己重连。' });
+  const name = translate('core.health.wecomName');
+  if (!wecom) return line({ key: 'wecom', name, tone: 'ended', text: translate('core.health.wecomUnconfigured'), detail: translate('core.health.wecomUnconfiguredDetail'), href: '#/settings/wecom.botId', linkLabel: translate('core.health.goSettings') });
+  if (wecom.error) return line({ key: 'wecom', name, tone: 'failed', text: translate('core.health.stopped'), detail: wecom.error, href: '#/settings/wecom.botId', linkLabel: translate('core.health.goSettings') });
+  if (wecom.connected) return line({ key: 'wecom', name, tone: 'running', text: translate('core.health.connected') });
+  return line({ key: 'wecom', name, tone: 'waiting', text: translate('core.health.reconnecting'), detail: translate('core.health.wecomReconnectingDetail') });
 }
 
 export const gatewayLineOf = (gateway: ServiceState['gateway']): Line => {
-  if (!gateway || gateway.state === 'off') return line({ key: 'gateway', name: '门牌', tone: 'ended', text: '未启用', detail: '还没有填对外地址，现在只能在这台电脑上打开控制台。', href: '#/settings/http.publicUrl', linkLabel: '去设置' });
+  const name = translate('core.health.gatewayName');
+  if (!gateway || gateway.state === 'off') return line({ key: 'gateway', name, tone: 'ended', text: translate('core.health.gatewayOff'), detail: translate('core.health.gatewayOffDetail'), href: '#/settings/http.publicUrl', linkLabel: translate('core.health.goSettings') });
   const note: GatewayNote | null = gatewayNote(gateway);
-  if (gateway.state === 'connected') return line({ key: 'gateway', name: '门牌', tone: 'running', text: '已连接', detail: note?.text });
-  if (gateway.state === 'down') return line({ key: 'gateway', name: '门牌', tone: 'failed', text: '连不上', detail: note?.text, href: note?.href, linkLabel: note?.label });
-  return line({ key: 'gateway', name: '门牌', tone: 'waiting', text: '连接中', detail: note?.text });
+  if (gateway.state === 'connected') return line({ key: 'gateway', name, tone: 'running', text: translate('core.health.connected'), detail: note?.text });
+  if (gateway.state === 'down') return line({ key: 'gateway', name, tone: 'failed', text: translate('core.health.gatewayDown'), detail: note?.text, href: note?.href, linkLabel: note?.label });
+  return line({ key: 'gateway', name, tone: 'waiting', text: translate('core.health.connecting'), detail: note?.text });
 };
 
 export function healthLines(state: ServiceState | undefined): Line[] {
@@ -87,10 +92,11 @@ export function healthLines(state: ServiceState | undefined): Line[] {
 const sound = ({ tone }: Line): boolean => tone === 'running' || tone === 'ended';
 
 // Folded away, each part still has its say for a pointer that rests on the line.
-const foldTitle = (lines: readonly Line[]): string => lines.map((each) => `${each.name}：${each.detail ?? each.text}`).join('；');
+const foldTitle = (lines: readonly Line[]): string =>
+  lines.map((each) => translate('core.health.foldItem', { name: each.name, value: each.detail ?? each.text })).join(translate('core.health.foldSep'));
 
 export function Health({ className }: { className?: string }) {
-  const { t, bi } = useI18n();
+  const { t } = useI18n();
   const { data: state } = useQuery(stateQuery);
   if (!state) return null;
   const lines = healthLines(state);
@@ -104,18 +110,18 @@ export function Health({ className }: { className?: string }) {
     );
   }
   return (
-    <div data-slot="health" aria-label={bi('运行状况', 'Service health')} className={cn('grid gap-1.5', className)}>
+    <div data-slot="health" aria-label={t('core.health.ariaLabel')} className={cn('grid gap-1.5', className)}>
       {lines.map((each) => (
         <div key={each.key} className="text-xs">
           <p className="flex items-center gap-2">
-            <Dot tone={each.tone === 'running' ? 'success' : each.tone} pulse={false} title={each.tone === 'failed' ? bi('有问题', 'Error') : each.tone === 'waiting' ? bi('等一下会好', 'Pending') : bi('正常', 'OK')} />
+            <Dot tone={each.tone === 'running' ? 'success' : each.tone} pulse={false} title={each.tone === 'failed' ? t('core.health.toneFailed') : each.tone === 'waiting' ? t('core.health.toneWaiting') : t('core.health.toneOk')} />
             <span className="font-medium">{each.name}</span>
             <span className={each.tone === 'failed' ? 'text-destructive' : 'text-muted-foreground'}>{each.text}</span>
           </p>
           {!sound(each) && each.detail ? (
             <p className="mt-0.5 pl-4 text-muted-foreground wrap-anywhere">
               {each.detail}
-              {each.href ? <> <HashLink href={each.href}>{each.linkLabel ?? bi('去处理', 'Inspect')}</HashLink></> : null}
+              {each.href ? <> <HashLink href={each.href}>{each.linkLabel ?? t('core.health.goHandle')}</HashLink></> : null}
             </p>
           ) : null}
         </div>
@@ -127,7 +133,7 @@ export function Health({ className }: { className?: string }) {
 // The side column also says when the console last heard from the service: a stale page
 // looks like a quiet service otherwise.
 export function LastHeard({ at, className }: { at: number | null; className?: string }) {
-  const { bi } = useI18n();
+  const { t } = useI18n();
   if (at === null) return null;
-  return <Time at={at} prefix={bi('更新于 ', 'Updated ')} className={cn('text-2xs text-faint', className)} />;
+  return <Time at={at} prefix={t('core.health.updatedPrefix')} className={cn('text-2xs text-faint', className)} />;
 }

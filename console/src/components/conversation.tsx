@@ -11,6 +11,7 @@ import { ArtifactFrame, ImageLightbox } from '@/components/artifact-preview';
 import { Callout, Chevron, Rows, StateBadge, StatusDot, Time } from '@/components/bits';
 import { Markdown } from '@/components/markdown';
 import { formatFileSize } from '@/components/project-files';
+import { QuotedMessageBody } from '@/components/quote-tray';
 import { RouterTrajectory } from '@/components/router-trajectory';
 import { TaskIdentityStrip } from '@/components/task-identity-strip';
 import { Sheet, SheetContent } from '@/components/ui/dialog';
@@ -18,18 +19,20 @@ import { taskPath } from '@/components/work-row';
 import { projectFileRawUrl } from '@/lib/api';
 import type { Item } from '@/lib/conversation';
 import { useI18n } from '@/lib/i18n';
+import type { QuoteSourceKey } from '@/lib/quotes';
 import type { ProjectFileSummary, Task } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 // When something was said. It is there for anyone who hovers, focuses or presses it, and
 // out of the way otherwise: a wall of clock times makes a conversation harder to read.
 function Stamp({ at, className }: { at?: string | undefined; className?: string }) {
+  const { t } = useI18n();
   const [shown, setShown] = useState(false);
   if (!at) return null;
   return (
     <button
       type="button"
-      aria-label={`时间：${fullTime(at)}`}
+      aria-label={t('proj.conv.timeAria', { time: fullTime(at) })}
       aria-pressed={shown}
       onClick={() => setShown((visible) => !visible)}
       className={cn(
@@ -63,16 +66,23 @@ function Speaker() {
   );
 }
 
-const TYCHO_FILE_REF = /tycho-file:\/\/([A-Za-z0-9_-]{1,64})/g;
-const PROJECT_FILE_RAW_REF = /\/api\/projects\/[^/]+\/files\/([A-Za-z0-9_-]{1,64})\/raw/g;
+const MARKDOWN_TYCHO_FILE_LINK = /!?\[[^\]]*\]\(\s*tycho-file:\/\/([A-Za-z0-9_-]{1,64})\s*\)|<tycho-file:\/\/([A-Za-z0-9_-]{1,64})>/g;
+const MARKDOWN_PROJECT_FILE_LINK = /!?\[[^\]]*\]\(\s*\/api\/projects\/[^/]+\/files\/([A-Za-z0-9_-]{1,64})\/raw(?:\?[^)\s]*)?\s*\)|<\/api\/projects\/[^/]+\/files\/([A-Za-z0-9_-]{1,64})\/raw(?:\?[^>\s]*)?>/g;
+const FENCED_CODE_RE = /```[\s\S]*?```|~~~[\s\S]*?~~~/g;
+const INLINE_CODE_RE = /`[^`\n]*`/g;
 
+// Only suppress fallback attachment cards when Markdown actually renders a clickable link
+// or inline image for that file — never when its ID is merely mentioned inside code.
 function citedFileIds(text: string): Set<string> {
+  const outsideCode = text.replace(FENCED_CODE_RE, ' ').replace(INLINE_CODE_RE, ' ');
   const ids = new Set<string>();
-  for (const match of text.matchAll(TYCHO_FILE_REF)) {
-    if (match[1]) ids.add(match[1]);
+  for (const match of outsideCode.matchAll(MARKDOWN_TYCHO_FILE_LINK)) {
+    const id = match[1] ?? match[2];
+    if (id) ids.add(id);
   }
-  for (const match of text.matchAll(PROJECT_FILE_RAW_REF)) {
-    if (match[1]) ids.add(match[1]);
+  for (const match of outsideCode.matchAll(MARKDOWN_PROJECT_FILE_LINK)) {
+    const id = match[1] ?? match[2];
+    if (id) ids.add(id);
   }
   return ids;
 }
@@ -88,6 +98,7 @@ function ImageAttachmentThumb({
   projectId: string;
   file: ProjectFileSummary;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const src = projectFileRawUrl(projectId, file.id);
 
@@ -95,7 +106,7 @@ function ImageAttachmentThumb({
     <>
       <button
         type="button"
-        aria-label={`查看图片：${file.name}`}
+        aria-label={t('proj.conv.viewImage', { name: file.name })}
         onClick={() => setOpen(true)}
         className="inline-block cursor-zoom-in overflow-hidden rounded-lg border-0 bg-transparent p-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
@@ -119,6 +130,7 @@ function FileAttachmentChip({
   file: ProjectFileSummary;
   onPreviewArtifact?: (file: ProjectFileSummary) => void;
 }) {
+  const { t } = useI18n();
   const downloadUrl = projectFileRawUrl(projectId, file.id, true);
   const previewable = isArtifactAttachment(file);
   const Icon = previewable ? AppWindow : Paperclip;
@@ -145,7 +157,7 @@ function FileAttachmentChip({
       <a
         href={downloadUrl}
         download={file.name}
-        aria-label={`下载 ${file.name}`}
+        aria-label={t('proj.files.downloadNamed', { name: file.name })}
         className="inline-flex size-5 flex-none items-center justify-center rounded-xs text-muted-foreground no-underline hover:bg-hover hover:text-foreground"
       >
         <Download className="size-3" aria-hidden="true" />
@@ -279,7 +291,7 @@ export function ItemView({ item, empty, projectId, onSelectTask, liveTasks, onQu
   projectId?: string;
   onSelectTask?: (taskId: string) => void;
   liveTasks?: ReadonlyMap<string, Task>;
-  onQuote?: (quote: { source: string; excerpt: string }) => void;
+  onQuote?: (quote: { source: string; sourceKey?: QuoteSourceKey; excerpt: string }) => void;
 }) {
   const { t } = useI18n();
   switch (item.kind) {
@@ -295,9 +307,10 @@ export function ItemView({ item, empty, projectId, onSelectTask, liveTasks, onQu
                 <div
                   data-quotable
                   data-quote-source={t('project.ownerSpeaker')}
+                  data-quote-source-key="owner"
                   className="rounded-2xl rounded-br-md bg-bubble px-3.5 py-2 wrap-anywhere whitespace-pre-wrap"
                 >
-                  {item.text}
+                  <QuotedMessageBody text={item.text} />
                 </div>
               ) : null}
             </div>
@@ -305,9 +318,10 @@ export function ItemView({ item, empty, projectId, onSelectTask, liveTasks, onQu
             <div
               data-quotable
               data-quote-source={t('project.ownerSpeaker')}
+              data-quote-source-key="owner"
               className="max-w-[82%] rounded-2xl rounded-br-md bg-bubble px-3.5 py-2 wrap-anywhere whitespace-pre-wrap"
             >
-              {item.text}
+              <QuotedMessageBody text={item.text} />
             </div>
           )}
           <div className="flex items-center gap-2">
@@ -316,7 +330,7 @@ export function ItemView({ item, empty, projectId, onSelectTask, liveTasks, onQu
                 type="button"
                 aria-label={t('quote.quoteMessage')}
                 title={t('quote.action')}
-                onClick={() => onQuote({ source: t('project.ownerSpeaker'), excerpt: item.text })}
+                onClick={() => onQuote({ source: t('project.ownerSpeaker'), sourceKey: 'owner', excerpt: item.text })}
                 className="inline-flex cursor-pointer items-center gap-1 rounded-xs border-0 bg-transparent px-1 text-2xs text-faint opacity-0 transition-opacity duration-100 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
               >
                 <Quote className="size-3" aria-hidden="true" />
@@ -346,20 +360,20 @@ export function ItemView({ item, empty, projectId, onSelectTask, liveTasks, onQu
               <span>{t('project.routerSpeaker')}</span>
               <Stamp at={item.at} className="font-normal" />
             </div>
-            <div data-quotable data-quote-source={t('project.routerSpeaker')}>
+            <div data-quotable data-quote-source={t('project.routerSpeaker')} data-quote-source-key="router">
               <Markdown text={item.text} projectId={projectId} files={item.attachments} />
             </div>
             {item.attachments?.length ? (
               <ReplyAttachments attachments={item.attachments} text={item.text} projectId={projectId} />
             ) : null}
-            {item.incomplete ? <p className="mt-1 text-sm text-muted-foreground">回复没有写完</p> : null}
+            {item.incomplete ? <p className="mt-1 text-sm text-muted-foreground">{t('proj.conv.replyIncomplete')}</p> : null}
             {onQuote && item.text.trim() ? (
               <div className="mt-1 flex items-center gap-1 opacity-0 transition-opacity duration-100 group-hover:opacity-100 focus-within:opacity-100">
                 <button
                   type="button"
                   aria-label={t('quote.quoteMessage')}
                   title={t('quote.action')}
-                  onClick={() => onQuote({ source: t('project.routerSpeaker'), excerpt: item.text })}
+                  onClick={() => onQuote({ source: t('project.routerSpeaker'), sourceKey: 'router', excerpt: item.text })}
                   className="inline-flex cursor-pointer items-center gap-1 rounded-xs border-0 bg-transparent px-1.5 py-0.5 text-2xs font-normal text-faint hover:bg-hover hover:text-foreground"
                 >
                   <Quote className="size-3" aria-hidden="true" />
@@ -372,14 +386,14 @@ export function ItemView({ item, empty, projectId, onSelectTask, liveTasks, onQu
       );
     case 'unverified':
       return (
-        <Callout tone="plain" title="该请求未完成，已提交的操作如下" className="group" action={<Stamp at={item.at} />}>
+        <Callout tone="plain" title={t('proj.conv.unverifiedTitle')} className="group" action={<Stamp at={item.at} />}>
           {item.changes === null ? (
-            <p className="mt-1 text-muted-foreground">已提交的操作没有读到，不知道有没有</p>
+            <p className="mt-1 text-muted-foreground">{t('proj.conv.unverifiedUnread')}</p>
           ) : item.changes.length ? (
             <ul className="mt-1 list-disc pl-[18px] text-muted-foreground">
               {item.changes.map((change, index) => <li key={index}><Time at={change.at} />{` ${ACTION_TEXT[change.action] ?? change.action}`}</li>)}
             </ul>
-          ) : <p className="mt-1 text-muted-foreground">没有已提交的操作</p>}
+          ) : <p className="mt-1 text-muted-foreground">{t('proj.conv.unverifiedNone')}</p>}
         </Callout>
       );
     case 'capsules':
@@ -413,7 +427,7 @@ export function ItemView({ item, empty, projectId, onSelectTask, liveTasks, onQu
                   <StateBadge state={state} />
                   {resumable ? (
                     <span className="inline-flex flex-none items-center rounded-full border border-brand-border bg-brand-soft px-1.5 py-px text-2xs leading-4 font-medium text-brand-foreground">
-                      可续接
+                      {t('project.resumable')}
                     </span>
                   ) : null}
                   <Chevron className="transition-transform duration-100 group-hover/card:translate-x-0.5" />

@@ -16,6 +16,7 @@ import { Dot, Mono } from '@/components/bits';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/menu';
 import { messageOf, put } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { withProject } from '@/lib/projects';
 import { accountsQuery, PAGE, projectsQuery } from '@/lib/queries';
 import type { Project } from '@/lib/types';
@@ -45,6 +46,7 @@ export function ComposerTargetChip({
   routerError = null,
   compact = false,
 }: ComposerTargetChipProps) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const { data: accountsData, isError: accountsError } = useQuery({ ...accountsQuery, retry: false });
   const { data: projects } = useQuery({ ...projectsQuery, retry: false });
@@ -81,12 +83,12 @@ export function ComposerTargetChip({
       : null;
 
     const remainingSuffix = activeLogin && activeLogin.tightestRemaining !== null
-      ? ` · 剩 ${activeLogin.tightestRemaining}%`
+      ? ` · ${t('proj.chip.remainingPct', { pct: activeLogin.tightestRemaining })}`
       : '';
     const baseLabel = activeRouterId === null
-      ? '负责人 · 服务默认'
-      : `负责人 · ${activeLogin?.name ?? activeRouterId}${remainingSuffix}`;
-    const chipLabel = routerError ? `${baseLabel} · 已停摆` : baseLabel;
+      ? t('proj.chip.routerDefault')
+      : t('proj.chip.routerAccount', { name: activeLogin?.name ?? activeRouterId, remaining: remainingSuffix });
+    const chipLabel = routerError ? t('proj.chip.routerStopped', { label: baseLabel }) : baseLabel;
     const dotTone = routerError ? 'failed' : activeLogin ? chipToneOf(activeLogin) : 'ended';
     const canSwitch = Boolean(project);
 
@@ -99,9 +101,18 @@ export function ComposerTargetChip({
       setSaving(true);
       setError(null);
       try {
+        // Preserve the configured tier when the target named login supports it; only reset to
+        // null when falling back to service default or when the new login lacks that tier.
+        const currentTier = project.router?.tier ?? null;
+        let nextTier: string | null = null;
+        if (nextAccountId !== null && currentTier) {
+          const matchedLogin = accountsData?.accounts.find((acc) => acc.name === nextAccountId || acc.id === nextAccountId);
+          const supported = matchedLogin ? matchedLogin.tiers?.[currentTier as keyof typeof matchedLogin.tiers] : undefined;
+          if (supported) nextTier = currentTier;
+        }
         const answer = await put<{ project: Project }>(
           `/api/projects/${encodeURIComponent(project.id)}`,
-          { router: { account: nextAccountId, tier: null } },
+          { router: { account: nextAccountId, tier: nextTier } },
         );
         if (answer?.project) {
           client.setQueryData<Project[]>(projectsQuery.queryKey, (prev) =>
@@ -149,15 +160,15 @@ export function ComposerTargetChip({
           side="top"
           align="start"
           sideOffset={8}
-          aria-label="选择项目负责人账号"
+          aria-label={t('proj.chip.selectRouterAria')}
           className="w-[310px] overflow-hidden p-0"
         >
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
             <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
               <Sparkles className="size-3.5 text-primary" aria-hidden="true" />
-              项目负责人账号
+              {t('proj.chip.routerAccountTitle')}
             </span>
-            <span className="text-2xs text-faint">下一条消息生效</span>
+            <span className="text-2xs text-faint">{t('proj.chip.takesEffectNext')}</span>
           </div>
 
           <div className="max-h-[300px] divide-y divide-border/70 overflow-y-auto p-1">
@@ -175,8 +186,8 @@ export function ComposerTargetChip({
               )}
             >
               <span className="grid gap-0.5">
-                <span>沿用服务默认</span>
-                <span className="text-2xs font-normal text-muted-foreground">由全局负责人设置决定</span>
+                <span>{t('proj.settings.routerDefaultOption')}</span>
+                <span className="text-2xs font-normal text-muted-foreground">{t('proj.chip.routerDefaultHint')}</span>
               </span>
               {activeRouterId === null ? <Check className="size-3.5 flex-none text-primary" aria-hidden="true" /> : null}
             </button>
@@ -222,13 +233,13 @@ export function ComposerTargetChip({
           ) : null}
 
           <div className="flex items-center justify-between border-t border-border bg-muted/40 px-3 py-2 text-2xs">
-            <span className="text-faint">{saving ? '切换中…' : `${controllerLogins.length} 个可用负责人`}</span>
+            <span className="text-faint">{saving ? t('proj.chip.switching') : t('proj.chip.availableRouters', { count: controllerLogins.length })}</span>
             <Link
               to={projectId ? `/projects/${encodeURIComponent(projectId)}/settings` : '/accounts'}
               onClick={() => setOpen(false)}
               className="font-medium text-link no-underline hover:underline"
             >
-              {projectId ? '更多项目设置 →' : '管理全部账号 →'}
+              {projectId ? t('proj.chip.moreProjectSettings') : t('proj.chip.manageAllAccounts')}
             </Link>
           </div>
         </PopoverContent>
@@ -250,10 +261,10 @@ export function ComposerTargetChip({
     taskChipParts.push(matchedLogin?.name ?? currentLogin);
     if (currentMachine) taskChipParts.push(currentMachine);
     if (matchedLogin && matchedLogin.tightestRemaining !== null) {
-      taskChipParts.push(`剩 ${matchedLogin.tightestRemaining}%`);
+      taskChipParts.push(t('proj.chip.remainingPct', { pct: matchedLogin.tightestRemaining }));
     }
   } else {
-    taskChipParts.push(`自动选号 · ${availableCount} 个可用`);
+    taskChipParts.push(t('proj.chip.autoPickAvailable', { count: availableCount }));
   }
   const taskChipLabel = taskChipParts.join(' · ');
   const taskDotTone = currentLogin
@@ -291,16 +302,16 @@ export function ComposerTargetChip({
         side="top"
         align="start"
         sideOffset={8}
-        aria-label="项目执行登录池"
+        aria-label={t('proj.chip.workerPoolAria')}
         className="w-[310px] overflow-hidden p-0"
       >
         <div className="flex items-center justify-between border-b border-border px-3 py-2">
           <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
             <Cpu className="size-3.5 text-primary" aria-hidden="true" />
-            可用执行登录
+            {t('proj.chip.workerPoolTitle')}
           </span>
           <span className="text-2xs text-faint tabular-nums">
-            {availableCount}/{eligibleWorkerLogins.length} 可用
+            {t('proj.chip.poolRatioAvailable', { available: availableCount, total: eligibleWorkerLogins.length })}
           </span>
         </div>
 
@@ -320,7 +331,7 @@ export function ComposerTargetChip({
                   </span>
                   {isCurrent ? (
                     <Badge tone="running" className="min-h-4 flex-none px-1.5 py-0 text-2xs leading-4">
-                      当前
+                      {t('proj.chip.currentBadge')}
                     </Badge>
                   ) : null}
                   <Mono className="flex-none rounded bg-hover px-1 py-px text-2xs text-muted-foreground">
@@ -333,7 +344,9 @@ export function ComposerTargetChip({
 
                 {item.resting && item.restUntil && (item.fiveHour || item.sevenDay) ? (
                   <p className="text-2xs text-waiting-foreground tabular-nums">
-                    休眠至 {formatTime(item.restUntil)}{restCountdown ? `（${restCountdown}）` : ''}
+                    {restCountdown
+                      ? t('proj.chip.restingUntilWithCountdown', { at: formatTime(item.restUntil), countdown: restCountdown })
+                      : t('proj.chip.restingUntil', { at: formatTime(item.restUntil) })}
                   </p>
                 ) : null}
 
@@ -342,7 +355,7 @@ export function ComposerTargetChip({
             );
           }) : (
             <p className="px-3 py-4 text-center text-xs text-muted-foreground">
-              当前项目未选择可用登录。
+              {t('proj.chip.noEligibleLogins')}
             </p>
           )}
         </div>
@@ -353,7 +366,7 @@ export function ComposerTargetChip({
             onClick={() => setOpen(false)}
             className="text-xs font-medium text-link no-underline hover:underline"
           >
-            {projectId ? '调整项目登录池 →' : '管理全部账号 →'}
+            {projectId ? t('proj.chip.adjustLoginPool') : t('proj.chip.manageAllAccounts')}
           </Link>
         </div>
       </PopoverContent>

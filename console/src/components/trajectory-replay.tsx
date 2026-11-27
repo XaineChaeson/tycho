@@ -6,6 +6,7 @@ import { Sheet, SheetContent } from '@/components/ui/dialog';
 import { Input, Textarea } from '@/components/ui/input';
 import { Option, Select } from '@/components/ui/select';
 import { api, messageOf, post } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { projectSite } from '@/lib/timeline';
 import type { RunEvents } from '@/lib/types';
 
@@ -19,6 +20,7 @@ interface Simulation {
 }
 
 export function TrajectoryReplay({ runs }: { runs: { id: string; state: string }[] }) {
+  const { t } = useI18n();
   const [mode, setMode] = useState<Mode | null>(null);
   const [runId, setRunId] = useState(runs.at(-1)?.id ?? '');
   const [recording, setRecording] = useState<(RunEvents & { at: string }) | null>(null);
@@ -32,6 +34,7 @@ export function TrajectoryReplay({ runs }: { runs: { id: string; state: string }
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const active = useRef<AbortController | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
   const epoch = useRef(0);
   const running = useRef(false);
   const currentRun = runs.some(run => run.id === runId) ? runId : runs.at(-1)?.id ?? '';
@@ -62,6 +65,9 @@ export function TrajectoryReplay({ runs }: { runs: { id: string; state: string }
     finally { if (generation === epoch.current) setLoading(false); }
   }
   async function open(next: Mode): Promise<void> {
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      openerRef.current = document.activeElement;
+    }
     setMode(next); setPlaying(false); setPosition(0); setResult(null); setDraft(undefined);
     if (next === 'playback') {
       setRecording(null);
@@ -78,7 +84,7 @@ export function TrajectoryReplay({ runs }: { runs: { id: string; state: string }
     if (running.current || loading) return;
     let input: unknown;
     try { input = JSON.parse(caseText); }
-    catch { setFailure('案例不是有效 JSON，请先修正。'); return; }
+    catch { setFailure(t('tsk.replay.invalidJson')); return; }
     running.current = true; setLoading(true); setFailure(null); setResult(null);
     const generation = ++epoch.current;
     try {
@@ -88,56 +94,62 @@ export function TrajectoryReplay({ runs }: { runs: { id: string; state: string }
     finally { if (generation === epoch.current) { running.current = false; setLoading(false); } }
   }
 
-  return <section aria-label="轨迹用途" className="grid gap-2 rounded-xl border border-border p-3">
-    <p className="text-sm font-medium">轨迹用途</p>
-    <Note>当前页面查阅已保存的事实。回放只演示录制事件，隔离重跑用冻结案例检查规则。</Note>
+  return <section aria-label={t('tsk.replay.title')} className="grid gap-2 rounded-xl border border-border p-3">
+    <p className="text-sm font-medium">{t('tsk.replay.title')}</p>
+    <Note>{t('tsk.replay.intro')}</Note>
     <div className="flex flex-wrap gap-2">
-      <Button size="sm" variant="ghost" disabled={!currentRun} onClick={() => void open('playback')}>离线回放</Button>
-      <Button size="sm" variant="ghost" onClick={() => void open('rerun')}>隔离重跑</Button>
+      <Button size="sm" variant="ghost" disabled={!currentRun} onClick={() => void open('playback')}>{t('tsk.replay.playbackBtn')}</Button>
+      <Button size="sm" variant="ghost" onClick={() => void open('rerun')}>{t('tsk.replay.rerunBtn')}</Button>
     </div>
     <Sheet open={mode !== null} onOpenChange={value => { if (!value) close(); }}>
-      {mode ? <SheetContent title={mode === 'playback' ? '离线回放录制事件' : '隔离重跑冻结案例'}>
+      {mode ? <SheetContent title={mode === 'playback' ? t('tsk.replay.playbackSheetTitle') : t('tsk.replay.rerunSheetTitle')} onCloseAutoFocus={(event) => {
+        if (openerRef.current) {
+          event.preventDefault();
+          openerRef.current.focus();
+          openerRef.current = null;
+        }
+      }}>
         <div className="grid min-w-0 grid-cols-1 gap-4">
-          <Note>{mode === 'playback' ? '只在当前页面播放保存的事件，不重新执行命令，也不改变任务。缺失的原文不能通过回放补回。' : '在临时账本重跑待验收通知规则，使用固定输入、替身通知和独立预期。不会调用真实模型、Worker 或 IM，也不会改变当前任务。'}</Note>
+          <Note>{mode === 'playback' ? t('tsk.replay.playbackNote') : t('tsk.replay.rerunNote')}</Note>
           {mode === 'playback' ? <>
-            <label className="grid gap-1 text-sm">录制轮次<Select aria-label="录制轮次" value={currentRun} disabled={loading} onChange={event => {
+            <label className="grid gap-1 text-sm">{t('tsk.replay.recordedRound')}<Select aria-label={t('tsk.replay.recordedRound')} value={currentRun} disabled={loading} onChange={event => {
               const id = event.target.value; setRunId(id); setPlaying(false); setPosition(0); setRecording(null);
               void read<RunEvents>(`/api/runs/${encodeURIComponent(id)}/events`, value => setRecording({ ...structuredClone(value), at: new Date().toISOString() }));
-            }}>{runs.map((run, index) => <Option key={run.id} value={run.id}>{`第 ${index + 1} 轮`}</Option>)}</Select></label>
+            }}>{runs.map((run, index) => <Option key={run.id} value={run.id}>{t('tsk.common.roundN', { n: index + 1 })}</Option>)}</Select></label>
             {recording ? <>
-              <p>{`已冻结 ${recording.events.length} 条录制事件`}</p>
-              <Note>{`读取于 ${recording.at}。从原事件位置 ${recording.first_index ?? 0} 开始。`}</Note>
+              <p>{t('tsk.replay.frozenCount', { count: recording.events.length })}</p>
+              <Note>{t('tsk.replay.readAtInfo', { at: recording.at, firstIndex: recording.first_index ?? 0 })}</Note>
               {recording.reason ? <Problem>{recording.reason}</Problem> : null}
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" disabled={!recording.events.length || position >= recording.events.length} onClick={() => setPlaying(value => !value)}>{playing ? '暂停' : '播放'}</Button>
-                <Button size="sm" disabled={position >= recording.events.length} onClick={() => { setPlaying(false); setPosition(value => Math.min(value + 1, recording.events.length)); }}>下一步</Button>
-                <Button size="sm" variant="ghost" onClick={() => { setPlaying(false); setPosition(0); }}>从头回放</Button>
+                <Button size="sm" disabled={!recording.events.length || position >= recording.events.length} onClick={() => setPlaying(value => !value)}>{playing ? t('common.pause') : t('tsk.replay.play')}</Button>
+                <Button size="sm" disabled={position >= recording.events.length} onClick={() => { setPlaying(false); setPosition(value => Math.min(value + 1, recording.events.length)); }}>{t('tsk.replay.nextStep')}</Button>
+                <Button size="sm" variant="ghost" onClick={() => { setPlaying(false); setPosition(0); }}>{t('tsk.replay.restart')}</Button>
               </div>
-              <label className="grid gap-1 text-sm">{`事件位置 ${position}/${recording.events.length}`}<Input type="range" aria-label="事件位置" min={0} max={recording.events.length} value={position} onChange={event => { setPlaying(false); setPosition(Number(event.target.value)); }} /></label>
-              <div className="grid min-w-0 grid-cols-1 gap-2" aria-label="录制事件回放"><SiteRows site={projectSite(recording.events.slice(0, position), position === recording.events.length)} id={`replay:${currentRun}`} /></div>
+              <label className="grid gap-1 text-sm">{t('tsk.replay.eventPosition', { pos: position, total: recording.events.length })}<Input type="range" aria-label={t('tsk.replay.eventPositionLabel')} min={0} max={recording.events.length} value={position} onChange={event => { setPlaying(false); setPosition(Number(event.target.value)); }} /></label>
+              <div className="grid min-w-0 grid-cols-1 gap-2" aria-label={t('tsk.replay.playbackAria')}><SiteRows site={projectSite(recording.events.slice(0, position), position === recording.events.length)} id={`replay:${currentRun}`} /></div>
             </> : null}
           </> : <>
             {cases.length ? <>
-              <label className="grid gap-1 text-sm">冻结案例<Select aria-label="冻结案例" value={caseId} disabled={loading} onChange={event => {
+              <label className="grid gap-1 text-sm">{t('tsk.replay.frozenCase')}<Select aria-label={t('tsk.replay.frozenCase')} value={caseId} disabled={loading} onChange={event => {
                 const selected = cases.find(item => item.case_id === event.target.value);
                 setCaseId(selected?.case_id ?? ''); setCaseText(selected ? JSON.stringify(selected, null, 2) : ''); setResult(null);
-              }}>{cases.map(item => <Option key={item.case_id} value={item.case_id}>{`${item.case_id} · ${item.split === 'release' ? '发布验证集' : '调优集'}`}</Option>)}</Select></label>
-              <label className="grid gap-1 text-sm">已定稿案例 JSON<Textarea aria-label="已定稿案例 JSON" value={caseText} maxLength={65536} rows={8} disabled={loading} onChange={event => { setCaseText(event.target.value); setResult(null); }} /></label>
-              <Note>输入与预期一起冻结。草稿需要补齐前提和独立判定，不能直接当成已通过案例。</Note>
-              <Button disabled={loading || !caseText} onClick={() => void simulate()}>执行隔离重跑</Button>
-              <Button variant="ghost" disabled={loading || !currentRun} onClick={() => void read<unknown>(`/api/replay/runs/${encodeURIComponent(currentRun)}/draft?split=release`, setDraft)}>读取本轮案例草稿</Button>
+              }}>{cases.map(item => <Option key={item.case_id} value={item.case_id}>{`${item.case_id} · ${item.split === 'release' ? t('tsk.replay.splitRelease') : t('tsk.replay.splitTuning')}`}</Option>)}</Select></label>
+              <label className="grid gap-1 text-sm">{t('tsk.replay.caseJsonLabel')}<Textarea aria-label={t('tsk.replay.caseJsonLabel')} value={caseText} maxLength={65536} rows={8} disabled={loading} onChange={event => { setCaseText(event.target.value); setResult(null); }} /></label>
+              <Note>{t('tsk.replay.caseNote')}</Note>
+              <Button disabled={loading || !caseText} onClick={() => void simulate()}>{t('tsk.replay.runRerunBtn')}</Button>
+              <Button variant="ghost" disabled={loading || !currentRun} onClick={() => void read<unknown>(`/api/replay/runs/${encodeURIComponent(currentRun)}/draft?split=release`, setDraft)}>{t('tsk.replay.loadDraftBtn')}</Button>
             </> : null}
-            {draft ? <Details id={`replay-draft:${currentRun}`} title="本轮结构草稿 · 尚未定稿" open><pre className={PRE}>{JSON.stringify(draft, null, 2)}</pre></Details> : null}
-            {result ? <section aria-label="隔离判定结果" className="grid min-w-0 grid-cols-1 gap-2">
-              <p className="font-medium">{result.result.failures.length === 0 && result.external_effects === 0 ? '隔离判定通过' : '隔离判定未通过'}</p>
-              <Note>{`外部副作用 ${result.external_effects}`}</Note>
-              {result.result.baseline && result.result.candidate ? <Note>{`规则交给负责人的回合：基线 ${result.result.baseline.router_turns.length}，候选 ${result.result.candidate.router_turns.length}。这是隔离规则判定，不是实际模型调用次数。`}</Note> : null}
-              <Note>{`程序版本 ${result.basis.version} · 源码 ${result.basis.source_digest ?? '未报告'}`}</Note>
+            {draft ? <Details id={`replay-draft:${currentRun}`} title={t('tsk.replay.draftTitle')} open><pre className={PRE}>{JSON.stringify(draft, null, 2)}</pre></Details> : null}
+            {result ? <section aria-label={t('tsk.replay.resultLabel')} className="grid min-w-0 grid-cols-1 gap-2">
+              <p className="font-medium">{result.result.failures.length === 0 && result.external_effects === 0 ? t('tsk.replay.passed') : t('tsk.replay.failed')}</p>
+              <Note>{t('tsk.replay.externalEffects', { count: result.external_effects })}</Note>
+              {result.result.baseline && result.result.candidate ? <Note>{t('tsk.replay.routerTurnsNote', { baseline: result.result.baseline.router_turns.length, candidate: result.result.candidate.router_turns.length })}</Note> : null}
+              <Note>{t('tsk.replay.basisInfo', { version: result.basis.version, digest: result.basis.source_digest ?? t('tsk.replay.unreported') })}</Note>
               {result.result.failures.map((item, index) => <Problem key={index}>{item}</Problem>)}
-              <Details id="replay-result" title="冻结输入、两版输出与判定"><pre className={PRE}>{JSON.stringify(result, null, 2)}</pre></Details>
+              <Details id="replay-result" title={t('tsk.replay.resultDetailTitle')}><pre className={PRE}>{JSON.stringify(result, null, 2)}</pre></Details>
             </section> : null}
           </>}
-          {loading ? <Note role="status">{running.current ? '正在隔离重跑…' : '正在读取…'}</Note> : null}
+          {loading ? <Note role="status">{running.current ? t('tsk.replay.rerunning') : t('tsk.common.readingEllipsis')}</Note> : null}
           {failure ? <Problem role="alert">{failure}</Problem> : null}
         </div>
       </SheetContent> : null}

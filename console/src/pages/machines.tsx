@@ -24,11 +24,11 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from '@/components/ui/menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EARLIER_CHANGE, useChange } from '@/hooks/use-change';
 import { ApiError, del, messageOf, post, put } from '@/lib/api';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type I18nContextValue } from '@/lib/i18n';
 import { accountsQuery, executorUpdatesQuery, LOGINS_CHANGE, nodeJoinsQuery } from '@/lib/queries';
 import { formOf, loginSettingsBody, tierEditorOf, tierRefusal, type TierEditor } from '@/lib/accounts';
 import {
-  MACHINE_NAME_FIXED, entryLine, executorEntryText, executorsCaption, executorsEmptyText, executorInstalledText, executorLoginText, executorReadOnlyText, executorWhereText, inviteExecutorsText, inviteMaterialText,
+  entryLine, executorEntryText, executorsCaption, executorsEmptyText, executorInstalledText, executorLoginText, executorReadOnlyText, executorWhereText, inviteExecutorsText, inviteMaterialText,
   inviteRevocable, inviteUsedText, inviteValidText, joinExpiryText, joinGuide, machineExecutorRows, machineLoginPath, machineLoginStanding, machineRemoval, nodeRunsText, nodeStateLine,
   type JoinGuide,
   type MachineExecutorRow,
@@ -68,10 +68,15 @@ interface MachineDraft {
 }
 const MACHINE_BLANK: MachineDraft = { form: null, error: null, saving: false, confirm: false, checking: false, check: null };
 const machineForm = (machine: Machine): MachineForm => ({ note: machine.note ?? '' });
-const CHECK_HINT = '让那台机器现在再看一遍本机';
 
-function shortPlatform(platform: string | null | undefined): string {
-  if (!platform) return '系统未知';
+function renderWithMono(template: string, value: string): ReactNode {
+  const idx = template.indexOf('\u0000');
+  if (idx === -1) return template;
+  return <>{template.slice(0, idx)}<Mono>{value}</Mono>{template.slice(idx + 1)}</>;
+}
+
+function shortPlatform(platform: string | null | undefined, t: I18nContextValue['t']): string {
+  if (!platform) return t('mach.platformUnknown');
   const first = platform.trim().split(/\s+/)[0] ?? platform;
   if (first === 'win32') return 'Windows';
   if (first === 'darwin') return 'macOS';
@@ -88,20 +93,22 @@ function machineAttention(machine: Machine): boolean {
 }
 
 function JoinSteps({ guide }: { guide: JoinGuide }) {
+  const { t } = useI18n();
   return (
     <ol className="grid list-decimal gap-3 pl-5 marker:text-faint">
       <li>
-        在那台机器上，以将来跑活的那个普通用户（不是 root、不是管理员）装好 tycho，然后运行：
+        {t('mach.join.step1')}
         <CommandLine value={guide.command} className="mt-1.5" />
         {guide.unreachable ? <Note className="mt-1.5 text-xs">{guide.unreachable}</Note> : null}
       </li>
-      <li>命令会打印一个六位数，然后等着，这台机器也会出现在下面“等着放行的机器”里。直接在下面输入那个六位数放行，或点侧栏的“放行”，输入那个六位数，看清是哪台机器再放行。配了企业微信时，手机上的卡片也能放行。主机就在那台电脑上、地址是本机的时候不用放行。</li>
-      <li>放行之后，那台机器上的命令打印“已加入”，然后就在这个终端里接着运行、不退出（关掉终端它就断开）；要它在后台、开机就运行，在那台机器上运行 <Mono>tycho node service install</Mono>。这一页出现它的卡片，状态是“已连回来”，它装了哪些执行器过一会儿会报上来。</li>
+      <li>{t('mach.join.step2')}</li>
+      <li>{renderWithMono(t('mach.join.step3', { cmd: '\u0000' }), 'tycho node service install')}</li>
     </ol>
   );
 }
 
 function PendingJoinRow({ join, onDecided }: { join: PendingJoin; onDecided: (message: string) => void }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -112,7 +119,7 @@ function PendingJoinRow({ join, onDecided }: { join: PendingJoin; onDecided: (me
   async function decide(approve: boolean): Promise<void> {
     if (busy || !validCode) return;
     if (join.code && code !== join.code) {
-      setError('输入的六位数字与这台机器不匹配，请核对机器屏幕上的数字');
+      setError(t('mach.join.codeMismatch'));
       return;
     }
     setBusy(true);
@@ -148,7 +155,7 @@ function PendingJoinRow({ join, onDecided }: { join: PendingJoin; onDecided: (me
           }}
         >
           <Input
-            aria-label={`放行 ${join.name} 的六位数字`}
+            aria-label={t('mach.join.codeInputLabel', { name: join.name })}
             inputMode="numeric"
             autoComplete="one-time-code"
             autoCorrect="off"
@@ -156,7 +163,7 @@ function PendingJoinRow({ join, onDecided }: { join: PendingJoin; onDecided: (me
             spellCheck={false}
             pattern="[0-9]{6}"
             maxLength={6}
-            placeholder="输入 6 位数字"
+            placeholder={t('mach.join.codePlaceholder')}
             className="h-8 w-36 font-mono text-xs tracking-[0.2em]"
             value={code}
             disabled={busy}
@@ -166,10 +173,10 @@ function PendingJoinRow({ join, onDecided }: { join: PendingJoin; onDecided: (me
             }}
           />
           <Button type="submit" size="sm" variant="primary" disabled={busy || !validCode}>
-            {busy ? '处理中' : '放行'}
+            {busy ? t('mach.join.processing') : t('nav.admit')}
           </Button>
           <Button type="button" size="sm" variant="danger" disabled={busy || !validCode} onClick={() => void decide(false)}>
-            拒绝
+            {t('mach.join.reject')}
           </Button>
         </form>
       ) : null}
@@ -179,12 +186,13 @@ function PendingJoinRow({ join, onDecided }: { join: PendingJoin; onDecided: (me
 }
 
 function PendingJoins() {
+  const { t } = useI18n();
   const { data, isPending, error } = useQuery(nodeJoinsQuery);
   const [notice, setNotice] = useState<string | null>(null);
   return (
-    <section aria-label="等着放行的机器" className="mt-5 border-t border-border pt-4">
-      <h3 className="text-sm font-semibold">等着放行的机器</h3>
-      <Note className="mt-0.5 mb-2 text-xs">跑了加入命令的机器会出现在这里。可直接输入机器屏幕上的六位数字放行，也可点侧栏的“放行”。</Note>
+    <section aria-label={t('mach.join.pendingTitle')} className="mt-5 border-t border-border pt-4">
+      <h3 className="text-sm font-semibold">{t('mach.join.pendingTitle')}</h3>
+      <Note className="mt-0.5 mb-2 text-xs">{t('mach.join.pendingHint')}</Note>
       {notice ? <Callout tone="plain" role="status" className="mb-2">{notice}</Callout> : null}
       {isPending ? <Skeleton className="h-12" /> : null}
       {error ? <Problem role="alert">{messageOf(error)}</Problem> : null}
@@ -197,15 +205,16 @@ function PendingJoins() {
           </ul>
         </Rows>
       ) : null}
-      {data && data.length === 0 ? <Note>现在没有等着放行的机器。在那台机器上跑了上面的加入命令，它就会出现在这里。</Note> : null}
+      {data && data.length === 0 ? <Note>{t('mach.join.pendingEmpty')}</Note> : null}
     </section>
   );
 }
 
 function EndLines({ ends }: { ends: MachineNode['ends'] }) {
+  const { t } = useI18n();
   if (!ends) return null;
   return (
-    <ul aria-label="结束情况" className="grid gap-1 text-xs">
+    <ul aria-label={t('mach.endsLabel')} className="grid gap-1 text-xs">
       {machineEndLines(ends).map((line) => (
         <li key={line.key} data-done={line.done} className="flex items-baseline gap-2">
           {line.done
@@ -226,29 +235,30 @@ function Invites({ invites, busy, revoking, failures, onRevoke }: {
   failures: Record<string, string>;
   onRevoke: (invite: Invite) => void;
 }) {
+  const { t } = useI18n();
   return (
-    <section aria-label="接入名额" className="mt-8">
-      <SectionTitle>接入名额</SectionTitle>
-      <Note className="mb-2 max-w-[72ch] text-xs">任务为了开新机器申请的名额。新机器凭一次性接入材料自己加入，只接名额规定的活。撤销名额后不再发材料、发出去没用的也作废；已经接进来的机器不受影响。</Note>
+    <section aria-label={t('mach.invite.title')} className="mt-8">
+      <SectionTitle>{t('mach.invite.title')}</SectionTitle>
+      <Note className="mb-2 max-w-[72ch] text-xs">{t('mach.invite.desc')}</Note>
       <Rows>
         <ul className="divide-y divide-border">
           {invites.map((invite) => (
             <li key={invite.id} className="grid gap-1.5 px-3.5 py-3">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className="text-sm font-semibold wrap-anywhere">{'任务 '}<Mono>{invite.task_id}</Mono></span>
-                <span className="text-xs text-muted-foreground wrap-anywhere">{'项目 '}<Mono>{invite.project_id}</Mono></span>
+                <span className="text-sm font-semibold wrap-anywhere">{renderWithMono(t('mach.invite.task', { id: '\u0000' }), invite.task_id)}</span>
+                <span className="text-xs text-muted-foreground wrap-anywhere">{renderWithMono(t('mach.invite.project', { id: '\u0000' }), invite.project_id)}</span>
                 <span className="text-xs">{inviteUsedText(invite)}</span>
                 <span className="text-xs text-muted-foreground">{inviteValidText(invite)}</span>
                 {inviteRevocable(invite) ? (
                   <Button size="sm" variant="danger" className="ml-auto" disabled={busy || revoking !== null} onClick={() => onRevoke(invite)}>
-                    {revoking === invite.id ? '撤销中' : '撤销名额'}
+                    {revoking === invite.id ? t('mach.removal.revoking') : t('mach.invite.revokeAction')}
                   </Button>
                 ) : null}
               </div>
               <Facts className="gap-y-0.5 text-xs">
-                <Fact label="执行器">{inviteExecutorsText(invite.executors)}</Fact>
-                <Fact label="接入材料">{inviteMaterialText(invite.material)}</Fact>
-                <Fact label="带进来的机器">{invite.machines.length ? invite.machines.join('、') : '还没有'}</Fact>
+                <Fact label={t('mach.invite.executorsLabel')}>{inviteExecutorsText(invite.executors)}</Fact>
+                <Fact label={t('mach.invite.materialLabel')}>{inviteMaterialText(invite.material)}</Fact>
+                <Fact label={t('mach.invite.machinesLabel')}>{invite.machines.length ? invite.machines.join(t('mach.listSep')) : t('mach.invite.noneYet')}</Fact>
               </Facts>
               {failures[invite.id] ? <Problem role="alert">{failures[invite.id]}</Problem> : null}
             </li>
@@ -259,8 +269,10 @@ function Invites({ invites, busy, revoking, failures, onRevoke }: {
   );
 }
 
-const rowName = (machine: Machine, row: MachineExecutorRow): string =>
-  row.login === null ? `${machine.id} 上的 ${row.executor}` : machine.id + ' 上的 ' + row.executor + ' 登录';
+const rowName = (machine: Machine, row: MachineExecutorRow, t: I18nContextValue['t']): string =>
+  row.login === null
+    ? t('mach.exec.rowName', { machine: machine.id, executor: row.executor })
+    : t('mach.exec.rowLoginName', { machine: machine.id, executor: row.executor });
 
 const isUninstalledRow = (row: MachineExecutorRow): boolean =>
   row.login === null && row.reported?.installed === false && !row.reported.error && !row.reported.unusable;
@@ -279,20 +291,21 @@ function ExecutorBlock({ machine, row, login, editor, draft, busy, failure, canS
   onDelete: () => void;
   onSignIn: () => void;
 }) {
+  const { t } = useI18n();
   const where = executorWhereText(row);
   const entryStatus = machine.node.entry?.executors.find((each) => each.executor === row.executor);
   const entryAbnormal = entryStatus !== undefined && !['written', 'cleared'].includes(entryStatus.state);
   const standing = login ? machineLoginStanding(login) : null;
   const status = login?.status;
   const facts: [string, string][] = [
-    ['本机登录', executorLoginText(row)],
-    ['只读沙箱', executorReadOnlyText(row)],
-    ...(entryAbnormal ? [['全局知识入口', executorEntryText(row, machine.node.entry)] as [string, string]] : []),
+    [t('mach.exec.localLogin'), executorLoginText(row)],
+    [t('mach.exec.readOnlySandbox'), executorReadOnlyText(row)],
+    ...(entryAbnormal ? [[t('mach.exec.globalEntry'), executorEntryText(row, machine.node.entry)] as [string, string]] : []),
   ];
   return (
     <div
       role="group"
-      aria-label={rowName(machine, row)}
+      aria-label={rowName(machine, row, t)}
       className="flex min-w-0 flex-col gap-2 rounded-xl border border-border bg-surface/65 p-3"
     >
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -315,9 +328,9 @@ function ExecutorBlock({ machine, row, login, editor, draft, busy, failure, canS
           {login ? (
             <>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="text-[11px] text-faint">本机登录</span>
+                <span className="text-[11px] text-faint">{t('mach.exec.localLogin')}</span>
                 {login.configured ? <TierBadges tiers={login.tiers} editor={editor} /> : null}
-                {login.queued_tasks > 0 ? <span className="text-xs text-muted-foreground">{`排队 ${login.queued_tasks}`}</span> : null}
+                {login.queued_tasks > 0 ? <span className="text-xs text-muted-foreground">{t('mach.exec.queued', { count: login.queued_tasks })}</span> : null}
               </div>
               {login.models?.reason ? <Note className="text-xs">{login.models.reason}</Note> : null}
               {(login.retired_tiers ?? []).map(({ tier, text }) => <Problem key={tier} className="text-xs">{text}</Problem>)}
@@ -326,10 +339,10 @@ function ExecutorBlock({ machine, row, login, editor, draft, busy, failure, canS
             </>
           ) : null}
           <div className="-ml-2 flex flex-wrap items-center gap-1">
-            {login ? <Button size="sm" variant="ghost" disabled={busy} onClick={onEdit}>{login.configured ? '修改' : '填档位'}</Button> : null}
-            {canSignIn ? <Button size="sm" variant="ghost" disabled={busy} onClick={onSignIn}>重新登录</Button> : null}
-            {login && status?.rest ? <Button size="sm" variant="ghost" disabled={busy} onClick={onRetry}>{draft.retrying ? '正在放行' : '现在就试'}</Button> : null}
-            {login && login.configured ? <Button size="sm" variant="danger" disabled={busy} onClick={onDelete}>删除</Button> : null}
+            {login ? <Button size="sm" variant="ghost" disabled={busy} onClick={onEdit}>{login.configured ? t('common.edit') : t('mach.exec.setTiers')}</Button> : null}
+            {canSignIn ? <Button size="sm" variant="ghost" disabled={busy} onClick={onSignIn}>{t('mach.exec.reSignIn')}</Button> : null}
+            {login && status?.rest ? <Button size="sm" variant="ghost" disabled={busy} onClick={onRetry}>{draft.retrying ? t('mach.exec.retrying') : t('mach.exec.tryNow')}</Button> : null}
+            {login && login.configured ? <Button size="sm" variant="danger" disabled={busy} onClick={onDelete}>{t('common.delete')}</Button> : null}
           </div>
           {failure ? <Problem role="alert" className="text-xs">{failure}</Problem> : null}
         </div>
@@ -345,6 +358,7 @@ function FleetRow({ machine, isHost, active, buttonRef, onSelect }: {
   buttonRef?: (node: HTMLButtonElement | null) => void;
   onSelect: () => void;
 }) {
+  const { t } = useI18n();
   const { node } = machine;
   const rows = machineExecutorRows(machine);
   const installed = rows.filter((row) => !isUninstalledRow(row)).map((row) => row.executor);
@@ -354,7 +368,7 @@ function FleetRow({ machine, isHost, active, buttonRef, onSelect }: {
       <button
         ref={buttonRef}
         type="button"
-        aria-label={`选择机器 ${machine.id}`}
+        aria-label={t('mach.fleet.selectMachine', { id: machine.id })}
         aria-current={active ? 'true' : undefined}
         onClick={onSelect}
         className={cn(
@@ -365,19 +379,19 @@ function FleetRow({ machine, isHost, active, buttonRef, onSelect }: {
         <div className="flex items-center gap-2">
           <Dot tone={node.connected ? 'success' : 'waiting'} />
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-foreground">{machine.id}</span>
-          {isHost ? <Badge tone="plain" className="text-[11px]">主机</Badge> : null}
-          {node.ephemeral ? <Badge tone="plain" className="text-[11px]">临时</Badge> : null}
+          {isHost ? <Badge tone="plain" className="text-[11px]">{t('mach.badge.host')}</Badge> : null}
+          {node.ephemeral ? <Badge tone="plain" className="text-[11px]">{t('mach.badge.ephemeral')}</Badge> : null}
           {node.connected && node.reported_runs > 0 ? (
-            <Badge tone="plain" className="text-[11px] tabular-nums">{`${node.reported_runs} 轮`}</Badge>
+            <Badge tone="plain" className="text-[11px] tabular-nums">{t('mach.fleet.rounds', { count: node.reported_runs })}</Badge>
           ) : !node.connected ? (
-            <span className="flex-none text-[11px] text-faint">离线</span>
+            <span className="flex-none text-[11px] text-faint">{t('common.offline')}</span>
           ) : null}
         </div>
         <div className="flex items-center gap-1.5 pl-4 text-xs text-muted-foreground">
-          <span className="flex-none">{shortPlatform(node.platform)}</span>
+          <span className="flex-none">{shortPlatform(node.platform, t)}</span>
           <span aria-hidden="true" className="text-faint">·</span>
           <span className="min-w-0 flex-1 truncate font-mono text-[11px]">
-            {installed.length > 0 ? installed.join(', ') : (node.executors ? '0 执行器' : '未上报')}
+            {installed.length > 0 ? installed.join(', ') : (node.executors ? t('mach.fleet.zeroExecutors') : t('mach.fleet.notReported'))}
           </span>
           {needsAttention ? <Dot tone="waiting" className="flex-none" /> : null}
         </div>
@@ -396,30 +410,31 @@ function NoteForm({ draft, busy, onEdit, onSave, onCancel }: {
   onSave: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useI18n();
   const id = useId();
   return (
     <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
-      <Field htmlFor={id} label="备注" hint="只是给你自己看的，派活不看它。清空就是不要备注。">
+      <Field htmlFor={id} label={t('mach.note.label')} hint={t('mach.note.hint')}>
         <Textarea id={id} rows={2} className="max-h-[40vh] overflow-y-auto" value={draft.form?.note ?? ''} disabled={draft.saving} onChange={(event) => onEdit(event.target.value)} />
       </Field>
-      <Note className="text-xs">{MACHINE_NAME_FIXED}</Note>
+      <Note className="text-xs">{t('mach.nameFixed')}</Note>
       {draft.error ? <Problem role="alert">{draft.error}</Problem> : null}
       <DialogActions>
-        <Button variant="ghost" disabled={draft.saving} onClick={onCancel}>取消</Button>
-        <Button type="submit" variant="primary" disabled={busy}>{draft.saving ? '保存中' : '保存'}</Button>
+        <Button variant="ghost" disabled={draft.saving} onClick={onCancel}>{t('common.cancel')}</Button>
+        <Button type="submit" variant="primary" disabled={busy}>{draft.saving ? t('mach.note.saving') : t('common.save')}</Button>
       </DialogActions>
     </form>
   );
 }
 
-function removalQuestion(machine: Machine, keeps: boolean): { title: string; description: string } {
-  if (keeps) return { title: `撤销机器 ${machine.id}？`, description: '撤销后它不能再连回来接活；这条记录留着，写明它是怎么结束的。' };
-  if (machine.node.ephemeral) return { title: `删除机器 ${machine.id} 的记录？`, description: '它的登记已经结束，这里删掉的只是留下的这条记录。' };
-  return { title: `删除机器 ${machine.id}？`, description: '删掉以后服务不再派活给它，这台机器自己的登录也从各个项目允许的登录里去掉。要再用它，在那台机器上重新加入，那时它算一台新机器。' };
+function removalQuestion(machine: Machine, keeps: boolean, t: I18nContextValue['t']): { title: string; description: string } {
+  if (keeps) return { title: t('mach.removal.revokeTitle', { id: machine.id }), description: t('mach.removal.revokeDesc') };
+  if (machine.node.ephemeral) return { title: t('mach.removal.deleteRecordTitle', { id: machine.id }), description: t('mach.removal.deleteRecordDesc') };
+  return { title: t('mach.removal.deleteTitle', { id: machine.id }), description: t('mach.removal.deleteDesc') };
 }
 
 export function MachinesPage() {
-  const { t, bi } = useI18n();
+  const { t } = useI18n();
   const isWide = useMediaQuery(WIDE_QUERY);
   const { data, isPending, error } = useQuery(accountsQuery);
   const { data: fleetStatus } = useQuery(executorUpdatesQuery);
@@ -597,7 +612,26 @@ export function MachinesPage() {
     const scope = machineScopeText(node.scope);
     const isHost = data?.host_machine !== undefined && data.host_machine === machine.id;
 
-    const outputText = `${node.bounded_output !== 1 ? '新轮次等待节点升级并报告待传输出容量' : node.output?.capacity.issue ? '输出容量待核实，新轮次等待；' + node.output.capacity.issue : node.output ? `待传输出：${Math.ceil(node.output.capacity.used_bytes / 1048576)} MiB 已占用，${Math.ceil(node.output.capacity.reserved_bytes / 1048576)} MiB 预留${node.output.capacity.other_node_reserved_bytes ? '（其他登记仍预留 ' + Math.ceil(node.output.capacity.other_node_reserved_bytes / 1048576) + ' MiB）' : ''}，${Math.ceil(node.output.capacity.external_bytes / 1048576)} MiB 旧输出；总预算 ${Math.ceil(node.output.capacity.limit_bytes / 1048576)} MiB，可接 ${node.output.capacity.available_runs} 轮${node.output.capacity.issue ? '；' + node.output.capacity.issue : ''}${node.output.unknown_sources ? '；本页 ' + node.output.unknown_sources + ' 个来源不明，保留计费待核实' : ''}` : '等待机器报告待传输出容量'}。只计算输出保留根，不表示整机磁盘或内存。`;
+    const outputBody = node.bounded_output !== 1
+      ? t('mach.output.needUpgrade')
+      : node.output?.capacity.issue
+        ? t('mach.output.issue', { issue: node.output.capacity.issue })
+        : node.output
+          ? t('mach.output.capacity', {
+            used: Math.ceil(node.output.capacity.used_bytes / 1048576),
+            reserved: Math.ceil(node.output.capacity.reserved_bytes / 1048576),
+            other: node.output.capacity.other_node_reserved_bytes
+              ? t('mach.output.otherReserved', { mib: Math.ceil(node.output.capacity.other_node_reserved_bytes / 1048576) })
+              : '',
+            external: Math.ceil(node.output.capacity.external_bytes / 1048576),
+            limit: Math.ceil(node.output.capacity.limit_bytes / 1048576),
+            available: node.output.capacity.available_runs,
+            unknown: node.output.unknown_sources
+              ? t('mach.output.unknownSources', { count: node.output.unknown_sources })
+              : '',
+          })
+          : t('mach.output.waitingReport');
+    const outputText = t('mach.output.summary', { body: outputBody });
     const outputAttention = node.bounded_output !== 1
       || Boolean(node.output?.capacity.issue)
       || node.output?.capacity.available_runs === 0
@@ -606,12 +640,16 @@ export function MachinesPage() {
       || !node.connected
       || node.service_manager.services.some((service) => Boolean(service.problem) || (service.installed && !service.running));
     const serviceSection = (
-      <section aria-label={`${machine.id} 的系统服务`}>
-        <h3 className="text-xs font-semibold text-muted-foreground">系统服务（本安装）</h3>
+      <section aria-label={t('mach.service.ariaLabel', { id: machine.id })}>
+        <h3 className="text-xs font-semibold text-muted-foreground">{t('mach.service.title')}</h3>
         {node.service_manager ? <>
           {node.service_manager.services.map((service) => <Note key={service.role}>{serviceObservationText(service)}</Note>)}
-          <p className="text-xs text-faint">{formatTime(node.service_manager.observed_at)} 读取{node.connected ? '' : '；机器已离线，以上为最后报告'}</p>
-        </> : <Note>机器尚未报告系统服务状态</Note>}
+          <p className="text-xs text-faint">
+            {node.connected
+              ? t('mach.service.observedOnline', { at: formatTime(node.service_manager.observed_at) })
+              : t('mach.service.observedOffline', { at: formatTime(node.service_manager.observed_at) })}
+          </p>
+        </> : <Note>{t('mach.service.notReported')}</Note>}
       </section>
     );
 
@@ -621,19 +659,19 @@ export function MachinesPage() {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <Dot tone={node.connected ? 'success' : 'waiting'} />
-              <h2 title={MACHINE_NAME_FIXED} className="min-w-0 text-base font-semibold wrap-anywhere">{machine.id}</h2>
-              {isHost ? <Badge tone="plain">主机</Badge> : null}
-              {node.ephemeral ? <Badge tone="plain">临时</Badge> : null}
+              <h2 title={t('mach.nameFixed')} className="min-w-0 text-base font-semibold wrap-anywhere">{machine.id}</h2>
+              {isHost ? <Badge tone="plain">{t('mach.badge.host')}</Badge> : null}
+              {node.ephemeral ? <Badge tone="plain">{t('mach.badge.ephemeral')}</Badge> : null}
               <Badge tone={node.connected ? 'success' : 'waiting'}>{nodeStateLine(node)}</Badge>
               {node.connected ? <span className="text-xs text-muted-foreground">{nodeRunsText(node.reported_runs, node.reported_unknown)}</span> : null}
             </div>
           </div>
           <div className="flex flex-none items-center gap-0.5">
-            <Button size="sm" variant="ghost" title={CHECK_HINT} disabled={draft.checking} onClick={() => void checkMachine(machine)}>{draft.checking ? '测试中' : '测试连接'}</Button>
+            <Button size="sm" variant="ghost" title={t('mach.checkHint')} disabled={draft.checking} onClick={() => void checkMachine(machine)}>{draft.checking ? t('mach.checking') : t('mach.checkConnection')}</Button>
             <Menu>
-              <MenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="更多" disabled={busy}><Ellipsis /></Button></MenuTrigger>
+              <MenuTrigger asChild><Button size="icon-sm" variant="ghost" aria-label={t('common.more')} disabled={busy}><Ellipsis /></Button></MenuTrigger>
               <MenuContent>
-                <MenuItem onSelect={() => patchMachine(key, { form: machineForm(machine), confirm: false, error: null })}>{machine.note ? '改备注' : '加备注'}</MenuItem>
+                <MenuItem onSelect={() => patchMachine(key, { form: machineForm(machine), confirm: false, error: null })}>{machine.note ? t('mach.note.edit') : t('mach.note.add')}</MenuItem>
                 <MenuItem danger onSelect={() => { patchMachine(key, { confirm: false, error: null }); setRemoving(machine.id); }}>{removal.action}</MenuItem>
               </MenuContent>
             </Menu>
@@ -642,19 +680,19 @@ export function MachinesPage() {
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-lg border border-border/60 bg-surface/55 px-3 py-2.5 text-xs sm:grid-cols-4">
           <div className="min-w-0">
-            <dt className="text-faint">{'主机名 '}</dt>
+            <dt className="text-faint">{`${t('mach.spec.hostname')} `}</dt>
             <dd className="mt-0.5 wrap-anywhere"><Mono>{machine.host}</Mono></dd>
           </div>
           <div className="min-w-0">
-            <dt className="text-faint">系统</dt>
-            <dd className="mt-0.5 wrap-anywhere">{node.platform ?? '没说'}</dd>
+            <dt className="text-faint">{t('mach.spec.os')}</dt>
+            <dd className="mt-0.5 wrap-anywhere">{node.platform ?? t('mach.spec.notReported')}</dd>
           </div>
           <div className="min-w-0">
-            <dt className="text-faint">来源</dt>
+            <dt className="text-faint">{t('mach.spec.source')}</dt>
             <dd className="mt-0.5 wrap-anywhere">{machineSourceText(node.source)}</dd>
           </div>
           <div className="min-w-0">
-            <dt className="text-faint">版本</dt>
+            <dt className="text-faint">{t('mach.spec.version')}</dt>
             <dd className="mt-0.5 wrap-anywhere">{nodeReleaseText(node.release, data?.host_version ?? null)}</dd>
           </div>
           {scope ? (
@@ -662,13 +700,13 @@ export function MachinesPage() {
           ) : null}
         </dl>
 
-        {machine.note ? <p className="rounded-md bg-surface/60 px-2.5 py-1.5 text-xs text-muted-foreground wrap-anywhere"><span className="mr-1.5 text-faint">备注</span>{machine.note}</p> : null}
+        {machine.note ? <p className="rounded-md bg-surface/60 px-2.5 py-1.5 text-xs text-muted-foreground wrap-anywhere"><span className="mr-1.5 text-faint">{t('mach.note.label')}</span>{machine.note}</p> : null}
 
         {draft.check ? (
           <div className="grid gap-1 rounded-md bg-muted px-3 py-2">
             {draft.check.machine ? <div><CheckLine answer={draft.check.machine} /></div> : null}
             {draft.check.failure ? <Problem>{draft.check.failure}</Problem> : null}
-            <p className="text-xs text-faint">{`${formatTime(draft.check.at)} 测试连接的结果`}</p>
+            <p className="text-xs text-faint">{t('mach.checkResultAt', { at: formatTime(draft.check.at) })}</p>
           </div>
         ) : null}
 
@@ -676,7 +714,7 @@ export function MachinesPage() {
         {serviceAttention ? serviceSection : null}
         <EndLines ends={node.ends} />
 
-        <section aria-label={`${machine.id} 的执行器`} className="border-t border-border/80 pt-3">
+        <section aria-label={t('mach.exec.sectionLabel', { id: machine.id })} className="border-t border-border/80 pt-3">
           <h3 className="mb-2.5 text-xs font-semibold text-muted-foreground">{executorsCaption(report, undefined, node.entry)}</h3>
           {rows.length === 0 ? <Note>{executorsEmptyText(report)}</Note> : (
             <>
@@ -708,12 +746,12 @@ export function MachinesPage() {
               ) : null}
               {uninstalledRows.length > 0 ? (
                 <div className={cn('flex flex-wrap items-center gap-1.5', activeRows.length > 0 ? 'mt-2.5' : '')}>
-                  <span className="text-xs text-faint">未安装</span>
+                  <span className="text-xs text-faint">{t('cli.notInstalled')}</span>
                   {uninstalledRows.map((row) => (
                     <div
                       key={row.executor}
                       role="group"
-                      aria-label={rowName(machine, row)}
+                      aria-label={rowName(machine, row, t)}
                       className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-border bg-surface/50 px-2 py-0.5 text-xs text-muted-foreground"
                     >
                       <Mono className="font-medium">{row.executor}</Mono>
@@ -729,7 +767,7 @@ export function MachinesPage() {
         {(!outputAttention || !serviceAttention || (node.local_skills && node.local_skills.length > 0)) ? (
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border/60 pt-2.5">
             {!outputAttention || !serviceAttention ? (
-              <Details id={`machine-diag-${machine.uid}`} title="系统服务与缓存诊断" className="text-xs">
+              <Details id={`machine-diag-${machine.uid}`} title={t('mach.diag.title')} className="text-xs">
                 <div className="mt-1.5 grid gap-2">
                   {!outputAttention ? <Note className="text-xs">{outputText}</Note> : null}
                   {!serviceAttention ? serviceSection : null}
@@ -741,7 +779,7 @@ export function MachinesPage() {
                 to="/knowledge?view=access#machine-knowledge"
                 className="text-xs text-muted-foreground hover:text-foreground"
               >
-                {`本机私有技能（${node.local_skills.length}）· 在知识页查看`}
+                {t('mach.localSkillsLink', { count: node.local_skills.length })}
               </Link>
             ) : null}
           </div>
@@ -750,9 +788,9 @@ export function MachinesPage() {
     );
 
     if (inSheet) {
-      return <section aria-label={'机器 ' + machine.id} className="grid gap-4">{body}</section>;
+      return <section aria-label={t('mach.cardAriaLabel', { id: machine.id })} className="grid gap-4">{body}</section>;
     }
-    return <Card key={key} aria-label={'机器 ' + machine.id} className="grid gap-4">{body}</Card>;
+    return <Card key={key} aria-label={t('mach.cardAriaLabel', { id: machine.id })} className="grid gap-4">{body}</Card>;
   }
 
   const earlier = busy && revoking === null
@@ -767,13 +805,13 @@ export function MachinesPage() {
   const doomed = machines.find((machine) => machine.id === removing) ?? null;
   const doomedDraft = doomed ? machineDraft(machineKey(doomed.id)) : MACHINE_BLANK;
   const removal = doomed ? machineRemoval(doomed) : null;
-  const question = doomed && removal ? removalQuestion(doomed, removal.keeps) : null;
+  const question = doomed && removal ? removalQuestion(doomed, removal.keeps, t) : null;
   const closeEditor = (key: string): void => patch(key, { form: null, error: null, tierProblem: null });
   const closeNote = (machine: Machine): void => patchMachine(machineKey(machine.id), { form: null, error: null });
 
   const fleetRail = (
     <aside
-      aria-label="机器列表"
+      aria-label={t('machines.tabList')}
       className={cn(
         'flex flex-col overflow-hidden rounded-xl border border-border bg-raised shadow-card',
         isWide && 'sticky top-4 max-h-[calc(100dvh-9rem)]',
@@ -783,19 +821,19 @@ export function MachinesPage() {
         <div className="relative">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-faint" />
           <Input
-            aria-label="筛选机器"
+            aria-label={t('mach.fleet.filterLabel')}
             className="h-8 pl-8 text-xs"
-            placeholder="筛选机器名、主机名、备注…"
+            placeholder={t('mach.fleet.filterPlaceholder')}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
         </div>
-        <div role="group" aria-label="按状态筛选机器" className="flex flex-wrap items-center gap-1">
+        <div role="group" aria-label={t('mach.fleet.statusFilterLabel')} className="flex flex-wrap items-center gap-1">
           {([
-            ['all', `全部 ${fleetCounts.all}`],
-            ['online', `在线 ${fleetCounts.online}`],
-            ['offline', `离线 ${fleetCounts.offline}`],
-            ...(fleetCounts.ephemeral > 0 ? [['ephemeral', `临时 ${fleetCounts.ephemeral}`] as const] : []),
+            ['all', `${t('common.all')} ${fleetCounts.all}`],
+            ['online', `${t('common.online')} ${fleetCounts.online}`],
+            ['offline', `${t('common.offline')} ${fleetCounts.offline}`],
+            ...(fleetCounts.ephemeral > 0 ? [['ephemeral', `${t('mach.badge.ephemeral')} ${fleetCounts.ephemeral}`] as const] : []),
           ] as const).map(([value, label]) => (
             <Button
               key={value}
@@ -826,7 +864,7 @@ export function MachinesPage() {
           ))}
         </ul>
       ) : (
-        <Note className="px-3.5 py-6 text-center text-xs">没有符合当前筛选条件的机器。</Note>
+        <Note className="px-3.5 py-6 text-center text-xs">{t('mach.fleet.noMatch')}</Note>
       )}
     </aside>
   );
@@ -851,7 +889,7 @@ export function MachinesPage() {
       {data ? (
         <>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div role="tablist" aria-label={bi('机器视图切换', 'Machines view')} className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface/70 p-0.5">
+            <div role="tablist" aria-label={t('mach.viewSwitchLabel')} className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface/70 p-0.5">
               <button
                 type="button"
                 role="tab"
@@ -884,13 +922,13 @@ export function MachinesPage() {
                 {outdatedCliCount > 0 ? (
                   <Badge tone="waiting" className="ml-0.5 px-1.5 py-0 text-[10px]">{t('machines.behindBadge', { count: outdatedCliCount })}</Badge>
                 ) : activeCliUpdates > 0 ? (
-                  <Badge tone="plain" className="ml-0.5 px-1.5 py-0 text-[10px]">{bi(`${activeCliUpdates} 进行中`, `${activeCliUpdates} running`)}</Badge>
+                  <Badge tone="plain" className="ml-0.5 px-1.5 py-0 text-[10px]">{t('mach.cli.tabRunning', { count: activeCliUpdates })}</Badge>
                 ) : null}
               </button>
             </div>
             {fleetStatus?.policy.enabled ? (
               <span className="text-xs text-muted-foreground">
-                {bi(`定时自动更新已启用 · 每 ${fleetStatus.policy.intervalHours} 小时`, `Auto update on · every ${fleetStatus.policy.intervalHours}h`)}
+                {t('mach.cli.autoUpdateBanner', { hours: fleetStatus.policy.intervalHours })}
               </span>
             ) : null}
           </div>
@@ -898,7 +936,7 @@ export function MachinesPage() {
           {earlier ? <Callout tone="plain" role="status" className="mb-3">{EARLIER_CHANGE}</Callout> : null}
           {data.host_machine === null ? <Callout tone="waiting" className="mb-3">{HOST_MACHINE_UNKNOWN_TEXT}</Callout> : null}
           {data.host_entry && data.host_entry.executors.some((each) => !['written', 'cleared'].includes(each.state)) ? (
-            <p className="mb-3 text-xs text-muted-foreground wrap-anywhere">{entryLine(data.host_entry, undefined, '主机本机')}</p>
+            <p className="mb-3 text-xs text-muted-foreground wrap-anywhere">{entryLine(data.host_entry, undefined, t('mach.entry.hostWhere'))}</p>
           ) : null}
 
           {activeTab === 'cli-updates' ? (
@@ -910,7 +948,7 @@ export function MachinesPage() {
                 <div className="min-w-0">
                   {activeMachine ? machineDetail(activeMachine) : (
                     <Card className="py-10 text-center">
-                      <Note>在左侧选择一台机器查看详情。</Note>
+                      <Note>{t('mach.fleet.selectPrompt')}</Note>
                     </Card>
                   )}
                 </div>
@@ -919,14 +957,14 @@ export function MachinesPage() {
               fleetRail
             )
           ) : (
-            <Empty icon={<Server />} title="还没有机器">点“接入一台机器”看怎么接。</Empty>
+            <Empty icon={<Server />} title={t('mach.empty.title')}>{t('mach.empty.body')}</Empty>
           )}
 
           {data.invites.length ? <Invites invites={data.invites} busy={busy} revoking={revoking} failures={inviteFailures} onRevoke={(invite) => void revokeInvite(invite)} /> : null}
 
           {!isWide && explicitSelected ? (
             <Sheet open onOpenChange={(open) => { if (!open) setSelectedUid(null); }}>
-              <SheetContent title={explicitSelected.id} description={`${shortPlatform(explicitSelected.node.platform)} · ${explicitSelected.host}`}>
+              <SheetContent title={explicitSelected.id} description={`${shortPlatform(explicitSelected.node.platform, t)} · ${explicitSelected.host}`}>
                 {machineDetail(explicitSelected, true)}
               </SheetContent>
             </Sheet>
@@ -934,7 +972,7 @@ export function MachinesPage() {
 
           <Dialog open={adding} onOpenChange={setAdding}>
             {adding ? (
-              <DialogContent title="接入一台机器" className="max-w-[600px]">
+              <DialogContent title={t('machines.joinMachine')} className="max-w-[600px]">
                 <JoinSteps guide={guide} />
                 <PendingJoins />
               </DialogContent>
@@ -943,7 +981,7 @@ export function MachinesPage() {
 
           <Sheet open={editing !== null} onOpenChange={(open) => { if (!open && editing && !draftOf(editing.key).saving) closeEditor(editing.key); }}>
             {editing && draftOf(editing.key).form ? (
-              <SheetContent title={`${editing.machine.id} 上的 ${editing.login.executor} 登录`} description="这台机器上已经登录好的执行器。这里只填 tycho 加给它的：档位、权限模式和限制。">
+              <SheetContent title={t('mach.exec.rowLoginName', { machine: editing.machine.id, executor: editing.login.executor })} description={t('mach.ownLogin.sheetDesc')}>
                 <LoginEditor
                   own={editing.login}
                   form={draftOf(editing.key).form!}
@@ -965,14 +1003,14 @@ export function MachinesPage() {
           </Sheet>
 
           <Dialog open={signingIn !== null} onOpenChange={(open) => { if (!open) setSigningIn(null); }}>
-            {signingIn ? <DialogContent title={`重新登录 ${signingIn.machine.id} 上的 ${signingIn.executor}`}>
+            {signingIn ? <DialogContent title={t('mach.signIn.dialogTitle', { machine: signingIn.machine.id, executor: signingIn.executor })}>
               <MachineSignInSteps executor={signingIn.executor} page={data} busy={busy} fixedMachine={signingIn.machine} onBack={() => setSigningIn(null)} onDone={() => setSigningIn(null)} />
             </DialogContent> : null}
           </Dialog>
 
           <Dialog open={noting !== null} onOpenChange={(open) => { if (!open && noting && !machineDraft(machineKey(noting.id)).saving) closeNote(noting); }}>
             {noting ? (
-              <DialogContent title={`机器 ${noting.id} 的备注`}>
+              <DialogContent title={t('mach.note.dialogTitle', { id: noting.id })}>
                 <NoteForm
                   draft={machineDraft(machineKey(noting.id))}
                   busy={busy}
@@ -998,10 +1036,10 @@ export function MachinesPage() {
 
           <Confirm
             open={ownDoomed !== null}
-            title={ownDoomed ? `删除 ${ownDoomed.machine.id} 上的 ${ownDoomed.login.executor} 登录？` : ''}
-            description="删掉以后服务不再用这台机器的这份登录派活，也不会从这台机器的报告里自动再建；以后还要用，重新在机器上登录或改档位即可。"
-            confirm={ownDoomed ? (draftOf(ownDoomed.key).saving ? '删除中' : '确认删除') : ''}
-            cancel="不删了"
+            title={ownDoomed ? t('mach.ownLogin.deleteTitle', { machine: ownDoomed.machine.id, executor: ownDoomed.login.executor }) : ''}
+            description={t('mach.ownLogin.deleteDesc')}
+            confirm={ownDoomed ? (draftOf(ownDoomed.key).saving ? t('mach.removal.deleting') : t('mach.removal.confirmDelete')) : ''}
+            cancel={t('mach.removal.keepDelete')}
             busy={ownDoomed ? draftOf(ownDoomed.key).saving : false}
             error={ownDoomed ? draftOf(ownDoomed.key).error : null}
             onConfirm={() => { if (ownDoomed) void deleteOwn(ownDoomed.machine, ownDoomed.login); }}

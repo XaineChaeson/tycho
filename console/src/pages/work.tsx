@@ -12,6 +12,7 @@ import { Page, PageTitle, type Crumb } from '@/components/page';
 import { AcceptNow, TaskActions, TaskStatus, useTaskAct } from '@/components/task-actions';
 import { Button } from '@/components/ui/button';
 import { taskPath, WorkRow } from '@/components/work-row';
+import { useI18n } from '@/lib/i18n';
 import { useLive } from '@/lib/live-context';
 import { approvalsQuery, projectsQuery, taskQuery } from '@/lib/queries';
 import type { Task } from '@/lib/types';
@@ -26,6 +27,7 @@ function isChildInReview(child: Task): boolean {
 }
 
 function WorkWithTasks({ id }: { id: string }) {
+  const { t } = useI18n();
   const { data, error } = useQuery(taskQuery(id));
   const { data: projects } = useQuery(projectsQuery);
   const { data: approvals } = useQuery(approvalsQuery);
@@ -43,8 +45,8 @@ function WorkWithTasks({ id }: { id: string }) {
   const projectId = task.project_id ?? data.work.project_id ?? null;
   const project = projects?.find((each) => each.id === projectId);
   // A knowledge Task belongs to no project: it sits under the knowledge page.
-  const home: Crumb = task.project_id === null ? { label: '知识', to: '/knowledge' }
-    : { label: project?.name ?? '项目', to: projectId ? `/projects/${encodeURIComponent(projectId)}/work` : '/projects' };
+  const home: Crumb = task.project_id === null ? { label: t('nav.knowledge'), to: '/knowledge' }
+    : { label: project?.name ?? t('project.defaultTitle'), to: projectId ? `/projects/${encodeURIComponent(projectId)}/work` : '/projects' };
   return (
     <Page
       crumbs={[home, { label: task.title }]}
@@ -56,19 +58,19 @@ function WorkWithTasks({ id }: { id: string }) {
           variant="ghost"
           onClick={() => {
             // In the conversation of the work's own project (docs/design/project-sessions.md §1).
-            live.typeFor(projectId, `关于工作 ${task.title}（${task.id}）：`);
+            live.typeFor(projectId, t('tsk.work.chatPrefill', { title: task.title, id: task.id }));
             void navigate(`/projects/${encodeURIComponent(projectId)}`, { state: { compose: true } });
           }}
         >
           <MessageSquare />
-          <span className="max-sm:sr-only">在对话里谈这项工作</span>
+          <span className="max-sm:sr-only">{t('tsk.work.talkInChat')}</span>
         </Button>
       )}
     >
       <article>
         <PageTitle>{task.title}</PageTitle>
         <TaskStatus task={task} className="mt-2" />
-        <p className="mt-1 text-xs text-faint"><Time at={task.created_at} prefix="创建于 " /></p>
+        <p className="mt-1 text-xs text-faint"><Time at={task.created_at} prefix={t('task.createdAt')} /></p>
         <TaskActions
           className="mt-5"
           task={task}
@@ -79,8 +81,8 @@ function WorkWithTasks({ id }: { id: string }) {
           control={control}
         />
         {attentionCount > 0 ? (
-          <section aria-label="待你处理的子任务" className="mt-6">
-            <SectionTitle count={attentionCount}>待你处理的子任务</SectionTitle>
+          <section aria-label={t('tsk.work.attentionSection')} className="mt-6">
+            <SectionTitle count={attentionCount}>{t('tsk.work.attentionSection')}</SectionTitle>
             <div className="grid gap-3">
               {childApprovals.map((card) => <ApprovalCard key={card.id} card={card} />)}
               {readyChildren.map((child) => <AcceptNow key={child.id} task={child} context={task.title} />)}
@@ -91,12 +93,12 @@ function WorkWithTasks({ id }: { id: string }) {
                       <div className="flex flex-wrap items-center gap-2">
                         <StatusDot state="held" />
                         <Link to={taskPath(child.id)} className="font-semibold no-underline wrap-anywhere hover:underline">
-                          {`已停住：${child.title}`}
+                          {t('tsk.work.heldChildPrefix', { title: child.title })}
                         </Link>
-                        <Link to={taskPath(child.id)} className="ml-auto text-xs">前往处理</Link>
+                        <Link to={taskPath(child.id)} className="ml-auto text-xs">{t('tsk.work.goHandle')}</Link>
                       </div>
                       <p className="pl-6 text-sm text-muted-foreground whitespace-pre-wrap wrap-anywhere">
-                        {child.reason ?? '没有写停住原因'}
+                        {child.reason ?? t('tsk.work.noHeldReason')}
                       </p>
                     </div>
                   ))}
@@ -105,14 +107,14 @@ function WorkWithTasks({ id }: { id: string }) {
             </div>
           </section>
         ) : null}
-        <section aria-label="工作目标" className="mt-6">
-          <SectionTitle>工作目标</SectionTitle>
+        <section aria-label={t('tsk.work.goalSection')} className="mt-6">
+          <SectionTitle>{t('tsk.work.goalSection')}</SectionTitle>
           <div className="rounded-xl bg-muted px-4 py-3.5">
             <Markdown text={task.goal} projectId={projectId ?? undefined} />
           </div>
         </section>
-        <section aria-label="任务" className="mt-7">
-          <SectionTitle count={children.length}>任务</SectionTitle>
+        <section aria-label={t('tsk.work.tasksSection')} className="mt-7">
+          <SectionTitle count={children.length}>{t('tsk.work.tasksSection')}</SectionTitle>
           <Rows>
             {children.map((child) => {
               const run = child.latest_run;

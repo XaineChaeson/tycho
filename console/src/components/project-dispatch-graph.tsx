@@ -7,8 +7,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { taskLine, taskStateLabels } from '@shared/labels.ts';
 import { parseLoginName } from '@shared/logins.ts';
 import { toneOf, type Tone } from '@/components/bits';
+import { useI18n, type TranslationParams } from '@/lib/i18n';
 import type { Project, Task, TaskAssignment } from '@/lib/types';
 import { cn } from '@/lib/utils';
+
+type TranslateFn = (key: string, params?: TranslationParams) => string;
 
 export type DispatchGraphMode = 'hud' | 'trace';
 
@@ -94,16 +97,16 @@ function isBranchActive(task: Task, byParent: Map<string, Task[]>): boolean {
 }
 
 function classifyChildKind(task: Task): 'review' | 'cluster' | 'sub' {
-  if (task.review_gate || /审阅|review/i.test(task.title) || /审阅|review/i.test(task.assignment?.role_name ?? '')) {
+  if (task.review_gate || /审阅|review/i.test(task.title) || /审阅|review/i.test(task.assignment?.role_name ?? '')) { // i18n-ignore
     return 'review';
   }
-  if (/集群|cluster|worker|验证|回归|dev|prod/i.test(task.title)) {
+  if (/集群|cluster|worker|验证|回归|dev|prod/i.test(task.title)) { // i18n-ignore
     return 'cluster';
   }
   return 'sub';
 }
 
-function formatCompactActor(assignment: TaskAssignment | null | undefined, fallbackLogin?: string | null): string {
+function formatCompactActor(assignment: TaskAssignment | null | undefined, fallbackLogin: string | null | undefined, t: TranslateFn): string {
   const role = assignment?.role_name?.trim() || null;
   const rawLogin = assignment?.login_name?.trim() || fallbackLogin?.trim() || null;
   const rawMachine = assignment?.machine_name?.trim() || null;
@@ -123,8 +126,8 @@ function formatCompactActor(assignment: TaskAssignment | null | undefined, fallb
 
   if (role && runner) return `${role} // ${runner}`;
   if (runner) return runner;
-  if (role) return `${role} // 待派发`;
-  return '待派发';
+  if (role) return t('proj.graph.actorRolePending', { role });
+  return t('proj.graph.actorPending');
 }
 
 function formatDuration(ms: number): string {
@@ -145,13 +148,13 @@ function formatClock(ms: number): string {
   return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
-function elapsedLabel(node: DispatchNode, nowMs: number): string {
-  if (node.kind === 'router') return '持续';
+function elapsedLabel(node: DispatchNode, nowMs: number, t: TranslateFn): string {
+  if (node.kind === 'router') return t('proj.graph.elapsedContinuous');
   if (node.state === 'held' || node.state === 'waiting_person' || node.state === 'needs_verification') {
-    return '待介入';
+    return t('proj.graph.elapsedNeedsAttention');
   }
   if (node.state === 'queued' || node.state === 'waiting_timer') {
-    return taskStateLabels[node.state] ?? '排队中';
+    return taskStateLabels[node.state] ?? t('cli.queuing');
   }
   if (node.startMs !== null) {
     const end = node.isLive ? nowMs : (node.endMs ?? nowMs);
@@ -169,6 +172,7 @@ function buildDispatchTree(
   works: readonly Task[],
   allChildren: readonly Task[],
   includeEnded: boolean,
+  t: TranslateFn,
 ): { root: DispatchNode; totalCount: number; hiddenEndedCount: number; hasRunning: boolean } {
   const byParent = new Map<string, Task[]>();
   for (const child of allChildren) {
@@ -217,7 +221,7 @@ function buildDispatchTree(
       state: task.state,
       stateLabel: taskStateLabels[task.state] ?? task.state,
       tone: toneOf(effectiveState),
-      actor: formatCompactActor(task.assignment, task.login_name),
+      actor: formatCompactActor(task.assignment, task.login_name, t),
       detailLine: taskLine(task),
       startMs,
       endMs,
@@ -232,7 +236,9 @@ function buildDispatchTree(
   const anyWaiting = workNodes.some((n) => n.tone === 'waiting' || n.tone === 'failed');
   const routerTone: Tone = anyRunning ? 'running' : anyWaiting ? 'waiting' : 'success';
   const routerAccount = project?.router?.account?.trim() || null;
-  const routerActor = routerAccount ? `总控 // ${routerAccount}` : '项目负责人 // Router';
+  const routerActor = routerAccount
+    ? t('proj.graph.routerActorAccount', { account: routerAccount })
+    : t('proj.graph.routerActorDefault');
 
   const root: DispatchNode = {
     id: '__router__',
@@ -240,12 +246,16 @@ function buildDispatchTree(
     parentId: null,
     depth: 0,
     kind: 'router',
-    title: project?.name ? `${project.name} · 总控` : '项目总控 Router',
+    title: project?.name ? t('proj.graph.routerTitleNamed', { name: project.name }) : t('proj.graph.routerTitleDefault'),
     state: anyRunning ? 'running' : anyWaiting ? 'waiting_person' : 'done',
-    stateLabel: anyRunning ? '统筹中' : anyWaiting ? '待关注' : '就绪',
+    stateLabel: anyRunning
+      ? t('proj.graph.routerStateRunning')
+      : anyWaiting
+        ? t('proj.graph.routerStateWaiting')
+        : t('proj.graph.routerStateReady'),
     tone: routerTone,
     actor: routerActor,
-    detailLine: `当前展示 ${workNodes.length} 条工作链`,
+    detailLine: t('proj.graph.routerDetailLine', { count: workNodes.length }),
     startMs: null,
     endMs: null,
     isLive: anyRunning,
@@ -406,14 +416,15 @@ export function ProjectDispatchGraph({
   onSelectTask: (taskId: string) => void;
   onOpenConversation?: () => void;
 }) {
+  const { t } = useI18n();
   const [deepCanvas, setDeepCanvas] = useState<boolean>(loadDeepTone);
   const [includeEnded, setIncludeEnded] = useState<boolean>(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   const { root, totalCount, hiddenEndedCount, hasRunning } = useMemo(
-    () => buildDispatchTree(project, works, children, includeEnded),
-    [project, works, children, includeEnded],
+    () => buildDispatchTree(project, works, children, includeEnded, t),
+    [project, works, children, includeEnded, t],
   );
 
   useEffect(() => {
@@ -462,7 +473,7 @@ export function ProjectDispatchGraph({
 
   return (
     <section
-      aria-label={mode === 'hud' ? '航天测控派发蓝图' : '执行脉搏派发泳道'}
+      aria-label={mode === 'hud' ? t('proj.graph.ariaHud') : t('proj.graph.ariaTrace')}
       data-slot="project-dispatch-graph"
       data-mode={mode}
       className={cn(
@@ -479,20 +490,20 @@ export function ProjectDispatchGraph({
       >
         <div className="flex flex-wrap items-center gap-3 font-mono">
           <span className={cn('font-semibold tracking-wider', deepCanvas ? 'text-[#e2e8f0]' : 'text-foreground')}>
-            {mode === 'hud' ? 'HUD // 45° PCB 派发蓝图' : 'TRACE // 执行脉搏泳道'}
+            {mode === 'hud' ? t('proj.graph.headerHud') : t('proj.graph.headerTrace')}
           </span>
-          <span>节点 {totalCount + 1}</span>
+          <span>{t('proj.graph.nodeCount', { count: totalCount + 1 })}</span>
           <span className="inline-flex items-center gap-1">
-            <span className="size-1.5 rounded-full" style={{ background: toneColor('running') }} />执行
-          </span>
-          <span className="inline-flex items-center gap-1">
-            <span className="size-1.5 rounded-full" style={{ background: toneColor('waiting') }} />待处理
+            <span className="size-1.5 rounded-full" style={{ background: toneColor('running') }} />{t('proj.graph.legendRunning')}
           </span>
           <span className="inline-flex items-center gap-1">
-            <span className="size-1.5 rounded-full" style={{ background: toneColor('failed') }} />阻塞
+            <span className="size-1.5 rounded-full" style={{ background: toneColor('waiting') }} />{t('proj.graph.legendWaiting')}
           </span>
           <span className="inline-flex items-center gap-1">
-            <span className="size-1.5 rounded-full" style={{ background: toneColor('success') }} />完成
+            <span className="size-1.5 rounded-full" style={{ background: toneColor('failed') }} />{t('proj.graph.legendBlocked')}
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="size-1.5 rounded-full" style={{ background: toneColor('success') }} />{t('proj.graph.legendDone')}
           </span>
         </div>
 
@@ -508,13 +519,13 @@ export function ProjectDispatchGraph({
                   : 'border-border bg-raised text-foreground hover:border-border-strong',
               )}
             >
-              {includeEnded ? '仅看活跃链' : `含已完成 (+${hiddenEndedCount})`}
+              {includeEnded ? t('proj.graph.activeOnlyBtn') : t('proj.graph.includeEndedBtn', { count: hiddenEndedCount })}
             </button>
           ) : null}
           <button
             type="button"
             onClick={toggleCanvas}
-            aria-label={deepCanvas ? '切换为跟随系统主题画布' : '切换为深空暗场画布'}
+            aria-label={deepCanvas ? t('proj.graph.switchAdaptiveAria') : t('proj.graph.switchDeepAria')}
             className={cn(
               'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-2xs font-medium transition-colors',
               deepCanvas
@@ -523,7 +534,7 @@ export function ProjectDispatchGraph({
             )}
           >
             {deepCanvas ? <Sun className="size-3" /> : <Moon className="size-3" />}
-            {deepCanvas ? '深空暗场' : '跟随主题'}
+            {deepCanvas ? t('proj.graph.canvasDeep') : t('proj.graph.canvasAdaptive')}
           </button>
         </div>
       </div>
@@ -627,8 +638,8 @@ export function ProjectDispatchGraph({
               deepCanvas ? 'text-[#8c9bb5]' : 'text-muted-foreground',
             )}
           >
-            <div className="col-span-5">DISPATCH TREE / 派生血缘</div>
-            <div className="col-span-3">EXECUTOR / 执行者</div>
+            <div className="col-span-5">{t('proj.graph.traceColTree')}</div>
+            <div className="col-span-3">{t('proj.graph.traceColExecutor')}</div>
             <div className="col-span-4 flex items-center justify-between">
               <span>{formatClock(timeWindow.minStart)}</span>
               <span>{formatClock(timeWindow.minStart + timeWindow.span / 2)}</span>
@@ -651,7 +662,7 @@ export function ProjectDispatchGraph({
                 ? ((Math.max(node.startMs, endTarget) - node.startMs) / timeWindow.span) * 100
                 : 12;
             const widthPct = Math.max(6, Math.min(100 - startPct, rawWidthPct));
-            const elapsed = elapsedLabel(node, nowMs);
+            const elapsed = elapsedLabel(node, nowMs, t);
 
             return (
               <button
@@ -756,8 +767,8 @@ export function ProjectDispatchGraph({
       >
         <span>
           {mode === 'hud'
-            ? '悬停芯片高亮血缘链路 · 点击任意节点直接打开执行线程'
-            : '左侧树状轨 = 派生血缘 · 右侧光条 = 运行脉搏与耗时分布 · 点击任意行打开执行线程'}
+            ? t('proj.graph.footerHud')
+            : t('proj.graph.footerTrace')}
         </span>
         <span className="font-mono">SYS · WRK · SUB · REV · CLU</span>
       </div>

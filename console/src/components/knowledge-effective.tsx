@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useId, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import { ANY_ROLE_LABEL, KIND_LABELS, citation } from '@shared/knowledge.ts';
+import { t as tr } from '@shared/i18n.ts';
 import type { EffectiveContextItem, EffectiveContextReport } from '@shared/skill-catalog.ts';
 import { Card, Empty, Mono, Note, Problem, Rows, SectionTitle } from '@/components/bits';
 import { entryPath, kib, scopeOf, type Names } from '@/components/knowledge-bits';
@@ -11,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Option, Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api, messageOf } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { PAGE } from '@/lib/queries';
 import { cn } from '@/lib/utils';
 
@@ -26,7 +28,9 @@ const NEAR_LIMIT_RATIO = 0.8;
 const EMPTY_MACHINES: readonly MachineOption[] = [];
 
 function machineOptionText(machine: MachineOption): string {
-  return machine.host && machine.host !== machine.id ? `${machine.id}（${machine.host}）` : machine.id;
+  return machine.host && machine.host !== machine.id
+    ? tr('know.machine.optionWithHost', { id: machine.id, host: machine.host })
+    : machine.id;
 }
 
 function machineBadgeInfo(
@@ -35,12 +39,23 @@ function machineBadgeInfo(
 ): { label: string; title: string; empty: boolean } | null {
   if (machineIds == null) return null;
   if (machineIds.length === 0) {
-    return { label: '未分配机器', title: '未分配任何机器，不会派发到任何节点', empty: true };
+    return {
+      label: tr('know.machine.unassigned'),
+      title: tr('know.machine.unassignedTitle'),
+      empty: true,
+    };
   }
+  const sep = tr('know.listSep');
   const labels = machineIds.map((id) => machines.find((machine) => machine.id === id)?.id ?? id);
-  const full = labels.join('、');
-  const short = labels.length <= 2 ? full : `${labels.slice(0, 2).join('、')} 等 ${labels.length} 台`;
-  return { label: `仅 ${short}`, title: `仅限机器：${full}`, empty: false };
+  const full = labels.join(sep);
+  const short = labels.length <= 2
+    ? full
+    : tr('know.machine.shortMore', { head: labels.slice(0, 2).join(sep), count: labels.length });
+  return {
+    label: tr('know.machine.onlyLabel', { short }),
+    title: tr('know.machine.onlyTitle', { full }),
+    empty: false,
+  };
 }
 
 function BudgetMeter({ label, bytes, limitBytes }: { label: string; bytes: number; limitBytes: number }) {
@@ -191,6 +206,7 @@ export function KnowledgeEffectivePanel({
   roles,
   machines = EMPTY_MACHINES,
 }: KnowledgeEffectivePanelProps) {
+  const { t } = useI18n();
   const projectSelectId = useId();
   const roleSelectId = useId();
   const machineSelectId = useId();
@@ -227,27 +243,27 @@ export function KnowledgeEffectivePanel({
   const bothEmpty = data !== undefined && data.resident.length === 0 && data.on_demand.length === 0;
 
   return (
-    <section aria-label="生效上下文预览" className="grid grid-cols-1 gap-6">
+    <section aria-label={t('know.effective.ariaLabel')} className="grid grid-cols-1 gap-6">
       <div className="flex flex-wrap items-end gap-x-4 gap-y-3 rounded-xl border border-border bg-raised p-3.5 shadow-card">
         <div className="grid min-w-44 flex-1 gap-1.5 sm:max-w-xs">
-          <label htmlFor={projectSelectId} className="text-xs font-medium text-muted-foreground">项目</label>
+          <label htmlFor={projectSelectId} className="text-xs font-medium text-muted-foreground">{t('know.field.project')}</label>
           <Select
             id={projectSelectId}
-            aria-label="项目"
+            aria-label={t('know.field.project')}
             wrapperClassName="flex"
             value={projectId}
             onChange={(event) => setSelectedProjectId(event.target.value)}
           >
-            <Option value="">仅全局（不选项目）</Option>
+            <Option value="">{t('know.effective.globalOnly')}</Option>
             {projects.map((project) => <Option key={project.id} value={project.id}>{project.name}</Option>)}
           </Select>
         </div>
 
         <div className="grid min-w-44 flex-1 gap-1.5 sm:max-w-xs">
-          <label htmlFor={roleSelectId} className="text-xs font-medium text-muted-foreground">职能</label>
+          <label htmlFor={roleSelectId} className="text-xs font-medium text-muted-foreground">{t('know.field.role')}</label>
           <Select
             id={roleSelectId}
-            aria-label="职能"
+            aria-label={t('know.field.role')}
             wrapperClassName="flex"
             value={roleId}
             onChange={(event) => setSelectedRoleId(event.target.value)}
@@ -258,15 +274,15 @@ export function KnowledgeEffectivePanel({
         </div>
 
         <div className="grid min-w-44 flex-1 gap-1.5 sm:max-w-xs">
-          <label htmlFor={machineSelectId} className="text-xs font-medium text-muted-foreground">目标机器</label>
+          <label htmlFor={machineSelectId} className="text-xs font-medium text-muted-foreground">{t('know.effective.targetMachine')}</label>
           <Select
             id={machineSelectId}
-            aria-label="目标机器"
+            aria-label={t('know.effective.targetMachine')}
             wrapperClassName="flex"
             value={machineId}
             onChange={(event) => setSelectedMachineId(event.target.value)}
           >
-            <Option value="">全部机器（不限）</Option>
+            <Option value="">{t('know.effective.allMachines')}</Option>
             {machines.map((machine) => (
               <Option key={machine.id} value={machine.id}>{machineOptionText(machine)}</Option>
             ))}
@@ -283,12 +299,12 @@ export function KnowledgeEffectivePanel({
           <div className="grid grid-cols-1 gap-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <BudgetMeter
-                label="brief 知识区"
+                label={t('know.effective.briefBudget')}
                 bytes={data.budget.brief_bytes}
                 limitBytes={data.budget.brief_limit_bytes}
               />
               <BudgetMeter
-                label="快照附件文件"
+                label={t('know.effective.snapshotBudget')}
                 bytes={data.budget.snapshot_bytes}
                 limitBytes={data.budget.snapshot_limit_bytes}
               />
@@ -297,24 +313,24 @@ export function KnowledgeEffectivePanel({
           </div>
 
           {bothEmpty ? (
-            <Empty title="这个组合下没有生效的知识或技能">
-              换一个项目、职能或目标机器查看，或在目录中启用条目、调整作用域。
+            <Empty title={t('know.effective.emptyTitle')}>
+              {t('know.effective.emptyBody')}
             </Empty>
           ) : (
             <>
               <EffectiveSection
-                title="常驻全文（直接写入 brief.md）"
+                title={t('know.effective.residentTitle')}
                 items={data.resident}
                 names={names}
                 machines={machines}
-                emptyText="这个组合下没有常驻全文条目。"
+                emptyText={t('know.effective.residentEmpty')}
               />
               <EffectiveSection
-                title="按需目录（brief.md 仅列 1 行，正文冻结进 runDir/ 快照）"
+                title={t('know.effective.onDemandTitle')}
                 items={data.on_demand}
                 names={names}
                 machines={machines}
-                emptyText="这个组合下没有按需目录条目。"
+                emptyText={t('know.effective.onDemandEmpty')}
               />
             </>
           )}

@@ -19,6 +19,7 @@ import { Option, Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { del, messageOf, post, put } from '@/lib/api';
+import { translate, useI18n } from '@/lib/i18n';
 import { imGroupsQuery, PAGE, stateQuery } from '@/lib/queries';
 import type { DiscoveredImGroup, ImChannel, ImGroupBinding, ImGroupTriggerMode, Setting } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -26,7 +27,7 @@ import { cn } from '@/lib/utils';
 export type ImChannelsTab = 'overview' | 'wecom' | 'weixin' | 'groups';
 
 export function channelLabel(channel: ImChannel): string {
-  return channel === 'wecom' ? '企业微信' : '微信';
+  return translate(channel === 'wecom' ? 'set.im.channel.wecom' : 'set.im.channel.weixin');
 }
 
 export interface GroupBindingDraft {
@@ -134,18 +135,18 @@ export function parseGroupBindingPayload(draft: GroupBindingDraft):
   | { ok: true; body: GroupBindingPayload }
   | { ok: false; error: string } {
   const chatId = draft.chatId.trim();
-  if (chatId === '') return { ok: false, error: '请填写群 ID。' };
+  if (chatId === '') return { ok: false, error: translate('set.im.err.chatIdRequired') };
   const projectId = draft.projectId.trim();
-  if (projectId === '') return { ok: false, error: '请选择要绑定的项目。' };
+  if (projectId === '') return { ok: false, error: translate('set.im.err.projectRequired') };
   const cooldownRaw = draft.cooldownSeconds.trim();
   const cooldown = Number(cooldownRaw);
   if (cooldownRaw === '' || !Number.isInteger(cooldown) || cooldown < IM_COOLDOWN_MIN || cooldown > IM_COOLDOWN_MAX) {
-    return { ok: false, error: `冷却合并窗口需为 ${IM_COOLDOWN_MIN} 到 ${IM_COOLDOWN_MAX} 之间的整数（秒）。` };
+    return { ok: false, error: translate('set.im.err.cooldownRange', { min: IM_COOLDOWN_MIN, max: IM_COOLDOWN_MAX }) };
   }
   const contextRaw = draft.inlineContextCount.trim();
   const contextCount = Number(contextRaw);
   if (contextRaw === '' || !Number.isInteger(contextCount) || contextCount < IM_INLINE_CONTEXT_MIN || contextCount > IM_INLINE_CONTEXT_MAX) {
-    return { ok: false, error: `群内联上下文条数需为 ${IM_INLINE_CONTEXT_MIN} 到 ${IM_INLINE_CONTEXT_MAX} 之间的整数。` };
+    return { ok: false, error: translate('set.im.err.contextRange', { min: IM_INLINE_CONTEXT_MIN, max: IM_INLINE_CONTEXT_MAX }) };
   }
   return {
     ok: true,
@@ -191,66 +192,67 @@ export function GroupBindingRow({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useI18n();
   const displayName = binding.chat_name || binding.chat_id;
   const senderText = binding.allow_all_senders
-    ? '允许群内全员'
+    ? t('set.im.sendersAll')
     : binding.allowed_senders.length > 0
-      ? `白名单（额外 ${binding.allowed_senders.length} 人）`
-      : '仅主人 / 默认白名单';
+      ? t('set.im.sendersWhitelistCount', { count: binding.allowed_senders.length })
+      : t('set.im.sendersOwnerOnly');
 
   return (
-    <li aria-label={`群聊绑定 ${displayName}`} className="grid gap-2.5 px-4 py-3.5">
+    <li aria-label={t('set.im.bindingRowAria', { name: displayName })} className="grid gap-2.5 px-4 py-3.5">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
         <Dot tone={binding.enabled ? 'success' : 'ended'} pulse={false} />
         <span className="min-w-0 text-sm font-semibold wrap-anywhere">{displayName}</span>
         {binding.chat_name ? <Mono className="text-muted-foreground">{binding.chat_id}</Mono> : null}
         <Badge tone="plain">{channelLabel(binding.channel)}</Badge>
         {showProject ? <Badge tone="running">{binding.project_name || binding.project_id}</Badge> : null}
-        <Badge tone="plain">{binding.trigger_mode === 'mention_or_rules' ? '@ 或快通道规则' : '仅 @ 机器人'}</Badge>
-        <Badge tone={binding.enabled ? 'success' : 'ended'}>{binding.enabled ? '已启用' : '已停用'}</Badge>
+        <Badge tone="plain">{binding.trigger_mode === 'mention_or_rules' ? t('set.im.triggerMentionOrRules') : t('set.im.triggerMentionOnly')}</Badge>
+        <Badge tone={binding.enabled ? 'success' : 'ended'}>{binding.enabled ? t('common.enabled') : t('common.disabled')}</Badge>
         <span className="ml-auto flex flex-none items-center gap-0.5">
-          <Button size="sm" variant="ghost" disabled={busy} onClick={onEdit}>编辑</Button>
-          <Button size="sm" variant="danger" disabled={busy} onClick={onDelete}>解绑</Button>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={onEdit}>{t('set.im.editBtn')}</Button>
+          <Button size="sm" variant="danger" disabled={busy} onClick={onDelete}>{t('set.im.unbindBtn')}</Button>
         </span>
       </div>
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span>发送者：{senderText}</span>
-        <span>冷却合并：{binding.cooldown_seconds} 秒</span>
-        <span>上下文：{binding.inline_context_count} 条</span>
+        <span>{t('set.im.metaSenders', { value: senderText })}</span>
+        <span>{t('set.im.metaCooldown', { seconds: binding.cooldown_seconds })}</span>
+        <span>{t('set.im.metaContext', { count: binding.inline_context_count })}</span>
         {binding.trigger_mode === 'mention_or_rules' && binding.rule_keywords.length > 0 ? (
-          <span className="wrap-anywhere">规则：{binding.rule_keywords.join('、')}</span>
+          <span className="wrap-anywhere">{t('set.im.metaRules', { rules: binding.rule_keywords.join(t('set.listSep')) })}</span>
         ) : null}
-        {binding.last_triggered_at ? <Time at={binding.last_triggered_at} prefix="最近触发 " /> : null}
+        {binding.last_triggered_at ? <Time at={binding.last_triggered_at} prefix={t('set.im.lastTriggeredPrefix')} /> : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-border/60 pt-2">
         <Choice className="min-h-7 text-xs">
           <Switch
-            aria-label={`启用 ${displayName}`}
+            aria-label={t('set.im.toggleEnableAria', { name: displayName })}
             checked={binding.enabled}
             disabled={busy}
             onCheckedChange={(on) => onPatch({ enabled: on })}
           />
-          <span>启用</span>
+          <span>{t('set.im.enableLabel')}</span>
         </Choice>
         <Choice className="min-h-7 text-xs">
           <Switch
-            aria-label={`延迟收图/文件 ${displayName}`}
+            aria-label={t('set.im.toggleMediaAria', { name: displayName })}
             checked={binding.accept_media}
             disabled={busy}
             onCheckedChange={(on) => onPatch({ accept_media: on })}
           />
-          <span>延迟收图/文件</span>
+          <span>{t('set.im.lazyMediaLabel')}</span>
         </Choice>
         <Choice className="min-h-7 text-xs">
           <Switch
-            aria-label={`接收播报 ${displayName}`}
+            aria-label={t('set.im.toggleNotifyAria', { name: displayName })}
             checked={binding.notify_events}
             disabled={busy}
             onCheckedChange={(on) => onPatch({ notify_events: on })}
           />
-          <span>接收告警/结果播报</span>
+          <span>{t('set.im.notifyEventsLabel')}</span>
         </Choice>
       </div>
     </li>
@@ -261,7 +263,7 @@ export function DiscoveredGroupsSection({
   discovered,
   boundKeys,
   busy,
-  actionLabel = '一键绑定',
+  actionLabel,
   onQuickBind,
 }: {
   discovered: DiscoveredImGroup[];
@@ -270,13 +272,15 @@ export function DiscoveredGroupsSection({
   actionLabel?: string;
   onQuickBind: (group: DiscoveredImGroup) => void;
 }) {
+  const { t } = useI18n();
+  const resolvedActionLabel = actionLabel ?? t('set.im.quickBind');
   const unbound = discovered.filter((group) => !boundKeys.has(`${group.channel}:${group.chat_id}`));
   if (unbound.length === 0) return null;
 
   return (
     <div className="mt-6">
-      <SectionTitle count={unbound.length}>最近发现的未绑定群</SectionTitle>
-      <Note className="mb-3 text-xs">机器人在这些群收到过消息但尚未绑定项目。点击“{actionLabel}”会自动填入通道与群 ID。</Note>
+      <SectionTitle count={unbound.length}>{t('set.im.discoveredTitle')}</SectionTitle>
+      <Note className="mb-3 text-xs">{t('set.im.discoveredNote', { action: resolvedActionLabel })}</Note>
       <div className="grid gap-3 wide:grid-cols-2">
         {unbound.map((group) => (
           <div
@@ -289,13 +293,13 @@ export function DiscoveredGroupsSection({
                 <Mono className="font-medium text-foreground">{group.chat_id}</Mono>
               </div>
               <Button size="sm" variant="secondary" disabled={busy} onClick={() => onQuickBind(group)}>
-                {actionLabel}
+                {resolvedActionLabel}
               </Button>
             </div>
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-xs text-muted-foreground">
-              <span className="tabular-nums">{group.message_count} 条消息</span>
-              <Time at={group.last_seen_at} prefix="最近活跃 " />
-              {group.last_actor ? <span className="wrap-anywhere">最近发言：{group.last_actor}</span> : null}
+              <span className="tabular-nums">{t('set.im.discoveredMsgCount', { count: group.message_count })}</span>
+              <Time at={group.last_seen_at} prefix={t('set.im.discoveredLastSeenPrefix')} />
+              {group.last_actor ? <span className="wrap-anywhere">{t('set.im.discoveredLastActor', { actor: group.last_actor })}</span> : null}
             </div>
             {group.last_text ? (
               <p className="line-clamp-2 border-l-2 border-border pl-2 text-xs text-muted-foreground wrap-anywhere">
@@ -332,6 +336,7 @@ export function GroupBindingSheet({
   onSave: () => void;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const isEdit = editingId !== null;
   const set = (patch: Partial<GroupBindingDraft>) => {
     if (draft) onChange({ ...draft, ...patch });
@@ -341,14 +346,14 @@ export function GroupBindingSheet({
     <Sheet open={open} onOpenChange={(next) => { if (!next && !busy) onClose(); }}>
       {draft ? (
         <SheetContent
-          title={isEdit ? '编辑群聊绑定' : '绑定群聊'}
-          description="配置群聊触发策略、发送者范围、上下文窗口与播报能力。"
+          title={isEdit ? t('set.im.sheetTitleEdit') : t('set.im.sheetTitleCreate')}
+          description={t('set.im.sheetDesc')}
           footer={(
             <>
               <Button type="submit" form="im-group-binding-form" variant="primary" disabled={busy}>
-                {busy ? '保存中' : isEdit ? '保存修改' : '确认绑定'}
+                {busy ? t('set.saving') : isEdit ? t('set.im.saveEditBtn') : t('set.im.confirmBindBtn')}
               </Button>
-              <Button variant="ghost" disabled={busy} onClick={onClose}>取消</Button>
+              <Button variant="ghost" disabled={busy} onClick={onClose}>{t('common.cancel')}</Button>
             </>
           )}
         >
@@ -362,22 +367,22 @@ export function GroupBindingSheet({
             }}
           >
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="通道" hint={isEdit ? '已绑定群聊的通道不可更改。' : '当前群聊绑定支持企业微信；微信暂仅支持私聊。'}>
+              <Field label={t('set.im.fieldChannel')} hint={isEdit ? t('set.im.fieldChannelHintEdit') : t('set.im.fieldChannelHintCreate')}>
                 <Select
-                  aria-label="群聊通道"
+                  aria-label={t('set.im.fieldChannelAria')}
                   value={draft.channel}
                   disabled={busy || isEdit}
                   onChange={(event) => set({ channel: event.target.value as ImChannel })}
                 >
-                  <Option value="wecom">企业微信</Option>
-                  <Option value="weixin" disabled>微信（暂仅支持私聊）</Option>
+                  <Option value="wecom">{t('set.im.channel.wecom')}</Option>
+                  <Option value="weixin" disabled>{t('set.im.channelWeixinDmOnly')}</Option>
                 </Select>
               </Field>
-              <Field label="群 ID" hint={isEdit ? '已绑定群 ID 不可更改。' : '从群消息记录或下方未绑定群列表获取。'}>
+              <Field label={t('set.im.fieldChatId')} hint={isEdit ? t('set.im.fieldChatIdHintEdit') : t('set.im.fieldChatIdHintCreate')}>
                 <Input
-                  aria-label="群 ID"
+                  aria-label={t('set.im.fieldChatId')}
                   className="font-mono text-xs"
-                  placeholder="例如：wr_xxxxxxxx"
+                  placeholder={t('set.im.fieldChatIdPlaceholder')}
                   value={draft.chatId}
                   disabled={busy || isEdit}
                   onChange={(event) => set({ chatId: event.target.value })}
@@ -385,10 +390,10 @@ export function GroupBindingSheet({
               </Field>
             </div>
 
-            <Field label="群备注名" hint="便于在控制台和播报列表中识别这个群。">
+            <Field label={t('set.im.fieldChatName')} hint={t('set.im.fieldChatNameHint')}>
               <Input
-                aria-label="群备注名"
-                placeholder="例如：核心研发告警群"
+                aria-label={t('set.im.fieldChatName')}
+                placeholder={t('set.im.fieldChatNamePlaceholder')}
                 value={draft.chatName}
                 disabled={busy}
                 onChange={(event) => set({ chatName: event.target.value })}
@@ -396,18 +401,18 @@ export function GroupBindingSheet({
             </Field>
 
             {fixedProject ? (
-              <Field label="绑定项目">
-                <Input aria-label="绑定项目" value={fixedProject.name} disabled readOnly />
+              <Field label={t('set.im.fieldProject')}>
+                <Input aria-label={t('set.im.fieldProject')} value={fixedProject.name} disabled readOnly />
               </Field>
             ) : (
-              <Field label="绑定项目" hint="群内触发的消息会路由给该项目的负责人。">
+              <Field label={t('set.im.fieldProject')} hint={t('set.im.fieldProjectHint')}>
                 <Select
-                  aria-label="绑定项目"
+                  aria-label={t('set.im.fieldProject')}
                   value={draft.projectId}
                   disabled={busy}
                   onChange={(event) => set({ projectId: event.target.value })}
                 >
-                  <Option value="">请选择项目</Option>
+                  <Option value="">{t('set.im.fieldProjectPlaceholder')}</Option>
                   {(projects ?? []).map((project) => (
                     <Option key={project.id} value={project.id}>{project.name}</Option>
                   ))}
@@ -417,29 +422,29 @@ export function GroupBindingSheet({
 
             <Choice className="items-center">
               <Switch
-                aria-label="启用群聊绑定"
+                aria-label={t('set.im.fieldEnableAria')}
                 checked={draft.enabled}
                 disabled={busy}
                 onCheckedChange={(on) => set({ enabled: on })}
               />
-              <span>启用该群聊绑定</span>
+              <span>{t('set.im.fieldEnableLabel')}</span>
             </Choice>
 
             <Field
-              label="触发策略"
+              label={t('set.im.fieldTriggerMode')}
               hint={
                 draft.channel === 'wecom'
-                  ? '“仅 @ 机器人”只在被 @ 时响应。注：企业微信智能机器人目前仅在群内被 @ 时推送回调，收不到未 @ 的普通群消息；快通道规则仅对支持全量群消息推送的通道生效。'
-                  : '“仅 @ 机器人”只在被 @ 时响应（慢通道）；“@ 或快通道规则”在命中关键词/正则时也会自动响应。'
+                  ? t('set.im.fieldTriggerHintWecom')
+                  : t('set.im.fieldTriggerHintOther')
               }
             >
               <Segmented
-                label="触发策略"
+                label={t('set.im.fieldTriggerMode')}
                 value={draft.triggerMode}
                 disabled={busy}
                 options={[
-                  { value: 'mention_only', label: '仅 @ 机器人' },
-                  { value: 'mention_or_rules', label: '@ 或快通道规则' },
+                  { value: 'mention_only', label: t('set.im.triggerMentionOnly') },
+                  { value: 'mention_or_rules', label: t('set.im.triggerMentionOrRules') },
                 ]}
                 onChange={(value) => set({ triggerMode: value })}
               />
@@ -447,14 +452,14 @@ export function GroupBindingSheet({
 
             {draft.triggerMode === 'mention_or_rules' ? (
               <Field
-                label="快通道关键词 / 正则列表"
-                hint="每行一条，命中任意一条即把整条消息连同上下文送入项目对话。正则须用 /pattern/flags 写法（如 /error|panic/i），其余按不区分大小写的关键词包含匹配。"
+                label={t('set.im.fieldRules')}
+                hint={t('set.im.fieldRulesHint')}
               >
                 <Textarea
-                  aria-label="快通道关键词或正则"
+                  aria-label={t('set.im.fieldRulesAria')}
                   rows={3}
                   className="font-mono text-xs"
-                  placeholder={'P0告警\n/error|panic/i'}
+                  placeholder={t('set.im.fieldRulesPlaceholder')}
                   value={draft.ruleKeywordsText}
                   disabled={busy}
                   onChange={(event) => set({ ruleKeywordsText: event.target.value })}
@@ -463,16 +468,16 @@ export function GroupBindingSheet({
             ) : null}
 
             <Field
-              label="发送者策略"
-              hint="控制群里哪些成员发出的消息可以触发机器人。"
+              label={t('set.im.fieldSenderPolicy')}
+              hint={t('set.im.fieldSenderPolicyHint')}
             >
               <Segmented
-                label="发送者策略"
+                label={t('set.im.fieldSenderPolicy')}
                 value={draft.allowAllSenders ? 'all' : 'whitelist'}
                 disabled={busy}
                 options={[
-                  { value: 'whitelist', label: '仅白名单/指定发送者' },
-                  { value: 'all', label: '允许群内全员' },
+                  { value: 'whitelist', label: t('set.im.senderWhitelistOption') },
+                  { value: 'all', label: t('set.im.sendersAll') },
                 ]}
                 onChange={(value) => set({ allowAllSenders: value === 'all' })}
               />
@@ -480,14 +485,14 @@ export function GroupBindingSheet({
 
             {!draft.allowAllSenders ? (
               <Field
-                label="额外允许的发送者"
-                hint="每行填写一个成员 ID（主人默认放行，留空表示仅主人可触发）。"
+                label={t('set.im.fieldAllowedSenders')}
+                hint={t('set.im.fieldAllowedSendersHint')}
               >
                 <Textarea
-                  aria-label="额外允许的发送者"
+                  aria-label={t('set.im.fieldAllowedSenders')}
                   rows={2}
                   className="font-mono text-xs"
-                  placeholder="每行一个发送者 ID"
+                  placeholder={t('set.im.fieldAllowedSendersPlaceholder')}
                   value={draft.allowedSendersText}
                   disabled={busy}
                   onChange={(event) => set({ allowedSendersText: event.target.value })}
@@ -496,9 +501,9 @@ export function GroupBindingSheet({
             ) : null}
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="冷却合并窗口（秒）" hint={`窗口内连续触发合并处理，范围 ${IM_COOLDOWN_MIN}～${IM_COOLDOWN_MAX} 秒，默认 15 秒。`}>
+              <Field label={t('set.im.fieldCooldown')} hint={t('set.im.fieldCooldownHint', { min: IM_COOLDOWN_MIN, max: IM_COOLDOWN_MAX })}>
                 <Input
-                  aria-label="冷却合并窗口（秒）"
+                  aria-label={t('set.im.fieldCooldown')}
                   type="number"
                   min={IM_COOLDOWN_MIN}
                   max={IM_COOLDOWN_MAX}
@@ -508,9 +513,9 @@ export function GroupBindingSheet({
                   onChange={(event) => set({ cooldownSeconds: event.target.value })}
                 />
               </Field>
-              <Field label="群内联上下文条数" hint={`触发时附带该群最近聊天条数，范围 ${IM_INLINE_CONTEXT_MIN}～${IM_INLINE_CONTEXT_MAX} 条，默认 10 条。`}>
+              <Field label={t('set.im.fieldContextCount')} hint={t('set.im.fieldContextCountHint', { min: IM_INLINE_CONTEXT_MIN, max: IM_INLINE_CONTEXT_MAX })}>
                 <Input
-                  aria-label="群内联上下文条数"
+                  aria-label={t('set.im.fieldContextCount')}
                   type="number"
                   min={IM_INLINE_CONTEXT_MIN}
                   max={IM_INLINE_CONTEXT_MAX}
@@ -524,32 +529,32 @@ export function GroupBindingSheet({
 
             <Choice className="items-start">
               <Switch
-                aria-label="延迟接收群图片或文件"
+                aria-label={t('set.im.fieldMediaAria')}
                 className="mt-1"
                 checked={draft.acceptMedia}
                 disabled={busy}
                 onCheckedChange={(on) => set({ acceptMedia: on })}
               />
               <span className="py-0.5">
-                延迟接收群图片/文件
+                {t('set.im.fieldMediaLabel')}
                 <span className="mt-0.5 block text-xs text-muted-foreground">
-                  仅在群聊实际触发时才拉取近期图片与文件，避免无关闲聊占用带宽与存储。
+                  {t('set.im.fieldMediaHint')}
                 </span>
               </span>
             </Choice>
 
             <Choice className="items-start">
               <Switch
-                aria-label="接收告警与结果播报"
+                aria-label={t('set.im.fieldNotifyAria')}
                 className="mt-1"
                 checked={draft.notifyEvents}
                 disabled={busy}
                 onCheckedChange={(on) => set({ notifyEvents: on })}
               />
               <span className="py-0.5">
-                接收告警/结果播报
+                {t('set.im.notifyEventsLabel')}
                 <span className="mt-0.5 block text-xs text-muted-foreground">
-                  允许入站来源与项目触发器把处理结论同步播报到该群。
+                  {t('set.im.fieldNotifyHint')}
                 </span>
               </span>
             </Choice>
@@ -563,6 +568,7 @@ export function GroupBindingSheet({
 }
 
 export function GroupBindingsManager() {
+  const { t } = useI18n();
   const { data, isPending, error: unread } = useQuery(imGroupsQuery);
   const client = useQueryClient();
   const [editing, setEditing] = useState<{ id: string | null; draft: GroupBindingDraft } | null>(null);
@@ -599,7 +605,7 @@ export function GroupBindingsManager() {
       () => (editing.id === null
         ? post('/api/im/groups', parsed.body)
         : put(`/api/im/groups/${encodeURIComponent(editing.id)}`, parsed.body)),
-      editing.id === null ? '已绑定群聊' : '已保存群聊配置',
+      editing.id === null ? t('set.im.boundNotice') : t('set.im.savedNotice'),
     );
     if (done) setEditing(null);
   }
@@ -617,17 +623,17 @@ export function GroupBindingsManager() {
   const boundKeys = new Set(bindings.map((b) => `${b.channel}:${b.chat_id}`));
 
   return (
-    <section aria-label="群聊绑定管理" className="grid gap-4">
+    <section aria-label={t('set.im.managerAria')} className="grid gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <Note>将企业微信或微信群聊绑定到指定项目，支持 @ 触发与关键词快通道、发送者白名单及告警播报。</Note>
+          <Note>{t('set.im.managerLead')}</Note>
         </div>
         <Button variant="primary" size="sm" disabled={busy || !data} onClick={() => openCreate()}>
-          <Plus />绑定群聊
+          <Plus />{t('set.im.sheetTitleCreate')}
         </Button>
       </div>
 
-      {unread ? <Problem role="alert">{`读不到群聊绑定：${unread.message}`}</Problem> : null}
+      {unread ? <Problem role="alert">{t('set.im.loadFailed', { reason: unread.message })}</Problem> : null}
       {!editing && !confirming && error ? <Problem role="alert">{error}</Problem> : null}
       {statusNote ? <span role="status" className="text-xs text-success-foreground">{statusNote}</span> : null}
       {isPending ? <Skeleton className="h-28" /> : null}
@@ -636,9 +642,9 @@ export function GroupBindingsManager() {
         <>
           {bindings.length > 0 ? (
             <div>
-              <SectionTitle count={bindings.length}>已绑定群聊</SectionTitle>
+              <SectionTitle count={bindings.length}>{t('set.im.boundListTitle')}</SectionTitle>
               <Rows>
-                <ul aria-label="已绑定群聊" className="divide-y divide-border">
+                <ul aria-label={t('set.im.boundListTitle')} className="divide-y divide-border">
                   {bindings.map((binding) => (
                     <GroupBindingRow
                       key={binding.id}
@@ -647,7 +653,7 @@ export function GroupBindingsManager() {
                       busy={busy}
                       onPatch={(patch) => void act(
                         () => put(`/api/im/groups/${encodeURIComponent(binding.id)}`, bindingToPayload(binding, patch)),
-                        '已更新群聊设置',
+                        t('set.im.updatedNotice'),
                       )}
                       onEdit={() => {
                         setEditing({ id: binding.id, draft: groupBindingDraftOf(binding) });
@@ -663,8 +669,8 @@ export function GroupBindingsManager() {
               </Rows>
             </div>
           ) : (
-            <Empty icon={<Users />} title="还没有绑定群聊">
-              把机器人拉进企业微信或微信群并发送消息后，群聊会自动出现在下方“最近发现的未绑定群”，也可以点右上角“绑定群聊”手动添加。
+            <Empty icon={<Users />} title={t('set.im.emptyTitle')}>
+              {t('set.im.emptyDesc')}
             </Empty>
           )}
 
@@ -695,14 +701,14 @@ export function GroupBindingsManager() {
 
       <Confirm
         open={confirming !== null}
-        title={`解绑群聊 ${confirming?.chat_name || confirming?.chat_id || ''}？`}
-        description="解绑后机器人不再响应这个群的消息，也不会向该群播报告警或结果。项目历史记录不受影响。"
-        confirm="确认解绑"
+        title={t('set.im.unbindConfirmTitle', { name: confirming?.chat_name || confirming?.chat_id || '' })}
+        description={t('set.im.unbindConfirmDesc')}
+        confirm={t('set.im.unbindConfirmBtn')}
         busy={busy}
         error={confirming ? error : null}
         onConfirm={() => {
           if (!confirming) return;
-          void act(() => del(`/api/im/groups/${encodeURIComponent(confirming.id)}`), '已解绑群聊').then((done) => {
+          void act(() => del(`/api/im/groups/${encodeURIComponent(confirming.id)}`), t('set.im.unboundNotice')).then((done) => {
             if (done) setConfirming(null);
           });
         }}
@@ -714,54 +720,52 @@ export function GroupBindingsManager() {
 
 interface CapabilitySpec {
   suffix: 'chat' | 'notify' | 'approveLogin';
-  label: string;
-  hint: (channel: ImChannel) => string;
+  labelKey: string;
+  hintKey: (channel: ImChannel) => string;
 }
 
 const CAPABILITIES: readonly CapabilitySpec[] = [
   {
     suffix: 'chat',
-    label: '项目对话',
-    hint: (ch) => (ch === 'wecom'
-      ? '允许通过企业微信私聊与绑定群向项目负责人发送消息。'
-      : '允许通过微信私聊与绑定群向项目负责人发送消息。'),
+    labelKey: 'set.im.cap.chat',
+    hintKey: (ch) => (ch === 'wecom' ? 'set.im.cap.chatHintWecom' : 'set.im.cap.chatHintWeixin'),
   },
   {
     suffix: 'notify',
-    label: '主动通知',
-    hint: () => '任务就绪、阻塞提问、异常告警与触发器终稿主动推送到该通道。',
+    labelKey: 'set.im.cap.notify',
+    hintKey: () => 'set.im.cap.notifyHint',
   },
   {
     suffix: 'approveLogin',
-    label: '放行控制台登录',
-    hint: (ch) => (ch === 'wecom'
-      ? '允许在企业微信私聊发送「登录 123456」放行新设备登录控制台。'
-      : '允许在微信私聊发送「登录 123456」放行新设备登录控制台。'),
+    labelKey: 'set.im.cap.approveLogin',
+    hintKey: (ch) => (ch === 'wecom' ? 'set.im.cap.approveLoginHintWecom' : 'set.im.cap.approveLoginHintWeixin'),
   },
 ];
 
 function wecomStatusInfo(
   wecom: { connected?: boolean; error?: string | null } | null | undefined,
   configured: boolean,
+  t: ReturnType<typeof useI18n>['t'],
 ): { tone: Tone; label: string; detail?: string } {
-  if (wecom?.error) return { tone: 'failed', label: '连接异常', detail: wecom.error };
-  if (wecom?.connected) return { tone: 'success', label: '已连接' };
-  if (configured) return { tone: 'waiting', label: '重连中' };
-  return { tone: 'ended', label: '未配置' };
+  if (wecom?.error) return { tone: 'failed', label: t('set.im.statusError'), detail: wecom.error };
+  if (wecom?.connected) return { tone: 'success', label: t('set.connected') };
+  if (configured) return { tone: 'waiting', label: t('set.im.statusReconnecting') };
+  return { tone: 'ended', label: t('set.im.statusUnconfigured') };
 }
 
 function weixinStatusInfo(
   weixin: { state: string; error?: string | null } | null | undefined,
+  t: ReturnType<typeof useI18n>['t'],
 ): { tone: Tone; label: string; detail?: string } {
-  if (!weixin || weixin.state === 'disconnected') return { tone: 'ended', label: '未连接' };
+  if (!weixin || weixin.state === 'disconnected') return { tone: 'ended', label: t('set.im.statusDisconnected') };
   if (weixin.error || weixin.state === 'error') {
-    return { tone: 'failed', label: '连接异常', detail: weixin.error ?? undefined };
+    return { tone: 'failed', label: t('set.im.statusError'), detail: weixin.error ?? undefined };
   }
-  if (weixin.state === 'connected') return { tone: 'success', label: '已连接' };
+  if (weixin.state === 'connected') return { tone: 'success', label: t('set.connected') };
   if (weixin.state === 'waiting' || weixin.state === 'scanned' || weixin.state === 'pin_required') {
-    return { tone: 'waiting', label: '等待扫码确认' };
+    return { tone: 'waiting', label: t('set.im.statusWaitingScan') };
   }
-  if (weixin.state === 'expired') return { tone: 'waiting', label: '二维码已过期' };
+  if (weixin.state === 'expired') return { tone: 'waiting', label: t('set.im.statusQrExpired') };
   return { tone: 'ended', label: weixin.state };
 }
 
@@ -796,8 +800,9 @@ function ChannelOverviewCard({
   errors: Record<string, string | undefined>;
   onToggleCapability: (key: string, nextValue: boolean) => void;
 }) {
+  const { t } = useI18n();
   return (
-    <Card aria-label={`${title} 通道权限`} className="flex flex-col gap-3.5 p-5">
+    <Card aria-label={t('set.im.cardAria', { title })} className="flex flex-col gap-3.5 p-5">
       <header className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -818,8 +823,8 @@ function ChannelOverviewCard({
       </header>
 
       <div className="border-t border-border/80 pt-3">
-        <p className="mb-2 text-xs font-medium text-muted-foreground">能力权限矩阵</p>
-        <ul aria-label={`${title}能力权限`} className="grid divide-y divide-border/60">
+        <p className="mb-2 text-xs font-medium text-muted-foreground">{t('set.im.capMatrixTitle')}</p>
+        <ul aria-label={t('set.im.capListAria', { title })} className="grid divide-y divide-border/60">
           {CAPABILITIES.map((cap) => {
             const key = `im.${channel}.${cap.suffix}`;
             const item = settings.find((setting) => setting.key === key);
@@ -827,19 +832,20 @@ function ChannelOverviewCard({
             const isSaving = saving === key;
             const isSaved = saved === key;
             const failure = errors[key];
+            const capLabel = t(cap.labelKey);
             return (
               <li key={key} id={`setting-${key}`} className="py-2.5 first:pt-0 last:pb-0">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">{cap.label}</span>
-                      {isSaving ? <span className="text-xs text-muted-foreground">保存中…</span> : null}
-                      {isSaved ? <span role="status" className="text-xs text-success-foreground">已保存</span> : null}
+                      <span className="text-sm font-medium">{capLabel}</span>
+                      {isSaving ? <span className="text-xs text-muted-foreground">{t('common.saving')}</span> : null}
+                      {isSaved ? <span role="status" className="text-xs text-success-foreground">{t('common.saved')}</span> : null}
                     </div>
-                    <Note className="mt-0.5 text-xs">{cap.hint(channel)}</Note>
+                    <Note className="mt-0.5 text-xs">{t(cap.hintKey(channel))}</Note>
                   </div>
                   <Switch
-                    aria-label={`${title} · ${cap.label}`}
+                    aria-label={`${title} · ${capLabel}`}
                     checked={checked}
                     disabled={busy}
                     onCheckedChange={(on) => onToggleCapability(key, on)}
@@ -855,11 +861,11 @@ function ChannelOverviewCard({
   );
 }
 
-const TABS: { id: ImChannelsTab; label: string; icon: ComponentType<{ className?: string }> }[] = [
-  { id: 'overview', label: '总览与权限', icon: ShieldCheck },
-  { id: 'wecom', label: '企业微信配置', icon: Building2 },
-  { id: 'weixin', label: '微信连接', icon: MessageCircle },
-  { id: 'groups', label: '群聊绑定', icon: Users },
+const TABS: { id: ImChannelsTab; labelKey: string; icon: ComponentType<{ className?: string }> }[] = [
+  { id: 'overview', labelKey: 'set.im.tab.overview', icon: ShieldCheck },
+  { id: 'wecom', labelKey: 'set.im.tab.wecom', icon: Building2 },
+  { id: 'weixin', labelKey: 'set.im.tab.weixin', icon: MessageCircle },
+  { id: 'groups', labelKey: 'set.im.tab.groups', icon: Users },
 ];
 
 export function ImChannelsPanel({
@@ -885,6 +891,7 @@ export function ImChannelsPanel({
   errors: Record<string, string | undefined>;
   onToggleCapability: (key: string, nextValue: boolean) => void;
 }) {
+  const { t } = useI18n();
   const [tab, setTab] = useState<ImChannelsTab>(initialTab);
   const [prevNavSeq, setPrevNavSeq] = useState(navSeq);
   if (prevNavSeq !== navSeq) {
@@ -894,8 +901,8 @@ export function ImChannelsPanel({
 
   const queryClient = useQueryClient();
   const { data: serviceState } = useQuery(stateQuery);
-  const wecomStatus = wecomStatusInfo(serviceState?.channels?.wecom, wecomConfigured);
-  const weixinStatus = weixinStatusInfo(serviceState?.channels?.weixin);
+  const wecomStatus = wecomStatusInfo(serviceState?.channels?.wecom, wecomConfigured, t);
+  const weixinStatus = weixinStatusInfo(serviceState?.channels?.weixin, t);
   const [reconnecting, setReconnecting] = useState(false);
   const [reconnectError, setReconnectError] = useState<string | null>(null);
   const [reconnectOk, setReconnectOk] = useState(false);
@@ -924,10 +931,10 @@ export function ImChannelsPanel({
     <div className="mt-2">
       <div
         role="tablist"
-        aria-label="消息通道分组"
+        aria-label={t('set.im.tabsAria')}
         className="sticky top-0 z-10 -mx-1 mb-5 flex items-center gap-1 overflow-x-auto border-b border-border bg-background/95 px-1 pt-0.5 pb-2 backdrop-blur-xs"
       >
-        {TABS.map(({ id, label, icon: Icon }) => {
+        {TABS.map(({ id, labelKey, icon: Icon }) => {
           const active = tab === id;
           return (
             <button
@@ -946,7 +953,7 @@ export function ImChannelsPanel({
               )}
             >
               <Icon className="size-3.5 flex-none" aria-hidden="true" />
-              <span>{label}</span>
+              <span>{t(labelKey)}</span>
             </button>
           );
         })}
@@ -962,10 +969,10 @@ export function ImChannelsPanel({
           <div className="grid gap-4 wide:grid-cols-2">
             <ChannelOverviewCard
               channel="wecom"
-              title="企业微信"
-              summary="企业微信智能机器人长连接，适合团队群协作、运维告警播报与私聊放行。"
+              title={t('set.im.channel.wecom')}
+              summary={t('set.im.wecomSummary')}
               status={wecomStatus}
-              setupLabel="配置参数"
+              setupLabel={t('set.im.wecomSetupBtn')}
               onOpenSetup={() => setTab('wecom')}
               action={canReconnectWecom ? (
                 <Button
@@ -975,13 +982,13 @@ export function ImChannelsPanel({
                   onClick={() => void handleReconnectWecom()}
                 >
                   <RefreshCw className={cn('size-3.5', reconnecting && 'animate-spin')} aria-hidden="true" />
-                  {reconnecting ? '重连中…' : '重新连接'}
+                  {reconnecting ? t('set.im.reconnectingBtn') : t('set.im.reconnectBtn')}
                 </Button>
               ) : null}
               actionFeedback={
                 <>
                   {reconnectError ? <Problem role="alert" className="mt-1.5 text-xs">{reconnectError}</Problem> : null}
-                  {reconnectOk ? <Note role="status" className="mt-1.5 text-xs text-success-foreground">已发起企微重连，请稍候查看连接状态。</Note> : null}
+                  {reconnectOk ? <Note role="status" className="mt-1.5 text-xs text-success-foreground">{t('set.im.wecomReconnectSent')}</Note> : null}
                 </>
               }
               settings={settings}
@@ -993,10 +1000,10 @@ export function ImChannelsPanel({
             />
             <ChannelOverviewCard
               channel="weixin"
-              title="微信"
-              summary="扫码连接微信 ClawBot，支持私聊项目对话，并支持私聊发送「登录 123456」放行控制台登录。"
+              title={t('set.im.channel.weixin')}
+              summary={t('set.im.weixinSummary')}
               status={weixinStatus}
-              setupLabel="扫码连接"
+              setupLabel={t('set.im.weixinSetupBtn')}
               onOpenSetup={() => setTab('weixin')}
               settings={settings}
               busy={busy}
@@ -1008,7 +1015,7 @@ export function ImChannelsPanel({
           </div>
 
           <Callout tone="plain" className="text-xs text-muted-foreground">
-            统一消息网关已按通道解耦：所有 IM 通道共用同一套权限矩阵、群聊绑定与消息路由能力，后续接入飞书 / 钉钉等适配器可无缝挂载到此处。
+            {t('set.im.gatewayNote')}
           </Callout>
         </div>
       ) : null}
@@ -1019,7 +1026,7 @@ export function ImChannelsPanel({
           id="im-channels-panel-wecom"
           aria-labelledby="im-channels-tab-wecom"
         >
-          <Note className="mb-4">改完即时生效；Secret 仅保存在本机，保存后自动按新凭据重连。</Note>
+          <Note className="mb-4">{t('set.im.wecomConfigNote')}</Note>
           {wecomConfig}
         </div>
       ) : null}

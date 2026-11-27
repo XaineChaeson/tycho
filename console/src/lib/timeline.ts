@@ -1,6 +1,8 @@
+import { t } from '@shared/i18n.ts';
 import type { DiagnosticLevel, FileChange, NormalizedEvent, ToolCall, ToolOutput } from './types.ts';
 
 const MAX_BUFFERED = 2000;
+const MAX_RETAINED_EVENTS = 2500;
 const FIRST_RETRY_MS = 1000;
 const MAX_RETRY_MS = 30_000;
 
@@ -180,12 +182,28 @@ export function groupSummary(tools: readonly ToolRow[]): string {
   const runs = tools.filter((row) => row.call.category === 'run').length;
   const others = tools.length - reads.length - searches - edits.length - runs;
   const parts: string[] = [];
-  if (reads.length) parts.push(files === reads.length ? `读取 ${files} 个文件` : files ? `读取 ${reads.length} 次，${files} 个文件` : `读取 ${reads.length} 次`);
-  if (searches) parts.push(`搜索 ${searches} 次`);
-  if (edits.length) parts.push(editFiles === edits.length ? `修改 ${editFiles} 个文件` : editFiles ? `修改 ${edits.length} 次，${editFiles} 个文件` : `修改 ${edits.length} 次`);
-  if (runs) parts.push(`命令 ${runs} 次`);
-  if (others) parts.push(`工具 ${others} 次`);
-  return parts.join('，');
+  if (reads.length) {
+    parts.push(
+      files === reads.length
+        ? t('tsk.timeline.readFiles', { files })
+        : files
+          ? t('tsk.timeline.readCallsAndFiles', { calls: reads.length, files })
+          : t('tsk.timeline.readCalls', { calls: reads.length }),
+    );
+  }
+  if (searches) parts.push(t('tsk.timeline.searchCalls', { count: searches }));
+  if (edits.length) {
+    parts.push(
+      editFiles === edits.length
+        ? t('tsk.timeline.editFiles', { files: editFiles })
+        : editFiles
+          ? t('tsk.timeline.editCallsAndFiles', { calls: edits.length, files: editFiles })
+          : t('tsk.timeline.editCalls', { calls: edits.length }),
+    );
+  }
+  if (runs) parts.push(t('tsk.timeline.runCalls', { count: runs }));
+  if (others) parts.push(t('tsk.timeline.otherCalls', { count: others }));
+  return parts.join(t('tsk.timeline.listSep'));
 }
 
 // On an ended round that already has a structured receipt card below, the very last text
@@ -205,7 +223,10 @@ export function hasVisibleNarrative(rows: readonly TimelineRow[], hasReceipt: bo
 export function diagnosticsSummary(diagnostics: readonly Diagnostic[]): string {
   const warnings = diagnostics.filter((each) => each.level === 'warning').length;
   const retries = diagnostics.filter((each) => each.level === 'recovering').reduce((total, each) => total + each.count, 0);
-  return [warnings ? `执行器告警 ${warnings} 条` : '', retries ? `受阻重试 ${retries} 次` : ''].filter(Boolean).join('，');
+  return [
+    warnings ? t('tsk.timeline.warningsCount', { count: warnings }) : '',
+    retries ? t('tsk.timeline.retriesCount', { count: retries }) : '',
+  ].filter(Boolean).join(t('tsk.timeline.listSep'));
 }
 
 // The snapshot is authoritative after a reconnect; events during a failed read can be discarded.
@@ -220,24 +241,35 @@ export function createTimelineReader<T, E>({ load, onLoad, onEvent, onStatus, sc
   let state: 'idle' | 'reading' | 'ready' | 'retrying' | 'closed' = 'idle';
   let buffered: E[] = [];
   let omitted = false;
+  let reread = false;
   let backoff = FIRST_RETRY_MS;
   let timer: unknown;
   const closed = (): boolean => state === 'closed';
   async function read(): Promise<void> {
-    if (state === 'reading' || state === 'closed') return;
+    if (state === 'closed') return;
+    if (state === 'reading') {
+      // A terminal transition or reconnect arrived mid-read: queue one trailing read so
+      // final events committed after the in-flight snapshot started are never lost.
+      reread = true;
+      return;
+    }
     if (timer !== undefined) { cancel(timer); timer = undefined; }
-    state = 'reading'; buffered = [];
+    state = 'reading'; buffered = []; reread = false;
     try {
       const result = await load();
       if (closed()) return;
       onLoad(result);
       for (const event of buffered) onEvent(event);
       buffered = []; state = 'ready'; backoff = FIRST_RETRY_MS;
-      onStatus(omitted ? '较早的事件已省略' : '');
+      onStatus(omitted ? t('tsk.timeline.earlierOmitted') : '');
+      if (reread) {
+        reread = false;
+        void read();
+      }
     } catch {
       if (closed()) return;
-      buffered = []; state = 'retrying';
-      onStatus(`现场读取失败，重试中${omitted ? ' · 较早的事件已省略' : ''}`);
+      buffered = []; state = 'retrying'; reread = false;
+      onStatus(omitted ? t('tsk.timeline.readFailedRetryingOmitted') : t('tsk.timeline.readFailedRetrying'));
       timer = schedule(() => { timer = undefined; void read(); }, backoff);
       backoff = Math.min(backoff * 2, MAX_RETRY_MS);
     }
@@ -251,7 +283,8 @@ export function createTimelineReader<T, E>({ load, onLoad, onEvent, onStatus, sc
       } else if (state === 'ready') onEvent(event);
     },
     bufferedCount: (): number => buffered.length,
-    close(): void { state = 'closed'; buffered = []; if (timer !== undefined) cancel(timer); },
+    isRetrying: (): boolean => state === 'retrying',
+    close(): void { state = 'closed'; buffered = []; reread = false; if (timer !== undefined) cancel(timer); },
   };
 }
 
@@ -282,16 +315,29 @@ export function createRunEvents<E>({ load, onChange, onStatus, schedule = later,
   let status = '';
   const end = (): number => base + events.length;
   function report(): void {
-    const next = failed ? '现场读取失败，重试中' : omitted ? '较早的事件已省略' : '';
+    const next = failed ? t('tsk.timeline.readFailedRetrying') : omitted ? t('tsk.timeline.earlierOmitted') : '';
     if (next !== status) { status = next; onStatus(next); }
   }
   function accept(index: number, event: E): void {
     if (index >= end()) waiting.set(index, event);
     if (waiting.size > MAX_BUFFERED) { waiting.delete(waiting.keys().next().value!); omitted = true; }
-    while (waiting.has(end())) {
-      const next = end();
-      // A new array each time: what reads it tells a change by identity.
-      events = [...events, waiting.get(next)!]; waiting.delete(next);
+    let appended: E[] | null = null;
+    while (waiting.has(end() + (appended?.length ?? 0))) {
+      const next = end() + (appended?.length ?? 0);
+      if (!appended) appended = [];
+      appended.push(waiting.get(next)!);
+      waiting.delete(next);
+    }
+    if (appended) {
+      const combined = [...events, ...appended];
+      if (combined.length > MAX_RETAINED_EVENTS) {
+        const drop = combined.length - MAX_RETAINED_EVENTS;
+        events = combined.slice(drop);
+        base += drop;
+        omitted = true;
+      } else {
+        events = combined;
+      }
     }
   }
   function adopt(snapshot: EventsSnapshot<E>): void { events = snapshot.events; base = snapshot.first_index ?? 0; }
@@ -339,18 +385,27 @@ export function createRunEvents<E>({ load, onChange, onStatus, schedule = later,
   };
 }
 
+const BRIEF_GOAL_HEADINGS = ['目标', '被审目标', 'Goal', 'Reviewed Goal'] as const; // i18n-ignore
+const BRIEF_ACCEPTANCE_HEADINGS = ['验收标准', 'Acceptance Criteria', 'Acceptance'] as const; // i18n-ignore
+
 export function dispatchSummary(
   task: { revision?: number; goal?: string; acceptance?: string | null },
   run: { task_revision: number },
   snapshot?: { brief?: string },
 ): { goal: string; acceptance: string; brief: string } {
   const brief = snapshot?.brief;
-  const section = (name: string): string | undefined => brief?.match(new RegExp(`## ${name}\\n\\n([\\s\\S]*?)(?=\\n## |$)`))?.[1]?.trim();
+  const section = (names: readonly string[]): string | undefined => {
+    for (const name of names) {
+      const match = brief?.match(new RegExp(`## ${name}\\n\\n([\\s\\S]*?)(?=\\n## |$)`))?.[1]?.trim();
+      if (match) return match;
+    }
+    return undefined;
+  };
   const sameRevision = run.task_revision === task.revision;
   return {
-    goal: section('目标') || section('被审目标') || (sameRevision ? task.goal : null) || '该轮派发说明未记录目标摘要',
-    acceptance: section('验收标准') || (sameRevision ? task.acceptance : null) || '该轮派发说明未记录验收摘要',
-    brief: brief ?? '快照没有 brief',
+    goal: section(BRIEF_GOAL_HEADINGS) || (sameRevision ? task.goal : null) || t('tsk.timeline.noGoalSummary'),
+    acceptance: section(BRIEF_ACCEPTANCE_HEADINGS) || (sameRevision ? task.acceptance : null) || t('tsk.timeline.noAcceptanceSummary'),
+    brief: brief ?? t('tsk.timeline.noBrief'),
   };
 }
 

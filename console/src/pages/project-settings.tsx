@@ -30,6 +30,7 @@ import { Option, Select } from '@/components/ui/select';
 import { useChange } from '@/hooks/use-change';
 import { useProjectFlag } from '@/hooks/use-project-flag';
 import { messageOf, put } from '@/lib/api';
+import { useI18n, type TranslationParams } from '@/lib/i18n';
 import { changed, draftOf, machinesGoneText, machinesMoved, projectBody, sameNames, withName, withoutName, withProject, type ProjectDraft } from '@/lib/projects';
 import { accountsQuery, projectsQuery } from '@/lib/queries';
 import { loginChoices } from '@/lib/logins';
@@ -63,7 +64,10 @@ interface LoginMeta {
   supportsTier: (tierId: TierId) => boolean;
 }
 
-function buildLoginMetaMap(options: AccountsAndMachines | undefined): Map<string, LoginMeta> {
+function buildLoginMetaMap(
+  options: AccountsAndMachines | undefined,
+  t: (key: string, params?: TranslationParams) => string,
+): Map<string, LoginMeta> {
   const map = new Map<string, LoginMeta>();
   if (!options) return map;
   const tiersOf = (raw: Record<string, unknown> | undefined): { configured: TierId[]; supports: (tierId: TierId) => boolean } => {
@@ -90,7 +94,7 @@ function buildLoginMetaMap(options: AccountsAndMachines | undefined): Map<string
     for (const login of machine.logins ?? []) {
       if (!login.configured || login.id === null) continue;
       const info = tiersOf(login.tiers as Record<string, unknown> | undefined);
-      const label = login.account_label ?? (login.route_label ? `线路 ${login.route_label}` : undefined);
+      const label = login.account_label ?? (login.route_label ? t('proj.settings.routeLabel', { label: login.route_label }) : undefined);
       const full = loginName({ name: login.name, machine: machine.id, executor: login.executor });
       const short = [label, login.executor, machine.id].filter(Boolean).join(' · ');
       map.set(login.id, {
@@ -216,6 +220,7 @@ function LoginChoice({ login, checked, busy, readOnly = false, onToggle }: { log
 }
 
 export function ProjectSettings({ project }: { project: Project }) {
+  const { t } = useI18n();
   const { data: options } = useQuery(accountsQuery);
   const navigate = useNavigate();
   const change = useChange<Project[]>({ mutationKey: CHANGE, queryKey: projectsQuery.queryKey, reread: true });
@@ -254,7 +259,7 @@ export function ProjectSettings({ project }: { project: Project }) {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [dirty]);
   const allLogins = loginChoices(options);
-  const metaByLoginId = buildLoginMetaMap(options);
+  const metaByLoginId = buildLoginMetaMap(options, t);
   const controllerLogins = options ? [
     ...options.accounts.filter((login) => login.can_route),
     ...options.machines.flatMap((machine) => (machine.logins ?? []).filter((login) => login.can_route && login.configured && login.id !== null)),
@@ -264,7 +269,7 @@ export function ProjectSettings({ project }: { project: Project }) {
   // the project's own ids are all that is known. Either way a login the project names that is
   // no longer there is one more row, marked as deleted.
   const loginRows: LoginRow[] = options === undefined
-    ? shown.logins.map((id) => ({ id, name: '登录信息未读到', unread: true }))
+    ? shown.logins.map((id) => ({ id, name: t('proj.settings.loginUnread'), unread: true }))
     : [
         ...allLogins.map((login) => {
           const meta = metaByLoginId.get(login.id);
@@ -275,7 +280,7 @@ export function ProjectSettings({ project }: { project: Project }) {
             tiers: meta?.tiers,
           };
         }),
-        ...shown.logins.filter((id) => !allLogins.some((login) => login.id === id)).map((id) => ({ id, name: '已删除的登录' })),
+        ...shown.logins.filter((id) => !allLogins.some((login) => login.id === id)).map((id) => ({ id, name: t('proj.settings.loginDeleted') })),
       ];
 
   const allowedLoginIds: Set<string> | null = shown.loginMode === 'selected'
@@ -311,18 +316,19 @@ export function ProjectSettings({ project }: { project: Project }) {
   // What deleting would take, as the service counts it; the same answer tells whether the
   // section offers the step at all.
   const deletion = project.deletable;
-  const archiveNote = '收起来不再接活，侧栏和企微里不再出现，记录都保留，随时可以恢复'
-    + (notDone > 0 ? `。还有 ${notDone} 项工作没结束：在跑的那一轮会做完，其余停在原地，恢复后接着做` : '');
+  const archiveDescription = notDone > 0
+    ? t('proj.settings.archiveNoteUnfinished', { count: notDone })
+    : t('proj.settings.archiveNoteSimple');
   const hasRouterGroup = Boolean(shown.router || project.grants);
   const currentTab: SettingsTabId = !hasRouterGroup && activeTab === 'router' ? 'basic' : activeTab;
 
   const tabs: { id: SettingsTabId; label: string; icon: ComponentType<{ className?: string }> }[] = [
-    { id: 'basic', label: '基础与代码', icon: FolderGit2 },
-    ...(hasRouterGroup ? [{ id: 'router' as const, label: '负责人与权限', icon: ShieldCheck }] : []),
-    { id: 'compute', label: '登录与机器', icon: Server },
-    { id: 'channels', label: '群聊与通知', icon: MessageSquare },
-    { id: 'rules', label: '常驻规则', icon: BookOpen },
-    { id: 'lifecycle', label: '生命周期与危险区', icon: AlertTriangle },
+    { id: 'basic', label: t('proj.settings.tabBasic'), icon: FolderGit2 },
+    ...(hasRouterGroup ? [{ id: 'router' as const, label: t('proj.settings.tabRouter'), icon: ShieldCheck }] : []),
+    { id: 'compute', label: t('proj.settings.tabCompute'), icon: Server },
+    { id: 'channels', label: t('proj.settings.tabChannels'), icon: MessageSquare },
+    { id: 'rules', label: t('proj.settings.tabRules'), icon: BookOpen },
+    { id: 'lifecycle', label: t('proj.settings.tabLifecycle'), icon: AlertTriangle },
   ];
 
   async function save(): Promise<void> {
@@ -354,10 +360,10 @@ export function ProjectSettings({ project }: { project: Project }) {
   }
 
   return (
-    <article aria-label={`项目 ${project.name}`} className="min-w-0">
+    <article aria-label={t('proj.list.projectAria', { name: project.name })} className="min-w-0">
       <div
         role="tablist"
-        aria-label="设置分组"
+        aria-label={t('proj.settings.tabsAria')}
         className="sticky top-0 z-10 -mx-1 mb-5 flex items-center gap-1 overflow-x-auto border-b border-border bg-background/95 px-1 pt-0.5 pb-2 backdrop-blur-xs"
       >
         {tabs.map(({ id, label, icon: Icon }) => {
@@ -389,7 +395,7 @@ export function ProjectSettings({ project }: { project: Project }) {
                 <span
                   aria-hidden="true"
                   data-slot="dirty-dot"
-                  title="有未保存改动"
+                  title={t('proj.settings.dirtyDotTitle')}
                   className="size-1.5 flex-none rounded-full bg-primary"
                 />
               ) : null}
@@ -406,29 +412,29 @@ export function ProjectSettings({ project }: { project: Project }) {
       {currentTab === 'basic' ? (
         <SettingsGroup
           tabId="basic"
-          title="基础与代码"
-          caption="项目的名称、代码来源顺序及服务归属信息。"
+          title={t('proj.settings.tabBasic')}
+          caption={t('proj.settings.basicCaption')}
         >
           <Setting
-            label={`${project.name} 的名字`}
-            title="名字"
-            hint="只是显示用的名字，改它不影响任务、记录或代码来源。"
+            label={t('proj.settings.nameSectionAria', { name: project.name })}
+            title={t('proj.trig.fieldName')}
+            hint={t('proj.settings.nameHint')}
           >
-            <Input aria-label="项目名" value={shown.name} disabled={saving} onChange={(event) => edit({ name: event.target.value })} />
+            <Input aria-label={t('proj.form.nameLabel')} value={shown.name} disabled={saving} onChange={(event) => edit({ name: event.target.value })} />
           </Setting>
 
           <Setting
-            label={`${project.name} 的代码来源`}
-            title="代码来源"
-            hint={`这个项目的代码从哪来。第一项是默认：负责人建任务时没说用哪个，就用它。${CODE_SOURCE_HINT}`}
+            label={t('proj.settings.sourcesSectionAria', { name: project.name })}
+            title={t('proj.settings.sourcesTitle')}
+            hint={t('proj.settings.sourcesHint', { hint: CODE_SOURCE_HINT })}
           >
             <SourceEditor items={shown.sources} machines={allMachines} disabled={saving} onChange={(sources) => edit({ sources })} />
           </Setting>
 
           {project.home && project.home.phase !== 'owned' ? (
-            <Setting label="项目归属" title="项目归属" hint="服务身份来自本环境的归属记录。">
-              <p className="text-sm">{project.home.phase === 'frozen' ? '正在移交，当前只读' : project.home.phase === 'incoming' ? '等待接管' : '归属待核实'}</p>
-              {project.home.generation ? <Note>归属代次 {project.home.generation}</Note> : null}
+            <Setting label={t('proj.settings.homeTitle')} title={t('proj.settings.homeTitle')} hint={t('proj.settings.homeHint')}>
+              <p className="text-sm">{project.home.phase === 'frozen' ? t('proj.settings.homeFrozen') : project.home.phase === 'incoming' ? t('proj.settings.homeIncoming') : t('proj.settings.homeUnknown')}</p>
+              {project.home.generation ? <Note>{t('proj.settings.homeGeneration', { generation: project.home.generation })}</Note> : null}
               <Mono className="block break-all">{project.home.target_service ?? project.home.service_id}</Mono>
             </Setting>
           ) : null}
@@ -438,23 +444,23 @@ export function ProjectSettings({ project }: { project: Project }) {
       {currentTab === 'router' && hasRouterGroup ? (
         <SettingsGroup
           tabId="router"
-          title="负责人与权限"
-          caption="指定本项目的负责人模型登录，以及负责人可直接完成的动作。"
+          title={t('proj.settings.tabRouter')}
+          caption={t('proj.settings.routerCaption')}
         >
           {shown.router ? (
-            <Setting label="项目负责人" title="项目负责人" hint="登录变更在本项目的下一条消息生效。沿用服务默认时由服务的负责人设置决定。">
+            <Setting label={t('proj.settings.routerTitle')} title={t('proj.settings.routerTitle')} hint={t('proj.settings.routerHint')}>
               <div className="grid gap-2">
-                <Select aria-label="项目负责人账号" value={shown.router.account ?? ''} disabled={saving || !options}
+                <Select aria-label={t('proj.chip.routerAccountTitle')} value={shown.router.account ?? ''} disabled={saving || !options}
                   onChange={(event) => edit({ router: { account: event.target.value || null, tier: null } })}>
-                  <Option value="">沿用服务默认</Option>
-                  {shown.router.account && !controller ? <Option value={shown.router.account}>当前登录不可用</Option> : null}
+                  <Option value="">{t('proj.settings.routerDefaultOption')}</Option>
+                  {shown.router.account && !controller ? <Option value={shown.router.account}>{t('proj.settings.routerLoginUnavailable')}</Option> : null}
                   {controllerLogins.map(({ id, name, executor }) => <Option key={id} value={id!}>{loginName(allLogins.find((each) => each.id === id) ?? { name })} · {executor}</Option>)}
                 </Select>
                 {controller ? (
-                  <Select aria-label="项目负责人档位" value={shown.router.tier ?? ''} disabled={saving}
+                  <Select aria-label={t('proj.settings.routerTierAria')} value={shown.router.tier ?? ''} disabled={saving}
                     onChange={(event) => edit({ router: { account: controller.id, tier: event.target.value || null } })}>
-                    <Option value="">使用执行器默认档位</Option>
-                    {shown.router.tier && !tierValueFrom(controller.tiers, shown.router.tier) ? <Option value={shown.router.tier}>当前档位不可用</Option> : null}
+                    <Option value="">{t('proj.settings.routerDefaultTier')}</Option>
+                    {shown.router.tier && !tierValueFrom(controller.tiers, shown.router.tier) ? <Option value={shown.router.tier}>{t('proj.settings.routerTierUnavailable')}</Option> : null}
                     {TIERS.filter(({ id }) => tierValueFrom(controller.tiers, id)).map(({ id, label }) => <Option key={id} value={id}>{label}</Option>)}
                   </Select>
                 ) : null}
@@ -464,11 +470,11 @@ export function ProjectSettings({ project }: { project: Project }) {
 
           {project.grants ? (
             <Setting
-              label={`${project.name} 负责人可以自己做`}
-              title="负责人可以自己做"
-              hint="打开的那几步，负责人在前提满足后直接做，做完服务会把结果推给你；关着的，负责人会告诉你等你在任务页做。审阅这道关不因为这里打开而放松。"
+              label={t('proj.settings.grantsSectionAria', { name: project.name })}
+              title={t('proj.settings.grantsTitle')}
+              hint={t('proj.settings.grantsHint')}
             >
-              <ul aria-label="负责人可以自己做" className="grid gap-3">
+              <ul aria-label={t('proj.settings.grantsTitle')} className="grid gap-3">
                 {GRANT_IDS.map((grant) => {
                   const grantDirty = shown.grants.includes(grant) !== baseline.grants.includes(grant);
                   return (
@@ -477,7 +483,7 @@ export function ProjectSettings({ project }: { project: Project }) {
                         <Switch aria-label={GRANTS[grant].label} checked={shown.grants.includes(grant)} disabled={saving}
                           onCheckedChange={(on) => edit({ grants: on ? withName(shown.grants, grant) : withoutName(shown.grants, grant) })} />
                         <span>{GRANTS[grant].label}</span>
-                        {grantDirty ? <Badge tone="waiting" className="ml-1">未保存</Badge> : null}
+                        {grantDirty ? <Badge tone="waiting" className="ml-1">{t('proj.settings.unsavedBadge')}</Badge> : null}
                       </Choice>
                       <Note className="mt-0.5 ml-11 text-xs">{GRANTS[grant].hint}</Note>
                     </li>
@@ -492,16 +498,24 @@ export function ProjectSettings({ project }: { project: Project }) {
       {currentTab === 'compute' ? (
         <SettingsGroup
           tabId="compute"
-          title="登录与机器"
-          caption="控制任务派发可用的执行登录、目标机器范围以及是否允许按需派生机器。"
+          title={t('proj.settings.tabCompute')}
+          caption={t('proj.settings.computeCaption')}
         >
           <Setting
-            label={`${project.name} 允许的登录`}
-            title="允许的登录"
-            hint={<>决定这个项目的任务允许用哪些身份执行。集中托管账号在<Link to="/accounts" className="mx-0.5">账号</Link>页管理及调整全局派发顺序，单机特例登录在<Link to="/machines" className="mx-0.5">机器</Link>页管理。</>}
+            label={t('proj.settings.loginsSectionAria', { name: project.name })}
+            title={t('proj.settings.loginsTitle')}
+            hint={(
+              <>
+                {t('proj.settings.loginsHintPart1')}
+                <Link to="/accounts" className="mx-0.5">{t('nav.accounts')}</Link>
+                {t('proj.settings.loginsHintPart2')}
+                <Link to="/machines" className="mx-0.5">{t('nav.machines')}</Link>
+                {t('proj.settings.loginsHintPart3')}
+              </>
+            )}
           >
-            <div role="radiogroup" aria-label="登录方式" className="mb-2 flex flex-wrap gap-x-5">
-              {([['all', '全部登录'], ['selected', '只用所选']] as const).map(([mode, label]) => (
+            <div role="radiogroup" aria-label={t('proj.settings.loginModeAria')} className="mb-2 flex flex-wrap gap-x-5">
+              {([['all', t('proj.settings.loginModeAll')], ['selected', t('proj.settings.loginModeSelected')]] as const).map(([mode, label]) => (
                 <Choice key={mode}>
                   <Radio name={`login-mode-${project.id}`} checked={shown.loginMode === mode} disabled={saving} onChange={() => edit({ loginMode: mode })} />
                   {label}
@@ -510,14 +524,14 @@ export function ProjectSettings({ project }: { project: Project }) {
             </div>
             {shown.loginMode === 'all' ? (
               <Note>
-                {`全部登录：派发时按每个档位的全局顺序挑（现在 ${project.pool?.length ?? 0} 个）。`}
-                {shown.logins.length ? `选过的 ${shown.logins.length} 个登录留着，现在不参与派发；切回“只用所选”就按它们派。` : ''}
+                {t('proj.settings.loginAllNote', { count: project.pool?.length ?? 0 })}
+                {shown.logins.length ? t('proj.settings.loginAllKeptNote', { count: shown.logins.length }) : ''}
               </Note>
             ) : (
               <>
                 {loginRows.length ? (
                   <Rows>
-                    <ul aria-label="允许的登录" className="divide-y divide-border">
+                    <ul aria-label={t('proj.settings.loginsTitle')} className="divide-y divide-border">
                       {loginRows.map((login) => (
                         <LoginChoice
                           key={login.id}
@@ -531,24 +545,30 @@ export function ProjectSettings({ project }: { project: Project }) {
                     </ul>
                   </Rows>
                 ) : null}
-                {options === undefined ? <Note>登录信息未读到：项目已经选定的登录先按原样留着，读到后再改。</Note> : null}
-                {options !== undefined && loginRows.length === 0 ? <Note>还没有可选的登录：到“账号”或“机器”页建一个。</Note> : null}
-                {shown.logins.length === 0 ? <Callout tone="waiting">只用所选，一个都没选：这个项目的任务不派发。</Callout> : null}
+                {options === undefined ? <Note>{t('proj.settings.loginsUnreadNote')}</Note> : null}
+                {options !== undefined && loginRows.length === 0 ? <Note>{t('proj.settings.noLoginsNote')}</Note> : null}
+                {shown.logins.length === 0 ? <Callout tone="waiting">{t('proj.settings.emptySelectedWarning')}</Callout> : null}
               </>
             )}
           </Setting>
 
           <Setting
-            label={`${project.name} 本项目派发槽位`}
-            title="本项目派发槽位"
-            hint={<>决定每个档位在本项目内优先派给哪些逻辑账号 / 渠道（P1 主力并行均衡 → P2 备选降级 → 停）；未自定义时沿用<Link to="/accounts#policy" className="mx-0.5">账号页的全局默认槽位</Link>。</>}
+            label={t('proj.settings.slotsSectionAria', { name: project.name })}
+            title={t('proj.settings.slotsTitle')}
+            hint={(
+              <>
+                {t('proj.settings.slotsHintPart1')}
+                <Link to="/accounts#policy" className="mx-0.5">{t('proj.settings.slotsHintLink')}</Link>
+                {t('proj.settings.slotsHintPart2')}
+              </>
+            )}
           >
             {hasLegacyDispatchOrder && dispatchSlotsDraft === undefined ? (
               <Callout tone="waiting" className="mb-2.5 text-xs">
-                <span>该项目当前存在旧版线性派发顺序覆盖；切换为“沿用全局默认槽位”并保存即可清除旧覆盖，或切换为“自定义本项目槽位”升级为新槽位配置。</span>
+                <span>{t('proj.settings.legacyOrderWarning')}</span>
               </Callout>
             ) : null}
-            <div role="radiogroup" aria-label="派发槽位方式" className="mb-2.5 flex flex-wrap items-center gap-x-5 gap-y-1">
+            <div role="radiogroup" aria-label={t('proj.settings.slotsModeAria')} className="mb-2.5 flex flex-wrap items-center gap-x-5 gap-y-1">
               <Choice>
                 <Radio
                   name={`dispatch-slots-mode-${project.id}`}
@@ -556,7 +576,7 @@ export function ProjectSettings({ project }: { project: Project }) {
                   disabled={busy}
                   onChange={() => setDispatchSlotsDraft(null)}
                 />
-                <span>沿用全局默认槽位</span>
+                <span>{t('proj.settings.slotsModeGlobal')}</span>
               </Choice>
               <Choice>
                 <Radio
@@ -565,9 +585,9 @@ export function ProjectSettings({ project }: { project: Project }) {
                   disabled={busy}
                   onChange={() => setDispatchSlotsDraft({ ...inheritedProjectSlots })}
                 />
-                <span>自定义本项目槽位</span>
+                <span>{t('proj.settings.slotsModeCustom')}</span>
               </Choice>
-              {dispatchSlotsDirty ? <Badge tone="waiting">未保存</Badge> : null}
+              {dispatchSlotsDirty ? <Badge tone="waiting">{t('proj.settings.unsavedBadge')}</Badge> : null}
             </div>
 
             {shownDispatchSlots === null ? (
@@ -590,9 +610,9 @@ export function ProjectSettings({ project }: { project: Project }) {
                           {p1.length > 0 ? (
                             <span className="rounded border border-brand-border bg-brand-soft px-1.5 py-0.5 font-medium text-brand-foreground">
                               {p1.join(' + ')}
-                              {p1.length >= 2 ? <span className="ml-1 text-2xs opacity-80">均衡</span> : null}
+                              {p1.length >= 2 ? <span className="ml-1 text-2xs opacity-80">{t('proj.settings.slotsBalancedTag')}</span> : null}
                             </span>
-                          ) : <span className="text-faint">无主力</span>}
+                          ) : <span className="text-faint">{t('proj.settings.slotsNoPrimary')}</span>}
                           {p2.length > 0 ? (
                             <>
                               <span className="text-faint" aria-hidden="true">→</span>
@@ -603,7 +623,7 @@ export function ProjectSettings({ project }: { project: Project }) {
                           ) : null}
                         </div>
                       ) : (
-                        <p className="text-muted-foreground">暂无可用登录</p>
+                        <p className="text-muted-foreground">{t('proj.settings.slotsNoLogins')}</p>
                       )}
                     </div>
                   );
@@ -612,7 +632,7 @@ export function ProjectSettings({ project }: { project: Project }) {
             ) : options ? (
               <div className="grid gap-2.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <Note className="text-xs">仅列出本项目允许的逻辑账号与渠道；同在 P1 的渠道按最少活跃与剩余额度自动均衡。</Note>
+                  <Note className="text-xs">{t('proj.settings.slotsCustomHint')}</Note>
                   <Button
                     type="button"
                     size="sm"
@@ -622,7 +642,7 @@ export function ProjectSettings({ project }: { project: Project }) {
                     onClick={() => setDispatchSlotsDraft(null)}
                   >
                     <RotateCcw className="size-3" aria-hidden="true" />
-                    恢复全局
+                    {t('proj.settings.slotsResetGlobal')}
                   </Button>
                 </div>
                 <DispatchSlotsPanel
@@ -633,19 +653,19 @@ export function ProjectSettings({ project }: { project: Project }) {
                   compact
                   hideSimulator
                   showTierSupport
-                  ariaLabel={`${project.name} 本项目派发槽位矩阵`}
+                  ariaLabel={t('proj.settings.slotsMatrixAria', { name: project.name })}
                   hint={null}
                   onSaveTier={(tier, next) => setDispatchSlotsDraft({ ...customProjectSlots, [tier]: next })}
                 />
               </div>
             ) : (
-              <Note className="text-xs">登录信息加载中…</Note>
+              <Note className="text-xs">{t('proj.settings.loadingLogins')}</Note>
             )}
           </Setting>
 
-          <Setting label={`${project.name} 允许的机器`} title="允许的机器" hint="仓库来源的活按这里的范围派发：送到勾上的机器，一台都不勾就是不限制、在线的机器都行。机器上的文件夹来源固定派到它指定的那台机器，不受这里限制。">
+          <Setting label={t('proj.settings.machinesSectionAria', { name: project.name })} title={t('proj.settings.machinesTitle')} hint={t('proj.settings.machinesHint')}>
             {allMachines.length ? (
-              <ul aria-label="允许的机器" className="grid">
+              <ul aria-label={t('proj.settings.machinesTitle')} className="grid">
                 {allMachines.map(({ uid, name }) => (
                   <li key={uid}>
                     <Choice>
@@ -656,27 +676,33 @@ export function ProjectSettings({ project }: { project: Project }) {
                   </li>
                 ))}
               </ul>
-            ) : <Note>还没有机器。先到<Link to="/machines" className="mx-0.5">机器</Link>页接入一台。</Note>}
-            {allMachines.length && shown.machines.length === 0 && !project.machines_gone ? <Note className="mt-1 text-xs">不限制：在线的机器都可以。</Note> : null}
+            ) : (
+              <Note>
+                {t('proj.settings.noMachinesPart1')}
+                <Link to="/machines" className="mx-0.5">{t('nav.machines')}</Link>
+                {t('proj.settings.noMachinesPart2')}
+              </Note>
+            )}
+            {allMachines.length && shown.machines.length === 0 && !project.machines_gone ? <Note className="mt-1 text-xs">{t('proj.settings.machinesUnrestrictedNote')}</Note> : null}
             {project.machines_gone ? (
               <Callout tone="failed" className="mt-2">
                 <Problem>{machinesGoneText(project.machines_gone, project.machines.length)}</Problem>
                 {shown.clearGoneMachines
-                  ? <Note className="mt-1.5">保存后去掉已删除的机器条目，按当前勾选的机器清单派发。</Note>
-                  : <Button className="mt-2" size="sm" disabled={busy} onClick={() => edit({ clearGoneMachines: true })}>去掉已删除的机器条目</Button>}
+                  ? <Note className="mt-1.5">{t('proj.settings.machinesClearPending')}</Note>
+                  : <Button className="mt-2" size="sm" disabled={busy} onClick={() => edit({ clearGoneMachines: true })}>{t('proj.settings.machinesClearBtn')}</Button>}
               </Callout>
             ) : null}
           </Setting>
 
           <Setting
-            label={`${project.name} 允许派生机器`}
-            title="允许派生机器"
-            hint="打开后，这个项目的任务可以按技能开新的机器。新机器凭一次性接入材料自己加入，不用你逐台放行；它们只接这个项目的活。默认关。"
+            label={t('proj.settings.spawnSectionAria', { name: project.name })}
+            title={t('proj.settings.spawnLabel')}
+            hint={t('proj.settings.spawnHint')}
           >
             <Choice>
-              <Switch aria-label="允许派生机器" checked={shown.spawnMachines} disabled={saving} onCheckedChange={(on) => edit({ spawnMachines: on })} />
-              <span>{shown.spawnMachines ? '开着' : '关着'}</span>
-              {shown.spawnMachines !== baseline.spawnMachines ? <Badge tone="waiting" className="ml-1">未保存</Badge> : null}
+              <Switch aria-label={t('proj.settings.spawnLabel')} checked={shown.spawnMachines} disabled={saving} onCheckedChange={(on) => edit({ spawnMachines: on })} />
+              <span>{shown.spawnMachines ? t('proj.settings.switchOn') : t('proj.settings.switchOff')}</span>
+              {shown.spawnMachines !== baseline.spawnMachines ? <Badge tone="waiting" className="ml-1">{t('proj.settings.unsavedBadge')}</Badge> : null}
             </Choice>
           </Setting>
         </SettingsGroup>
@@ -685,8 +711,8 @@ export function ProjectSettings({ project }: { project: Project }) {
       {currentTab === 'channels' ? (
         <SettingsGroup
           tabId="channels"
-          title="群聊与通知"
-          caption="管理绑定到此项目的企业微信 / 微信群、群内触发策略与告警播报开关；改动立即生效。"
+          title={t('proj.settings.tabChannels')}
+          caption={t('proj.settings.channelsCaption')}
         >
           <div className="pt-4">
             <ProjectGroupsPanel project={project} />
@@ -697,13 +723,13 @@ export function ProjectSettings({ project }: { project: Project }) {
       {currentTab === 'rules' ? (
         <SettingsGroup
           tabId="rules"
-          title="常驻规则"
-          caption="每一轮和负责人都会带上全文的项目级规则，改动直接生效。"
+          title={t('proj.settings.tabRules')}
+          caption={t('proj.settings.rulesCaption')}
         >
           <Setting
-            label={`${project.name} 的常驻规则`}
-            title="这个项目的常驻规则"
-            hint="这个项目每一轮和它的负责人都会带上全文的规则，比如从哪个分支开工、交付前跑什么。它们是知识条目：在这里新建和修改，照常算你自己的改动，直接生效。"
+            label={t('proj.rules.listAria', { name: project.name })}
+            title={t('proj.settings.rulesTitle')}
+            hint={t('proj.settings.rulesHint')}
           >
             <ProjectRules project={project} />
           </Setting>
@@ -713,30 +739,30 @@ export function ProjectSettings({ project }: { project: Project }) {
       {currentTab === 'lifecycle' ? (
         <SettingsGroup
           tabId="lifecycle"
-          title="生命周期与危险区"
-          caption="暂停、归档与永久删除均立刻生效，不需要点击底部保存。"
+          title={t('proj.settings.tabLifecycle')}
+          caption={t('proj.settings.lifecycleCaption')}
         >
           <Setting
-            label={`暂停 ${project.name}`}
-            title="暂停"
-            hint="立刻生效，不用点保存。暂停后负责人不接新消息、不派新任务、触发器不投递；在跑的那一轮会做完，消息照常记下，恢复后接着处理。"
+            label={t('proj.settings.pauseSectionAria', { name: project.name })}
+            title={t('common.pause')}
+            hint={t('proj.settings.pauseHint')}
           >
             <div className="flex flex-wrap items-center gap-3">
-              {pause.on ? <Badge tone="ended">{PROJECT_PAUSED_LABEL}</Badge> : <Badge tone="success">在运行</Badge>}
-              {pause.on && project.paused_at ? <Time at={project.paused_at} prefix="暂停于 " className="text-xs text-muted-foreground" /> : null}
-              <Button disabled={pause.busy} onClick={() => void pause.set(!pause.on)}>{pause.on ? '恢复' : '暂停这个项目'}</Button>
+              {pause.on ? <Badge tone="ended">{PROJECT_PAUSED_LABEL}</Badge> : <Badge tone="success">{t('proj.settings.stateRunning')}</Badge>}
+              {pause.on && project.paused_at ? <Time at={project.paused_at} prefix={t('proj.settings.pausedAtPrefix')} className="text-xs text-muted-foreground" /> : null}
+              <Button disabled={pause.busy} onClick={() => void pause.set(!pause.on)}>{pause.on ? t('common.resume') : t('proj.settings.pauseBtn')}</Button>
             </div>
             {pause.error ? <Problem role="alert" className="mt-2">{pause.error}</Problem> : null}
           </Setting>
 
           <Setting
-            label={`归档 ${project.name}`}
-            title="归档"
-            hint="收起来不用了。立刻生效，不用点保存；归档不改任务状态，也不删任何东西，恢复后照旧。"
+            label={t('proj.settings.archiveSectionAria', { name: project.name })}
+            title={t('proj.lifecycle.archive')}
+            hint={t('proj.settings.archiveHint')}
           >
             <div className="flex flex-wrap items-center gap-3">
-              {archive.on ? <Badge tone="ended">{PROJECT_ARCHIVED_LABEL}</Badge> : <Badge tone="success">在用</Badge>}
-              {archive.on && project.archived_at ? <Time at={project.archived_at} prefix="归档于 " className="text-xs text-muted-foreground" /> : null}
+              {archive.on ? <Badge tone="ended">{PROJECT_ARCHIVED_LABEL}</Badge> : <Badge tone="success">{t('proj.settings.stateActive')}</Badge>}
+              {archive.on && project.archived_at ? <Time at={project.archived_at} prefix={t('proj.settings.archivedAtPrefix')} className="text-xs text-muted-foreground" /> : null}
               <Button
                 disabled={archive.busy}
                 onClick={() => {
@@ -744,7 +770,7 @@ export function ProjectSettings({ project }: { project: Project }) {
                   else setConfirmArchive(true);
                 }}
               >
-                {archive.on ? '恢复' : '归档这个项目'}
+                {archive.on ? t('common.resume') : t('proj.settings.archiveBtn')}
               </Button>
             </div>
             {archive.error ? <Problem role="alert" className="mt-2">{archive.error}</Problem> : null}
@@ -752,13 +778,13 @@ export function ProjectSettings({ project }: { project: Project }) {
 
           {deletion ? (
             <Setting
-              label={`删除 ${project.name}`}
-              title="删除项目"
-              hint="从没留下记录的项目随时能删；有历史的项目要先归档，并且没有在跑的轮次。删掉的东西不能恢复。"
+              label={t('proj.settings.deleteSectionAria', { name: project.name })}
+              title={t('project.deleteProject')}
+              hint={t('proj.settings.deleteHint')}
               danger
             >
               {deletion.allowed ? (
-                <Button variant="danger" onClick={() => setConfirmDelete(true)}>删除这个项目</Button>
+                <Button variant="danger" onClick={() => setConfirmDelete(true)}>{t('proj.settings.deleteBtn')}</Button>
               ) : <Note>{deletion.reason}</Note>}
             </Setting>
           ) : null}
@@ -771,13 +797,15 @@ export function ProjectSettings({ project }: { project: Project }) {
         <div className="sticky bottom-3 z-10 mt-5 flex flex-wrap items-center gap-2 rounded-xl border border-brand-border bg-raised/95 px-4 py-2.5 shadow-pop backdrop-blur-sm">
           <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm text-muted-foreground">
             <Dot tone="running" pulse={false} />
-            <span>有改动还没保存</span>
+            <span>{t('proj.settings.unsavedBarText')}</span>
             {(() => {
               const dirtyLabels = tabs.filter((each) => tabDirty[each.id]).map((each) => each.label);
-              return dirtyLabels.length ? <span className="text-xs text-faint">{`（${dirtyLabels.join('、')}）`}</span> : null;
+              return dirtyLabels.length
+                ? <span className="text-xs text-faint">{t('proj.settings.unsavedTabsWrap', { tabs: dirtyLabels.join(t('proj.delete.listSep')) })}</span>
+                : null;
             })()}
           </span>
-          <Button variant="ghost" disabled={saving} onClick={() => { setDraft(null); setDispatchSlotsDraft(undefined); setError(null); }}>取消</Button>
+          <Button variant="ghost" disabled={saving} onClick={() => { setDraft(null); setDispatchSlotsDraft(undefined); setError(null); }}>{t('common.cancel')}</Button>
           <Button
             variant="primary"
             disabled={busy}
@@ -786,7 +814,7 @@ export function ProjectSettings({ project }: { project: Project }) {
               else void save();
             }}
           >
-            {saving ? '保存中' : '保存'}
+            {saving ? t('proj.settings.saving') : t('common.save')}
           </Button>
         </div>
       ) : null}
@@ -794,9 +822,9 @@ export function ProjectSettings({ project }: { project: Project }) {
       <Confirm
         open={confirmArchive}
         danger={false}
-        title={`归档项目 ${project.name}？`}
-        description={`${archiveNote}。`}
-        confirm="归档"
+        title={t('proj.lifecycle.archiveConfirmTitle', { name: project.name })}
+        description={archiveDescription}
+        confirm={t('proj.lifecycle.archive')}
         busy={archive.busy}
         error={archive.error}
         onConfirm={() => { void archive.set(true).then((ok) => { if (ok) setConfirmArchive(false); }); }}
@@ -806,9 +834,9 @@ export function ProjectSettings({ project }: { project: Project }) {
       <Confirm
         open={confirmUnrestricted}
         danger={false}
-        title="允许哪台机器都接活？"
-        description={`${project.name} 原来有机器限制。这次保存后不再限制机器，哪台机器都行，包括同名重新接入的机器。`}
-        confirm="确认不限制机器并保存"
+        title={t('proj.settings.unrestrictedConfirmTitle')}
+        description={t('proj.settings.unrestrictedConfirmDesc', { name: project.name })}
+        confirm={t('proj.settings.unrestrictedConfirmBtn')}
         busy={busy}
         onConfirm={() => void save()}
         onCancel={() => setConfirmUnrestricted(false)}

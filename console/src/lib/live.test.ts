@@ -531,3 +531,45 @@ test('a conversation brought into view reads its own messages and nothing else, 
   await tick();
   expect(f.reads.slice(left)).toEqual([]);
 });
+
+test('in-flight project send stays scoped to its project and never locks another project composer', async () => {
+  let resolveSend!: (val: { id: string }) => void;
+  const f = fixture((call) => {
+    if (call.path === '/api/messages' && call.method === 'POST') {
+      return new Promise<{ id: string }>((resolve) => { resolveSend = resolve; });
+    }
+    return undefined;
+  });
+  await f.started();
+  await f.connected();
+  f.live.type('给项目一的消息');
+  const pending = f.live.send();
+  expect(f.live.getState().sending).toBe('给项目一的消息');
+
+  // Switching to project p2 must NOT show p1's pending send or lock p2's composer.
+  f.live.focusOn({ project: 'p2', segment: 's2' });
+  expect(f.live.getState().sending).toBeNull();
+
+  // Switching back to p1 restores p1's in-flight send indicator.
+  f.live.focusOn({ project: 'p1', segment: 's1' });
+  expect(f.live.getState().sending).toBe('给项目一的消息');
+
+  resolveSend({ id: 'm-p1' });
+  await pending;
+});
+
+test('task quotes stay isolated per task and revision-guarded clearTaskDraft never erases newer edits', () => {
+  const f = fixture();
+  const rev1 = f.live.setTaskDraft('task-alpha', '第一版指令');
+  expect(f.live.addTaskQuote('task-alpha', { source: '汇报', sourceKey: 'report', excerpt: 'Alpha 证据' })).toBe(true);
+  expect(f.live.getTaskQuotes('task-beta')).toHaveLength(0);
+
+  // Newer edit advances revision; stale ack for rev1 must not wipe the newer draft.
+  const rev2 = f.live.setTaskDraft('task-alpha', '更新后的新指令');
+  expect(rev2).toBeGreaterThan(rev1);
+  expect(f.live.clearTaskDraft('task-alpha', rev1)).toBe(false);
+  expect(f.live.getTaskDraft('task-alpha')).toBe('更新后的新指令');
+  expect(f.live.clearTaskDraft('task-alpha', rev2)).toBe(true);
+  expect(f.live.getTaskDraft('task-alpha')).toBe('');
+  expect(f.live.getTaskQuotes('task-alpha')).toHaveLength(0);
+});

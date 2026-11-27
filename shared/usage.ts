@@ -1,6 +1,7 @@
 // What the usage page is told (docs/design/usage.md): the service's report of what the executors
 // used, and its answer about each login's quota. Pure data, read by the service that writes it
 // and the console that shows it.
+import { localeMap } from './i18n.ts';
 import type { LoginStatus } from './labels.ts';
 
 // Whose use a row is: a Worker round, a Router turn, or a read of an account's quota.
@@ -131,10 +132,10 @@ export interface QuotaPage {
 }
 
 // The words for what is not a project's or a role's own use.
-export const USAGE_SOURCE_TEXT: Record<Exclude<UsageSource, 'run'>, string> = {
-  router: '负责人',
-  quota: '额度查询',
-};
+export const USAGE_SOURCE_TEXT: Readonly<Record<Exclude<UsageSource, 'run'>, string>> = localeMap({
+  router: 'sh.usage.source.router',
+  quota: 'sh.usage.source.quota',
+});
 
 // Keep the whole most recently reported set, rather than mixing windows from different reads.
 export function latestQuota<T>(rows: readonly T[], usage: (row: T) => LoginStatus['usage']): T {

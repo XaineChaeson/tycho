@@ -1,5 +1,6 @@
 // Only the current installation's own service definitions are observed. This is
 // diagnostic information, never authority to dispatch work or run another command.
+import { localeMap, t } from './i18n.ts';
 export interface ServiceObservation {
   role: 'host' | 'node';
   manager: 'systemd' | 'launchd' | 'windows-task' | 'startup' | 'unsupported';
@@ -17,13 +18,13 @@ export interface ServiceManagerReport {
 
 export const observationProblem = (error: unknown): ServiceObservation['problem'] => {
   const text = error instanceof Error ? error.message : String(error);
-  if (/permission|access.*denied|not permitted|拒绝|权限/i.test(text)) {
-    return { kind: 'permission_error', message: '当前用户无权读取系统服务状态' };
+  if (/permission|access.*denied|not permitted|拒绝|权限/i.test(text)) { // i18n-ignore
+    return { kind: 'permission_error', message: t('sh.serviceManager.problem.permission') };
   }
   if (/bus|connect|not found|not available|ENOENT|timeout|timed out|ETIMEDOUT/i.test(text)) {
-    return { kind: 'unavailable', message: '系统服务管理器不可达、未提供或查询超时' };
+    return { kind: 'unavailable', message: t('sh.serviceManager.problem.unavailable') };
   }
-  return { kind: 'unknown', message: '未能核实系统服务状态' };
+  return { kind: 'unknown', message: t('sh.serviceManager.problem.unknown') };
 };
 
 // An optional, untrusted diagnostic must never fail a node's heartbeat. Discard
@@ -32,7 +33,7 @@ export function serviceManagerReport(value: unknown): ServiceManagerReport | und
   if (value === undefined) return undefined;
   const invalid = (): ServiceManagerReport => ({ observed_at: new Date().toISOString(), services: [
     { role: 'node', manager: 'unsupported', entry: null, installed: null, enabled: null, running: null, main_pid: null,
-      problem: { kind: 'unknown', message: '机器报告的系统服务状态无法解析' } },
+      problem: { kind: 'unknown', message: t('sh.serviceManager.problem.unparseable') } },
   ] });
   if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid();
   const raw = value as Record<string, unknown>;
@@ -64,11 +65,27 @@ export function serviceManagerReport(value: unknown): ServiceManagerReport | und
   return { observed_at: raw.observed_at, services };
 }
 
+const SERVICE_MANAGER_LABELS: Readonly<Record<ServiceObservation['manager'], string>> = localeMap({
+  systemd: 'sh.serviceManager.manager.systemd',
+  launchd: 'sh.serviceManager.manager.launchd',
+  'windows-task': 'sh.serviceManager.manager.windows-task',
+  startup: 'sh.serviceManager.manager.startup',
+  unsupported: 'sh.serviceManager.manager.unsupported',
+});
+
 export function serviceObservationText(service: ServiceObservation): string {
-  const role = service.role === 'node' ? '节点客户端' : '主服务';
-  const manager = { systemd: 'systemd', launchd: 'launchd', 'windows-task': '计划任务', startup: '启动文件夹', unsupported: '系统服务' }[service.manager];
-  const installed = service.installed === null ? '安装状态未知' : service.installed ? '已安装' : '未安装';
-  const running = service.running === null ? '运行状态未知' : service.running ? '运行中' : '未运行';
-  const enabled = service.enabled === null ? '' : service.enabled ? '，已启用自启' : '，未启用自启';
-  return `${role} · ${manager}：${installed}，${running}${enabled}${service.main_pid === null ? '' : `，PID ${service.main_pid}`}${service.problem ? `；${service.problem.message}` : ''}`;
+  const role = service.role === 'node' ? t('sh.serviceManager.role.node') : t('sh.serviceManager.role.host');
+  const manager = SERVICE_MANAGER_LABELS[service.manager];
+  const installed = service.installed === null
+    ? t('sh.serviceManager.installed.unknown')
+    : service.installed ? t('sh.serviceManager.installed.yes') : t('sh.serviceManager.installed.no');
+  const running = service.running === null
+    ? t('sh.serviceManager.running.unknown')
+    : service.running ? t('sh.serviceManager.running.yes') : t('sh.serviceManager.running.no');
+  const enabled = service.enabled === null
+    ? ''
+    : service.enabled ? t('sh.serviceManager.enabled.yes') : t('sh.serviceManager.enabled.no');
+  const pid = service.main_pid === null ? '' : t('sh.serviceManager.pid', { pid: service.main_pid });
+  const problem = service.problem ? t('sh.serviceManager.problemSuffix', { message: service.problem.message }) : '';
+  return t('sh.serviceManager.summary', { role, manager, installed, running, enabled, pid, problem });
 }

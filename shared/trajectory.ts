@@ -1,11 +1,13 @@
+import { localeMap } from './i18n.ts';
+
 export const ROUTER_RECEIPT = 'tycho.dev/call-id';
 
-export const ROUTER_CALL_RESULT_TEXT = {
-  returned: '服务已生成返回。',
-  refused: '服务拒绝了这次调用。',
-  failed: '服务处理调用时发生错误。',
-  interrupted: '连接中断，返回未确认。',
-};
+export const ROUTER_CALL_RESULT_TEXT = localeMap({
+  returned: 'sh.trajectory.callResult.returned',
+  refused: 'sh.trajectory.callResult.refused',
+  failed: 'sh.trajectory.callResult.failed',
+  interrupted: 'sh.trajectory.callResult.interrupted',
+});
 
 export interface RouterCallTrace {
   id: string;

@@ -12,19 +12,23 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/input';
 import { useMounted } from '@/hooks/use-mounted';
 import { messageOf, post } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { PAGE, taskQuery, tasksQuery } from '@/lib/queries';
 import type { ReviewGateInfo, Task } from '@/lib/types';
 import { cn } from '@/lib/utils';
+
+const LOGIN_MENTION_RE = /登录|账号|凭据|login|account|credential/i; // i18n-ignore
 
 type TaskAction = 'resume' | 'interrupt' | 'abandon' | 'accept' | 'rework' | 'review' | 'hold';
 type InlinePanel = 'accept_without_review' | 'rework' | 'abandon' | null;
 
 // Where a Task stands, in one line: its dot and the sentence the service makes of it.
 export function TaskStatus({ task, className }: { task: Task; className?: string }) {
+  const { t } = useI18n();
   return (
     <p className={cn('flex items-start gap-2 text-sm text-muted-foreground', className)}>
       <StatusDot state={task.summary?.dot ?? task.state} className="mt-[2px]" />
-      <span className="min-w-0 wrap-anywhere">{taskLine(task)}{task.lost?.waiting?.no_candidate ? <> · <Link to={task.project_id ? `/projects/${encodeURIComponent(task.project_id)}/settings` : "/accounts"}>检查项目登录</Link></> : null}</span>
+      <span className="min-w-0 wrap-anywhere">{taskLine(task)}{task.lost?.waiting?.no_candidate ? <> · <Link to={task.project_id ? `/projects/${encodeURIComponent(task.project_id)}/settings` : "/accounts"}>{t('tsk.checkProjectLogins')}</Link></> : null}</span>
     </p>
   );
 }
@@ -127,14 +131,15 @@ function InlineActionPanel({
   onCancel: () => void;
   onSubmit: (action: 'accept' | 'rework' | 'abandon', fields: Record<string, unknown>) => Promise<void>;
 }) {
+  const { t } = useI18n();
   if (panel === 'accept_without_review') {
     return (
       <div className="grid gap-2 rounded-lg border border-border bg-background/80 p-3">
-        <Note className="text-xs">{`“${ACCEPT_WITHOUT_REVIEW_LABEL}”会记在这个任务的时间线上，写上你的验收依据。`}</Note>
+        <Note className="text-xs">{t('tsk.actions.acceptWithoutReviewNote', { label: ACCEPT_WITHOUT_REVIEW_LABEL })}</Note>
         <Textarea
           rows={2}
-          aria-label="不经审阅验收依据"
-          placeholder="写一句验收依据，例如：我自己核对过产物，已满足验收标准"
+          aria-label={t('tsk.actions.acceptWithoutReviewAria')}
+          placeholder={t('tsk.actions.acceptWithoutReviewPlaceholder')}
           className="max-h-[30vh] overflow-y-auto"
           value={note}
           readOnly={pending}
@@ -146,9 +151,9 @@ function InlineActionPanel({
             disabled={pending || !note.trim()}
             onClick={() => void onSubmit('accept', { basis: note.trim(), without_review: true })}
           >
-            {pending ? '发送中' : `确认${ACCEPT_WITHOUT_REVIEW_LABEL}`}
+            {pending ? t('common.sending') : t('tsk.actions.confirmPrefix', { label: ACCEPT_WITHOUT_REVIEW_LABEL })}
           </Button>
-          <Button variant="ghost" disabled={pending} onClick={onCancel}>取消</Button>
+          <Button variant="ghost" disabled={pending} onClick={onCancel}>{t('common.cancel')}</Button>
         </div>
       </div>
     );
@@ -158,8 +163,8 @@ function InlineActionPanel({
       <div className="grid gap-2 rounded-lg border border-border bg-background/80 p-3">
         <Textarea
           rows={2}
-          aria-label="退回说明"
-          placeholder="说明哪里不满足验收标准，以及下一轮需要怎么改"
+          aria-label={t('tsk.actions.reworkAria')}
+          placeholder={t('tsk.actions.reworkPlaceholder')}
           className="max-h-[30vh] overflow-y-auto"
           value={note}
           readOnly={pending}
@@ -171,20 +176,20 @@ function InlineActionPanel({
             disabled={pending || !note.trim()}
             onClick={() => void onSubmit('rework', { note: note.trim(), revision: taskRevision })}
           >
-            {pending ? '发送中' : '确认退回'}
+            {pending ? t('common.sending') : t('tsk.actions.confirmRework')}
           </Button>
-          <Button variant="ghost" disabled={pending} onClick={onCancel}>取消</Button>
+          <Button variant="ghost" disabled={pending} onClick={onCancel}>{t('common.cancel')}</Button>
         </div>
       </div>
     );
   }
   return (
     <div className="grid gap-2 rounded-lg border border-border bg-background/80 p-3">
-      <p className="text-xs text-muted-foreground">放弃以后不能再继续，确定？</p>
+      <p className="text-xs text-muted-foreground">{t('tsk.actions.abandonConfirm')}</p>
       <Textarea
         rows={2}
-        aria-label="放弃理由"
-        placeholder="放弃理由（可选）"
+        aria-label={t('tsk.actions.abandonReasonAria')}
+        placeholder={t('tsk.actions.abandonReasonPlaceholder')}
         className="max-h-[30vh] overflow-y-auto"
         value={note}
         readOnly={pending}
@@ -196,9 +201,9 @@ function InlineActionPanel({
           disabled={pending}
           onClick={() => void onSubmit('abandon', { reason: note.trim() })}
         >
-          {pending ? '发送中' : '确认放弃'}
+          {pending ? t('common.sending') : t('tsk.actions.confirmAbandon')}
         </Button>
-        <Button variant="ghost" disabled={pending} onClick={onCancel}>取消</Button>
+        <Button variant="ghost" disabled={pending} onClick={onCancel}>{t('common.cancel')}</Button>
       </div>
     </div>
   );
@@ -228,6 +233,7 @@ export function TaskActions({
   control: TaskAct;
   className?: string;
 }) {
+  const { t } = useI18n();
   const { draft, pending, error, requestedReview, clearError, type } = control;
   const [panel, setPanel] = useState<InlinePanel>(null);
   const [panelNote, setPanelNote] = useState('');
@@ -292,30 +298,30 @@ export function TaskActions({
       : null;
     return (
       <section
-        aria-label="审阅进行中"
+        aria-label={t('tsk.actions.inReviewAria')}
         className={cn('grid gap-2.5 rounded-xl border border-border bg-muted/50 p-3.5', className)}
       >
         <div className="flex flex-wrap items-center gap-2">
           <StatusDot state="running" />
-          <p className="text-sm font-semibold text-foreground">这一轮已交付，正在自动独立审阅</p>
-          {justRequested ? <span className="text-xs font-medium text-success-foreground">已发起独立审阅</span> : null}
+          <p className="text-sm font-semibold text-foreground">{t('tsk.actions.inReviewTitle')}</p>
+          {justRequested ? <span className="text-xs font-medium text-success-foreground">{t('tsk.actions.reviewStartedBadge')}</span> : null}
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-          {reviewStateLabel ? <span>{`审阅状态：${reviewStateLabel}`}</span> : null}
-          {reviewTaskId ? <Link to={`/task/${encodeURIComponent(reviewTaskId)}`}>查看审阅任务</Link> : null}
+          {reviewStateLabel ? <span>{t('tsk.actions.reviewStateLine', { state: reviewStateLabel })}</span> : null}
+          {reviewTaskId ? <Link to={`/task/${encodeURIComponent(reviewTaskId)}`}>{t('tsk.actions.viewReviewTask')}</Link> : null}
         </div>
         <details className="group/override text-sm">
-          <summary className="cursor-pointer text-xs text-muted-foreground select-none hover:text-foreground">需要提前介入？</summary>
+          <summary className="cursor-pointer text-xs text-muted-foreground select-none hover:text-foreground">{t('tsk.actions.earlyIntervene')}</summary>
           <div className="mt-2.5 grid gap-2.5">
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" variant="ghost" disabled={pending} aria-expanded={panel === 'accept_without_review'} onClick={() => togglePanel('accept_without_review')}>
                 {ACCEPT_WITHOUT_REVIEW_LABEL}
               </Button>
               <Button size="sm" variant="ghost" disabled={pending} aria-expanded={panel === 'rework'} onClick={() => togglePanel('rework')}>
-                退回返工
+                {t('tsk.actions.reworkBtn')}
               </Button>
               <Button size="sm" variant="danger" disabled={pending} aria-expanded={panel === 'abandon'} onClick={() => togglePanel('abandon')}>
-                放弃任务
+                {t('tsk.actions.abandonTask')}
               </Button>
             </div>
             {inlinePanelNode}
@@ -329,31 +335,31 @@ export function TaskActions({
   // State B — 审阅已停住: amber banner pointing to the held review task + overrides.
   if (accepting && gateKind === 'review_held') {
     const heldReason = effectiveGate?.review_reason ?? effectiveGate?.message ?? blocked;
-    const mentionLogin = Boolean(error) || Boolean(heldReason && /登录|账号|凭据/.test(heldReason));
+    const mentionLogin = Boolean(error) || Boolean(heldReason && LOGIN_MENTION_RE.test(heldReason));
     return (
       <section
-        aria-label="独立审阅已停住"
+        aria-label={t('tsk.actions.reviewHeldTitle')}
         className={cn('grid gap-2.5 rounded-xl border border-waiting-border bg-waiting-soft p-3.5', className)}
       >
-        <p className="text-sm font-semibold text-waiting-foreground">独立审阅已停住</p>
+        <p className="text-sm font-semibold text-waiting-foreground">{t('tsk.actions.reviewHeldTitle')}</p>
         {heldReason ? <Note className="text-foreground">{heldReason}</Note> : null}
         <div className="flex flex-wrap items-center gap-2">
           {reviewTaskId ? (
             <Button variant="primary" asChild>
-              <Link to={`/task/${encodeURIComponent(reviewTaskId)}`} className="no-underline">前往处理审阅任务</Link>
+              <Link to={`/task/${encodeURIComponent(reviewTaskId)}`} className="no-underline">{t('tsk.actions.goHandleReview')}</Link>
             </Button>
           ) : null}
           <Button variant="ghost" disabled={pending} aria-expanded={panel === 'accept_without_review'} onClick={() => togglePanel('accept_without_review')}>
             {ACCEPT_WITHOUT_REVIEW_LABEL}
           </Button>
           <Button variant="ghost" disabled={pending} aria-expanded={panel === 'rework'} onClick={() => togglePanel('rework')}>
-            退回返工
+            {t('tsk.actions.reworkBtn')}
           </Button>
           <Button variant="danger" className="ml-auto" disabled={pending} aria-expanded={panel === 'abandon'} onClick={() => togglePanel('abandon')}>
-            放弃任务
+            {t('tsk.actions.abandonTask')}
           </Button>
         </div>
-        {mentionLogin ? <Note className="text-xs"><Link to="/accounts">检查可用登录</Link></Note> : null}
+        {mentionLogin ? <Note className="text-xs"><Link to="/accounts">{t('tsk.actions.checkAvailableLogins')}</Link></Note> : null}
         {inlinePanelNode}
         {errorNode}
       </section>
@@ -362,32 +368,32 @@ export function TaskActions({
 
   // State C — 待发起审阅 (no_review | stale_pass): clear card with 1-click launch + overrides.
   if (accepting && gated) {
-    const explanation = effectiveGate?.message ?? blocked ?? '当前产物还没有有效的独立审阅通过结论，发起独立审阅通过后即可验收。';
-    const mentionLogin = Boolean(error) || /登录|账号|凭据/.test(explanation);
+    const explanation = effectiveGate?.message ?? blocked ?? t('tsk.actions.noReviewExplanation');
+    const mentionLogin = Boolean(error) || LOGIN_MENTION_RE.test(explanation);
     return (
       <section
-        aria-label="验收"
+        aria-label={t('tsk.actions.acceptAria')}
         className={cn('grid gap-2.5 rounded-xl border border-waiting-border bg-waiting-soft p-3.5', className)}
       >
         <p className="text-sm font-semibold text-waiting-foreground">
-          {gateKind === 'stale_pass' ? '当前产物尚未重新审阅' : '这一轮已交付，需独立审阅后验收'}
+          {gateKind === 'stale_pass' ? t('tsk.actions.stalePassTitle') : t('tsk.actions.needsReviewTitle')}
         </p>
         <Note className="text-foreground">{explanation}</Note>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="primary" disabled={pending} onClick={() => void control.act('review')}>
-            {pending ? '发起中…' : '发起独立审阅'}
+            {pending ? t('tsk.common.startingEllipsis') : t('tsk.actions.startReviewBtn')}
           </Button>
           <Button variant="ghost" disabled={pending} aria-expanded={panel === 'accept_without_review'} onClick={() => togglePanel('accept_without_review')}>
             {ACCEPT_WITHOUT_REVIEW_LABEL}
           </Button>
           <Button variant="ghost" disabled={pending} aria-expanded={panel === 'rework'} onClick={() => togglePanel('rework')}>
-            退回返工
+            {t('tsk.actions.reworkBtn')}
           </Button>
           <Button variant="danger" className="ml-auto" disabled={pending} aria-expanded={panel === 'abandon'} onClick={() => togglePanel('abandon')}>
-            放弃任务
+            {t('tsk.actions.abandonTask')}
           </Button>
         </div>
-        {mentionLogin ? <Note className="text-xs"><Link to="/accounts">检查可用登录</Link></Note> : null}
+        {mentionLogin ? <Note className="text-xs"><Link to="/accounts">{t('tsk.actions.checkAvailableLogins')}</Link></Note> : null}
         {inlinePanelNode}
         {errorNode}
       </section>
@@ -398,30 +404,30 @@ export function TaskActions({
   if (accepting) {
     return (
       <section
-        aria-label="验收"
+        aria-label={t('tsk.actions.acceptAria')}
         className={cn('grid gap-2.5 rounded-xl border border-waiting-border bg-waiting-soft p-3.5', className)}
       >
-        <p className="text-sm font-semibold text-waiting-foreground">这一轮交回来了，等你验收</p>
+        <p className="text-sm font-semibold text-waiting-foreground">{t('tsk.actions.readyToAcceptTitle')}</p>
         <div className="flex flex-wrap items-end gap-2">
           <Textarea
             rows={1}
             className="max-h-[30vh] w-auto min-w-[180px] flex-1 overflow-y-auto"
             value={draft}
             readOnly={pending}
-            placeholder="验收备注（可选）"
-            aria-label="验收依据"
+            placeholder={t('tsk.actions.acceptNotePlaceholder')}
+            aria-label={t('tsk.actions.acceptBasisAria')}
             onChange={(event) => type(event.target.value)}
           />
           <Button variant="primary" disabled={pending} onClick={() => void control.act('accept')}>
-            {pending ? '发送中' : '验收通过'}
+            {pending ? t('common.sending') : t('tsk.actions.acceptPassBtn')}
           </Button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" disabled={pending} aria-expanded={panel === 'rework'} onClick={() => togglePanel('rework')}>
-            退回返工
+            {t('tsk.actions.reworkBtn')}
           </Button>
           <Button variant="danger" className="ml-auto" disabled={pending} aria-expanded={panel === 'abandon'} onClick={() => togglePanel('abandon')}>
-            放弃
+            {t('tsk.actions.abandonBtn')}
           </Button>
         </div>
         {inlinePanelNode}
@@ -434,7 +440,7 @@ export function TaskActions({
   const subtleBar = !goOn && !lost && !stop;
   return (
     <section
-      aria-label="处理这个任务"
+      aria-label={t('tsk.actions.handleTaskAria')}
       className={cn(
         'grid gap-2.5 rounded-xl border p-3.5',
         goOn || lost ? 'border-border bg-muted' : stop && !canAbandon && !canHold ? 'border-transparent p-0' : subtleBar ? 'border-border/70 bg-muted/40' : 'border-border bg-muted',
@@ -442,12 +448,12 @@ export function TaskActions({
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
-        {goOn ? <Button variant="primary" disabled={pending} onClick={() => void control.act('resume')}>继续</Button> : null}
-        {canHold ? <Button variant="secondary" disabled={pending} onClick={() => void control.act('hold', { reason: '' })}>暂停</Button> : null}
-        {stop ? <Button disabled={pending} onClick={() => void control.act('interrupt')}>中断</Button> : null}
+        {goOn ? <Button variant="primary" disabled={pending} onClick={() => void control.act('resume')}>{t('task.btnContinue')}</Button> : null}
+        {canHold ? <Button variant="secondary" disabled={pending} onClick={() => void control.act('hold', { reason: '' })}>{t('common.pause')}</Button> : null}
+        {stop ? <Button disabled={pending} onClick={() => void control.act('interrupt')}>{t('tsk.actions.interruptBtn')}</Button> : null}
         {canAbandon ? (
           <Button variant="danger" className="ml-auto" disabled={pending} aria-expanded={panel === 'abandon'} onClick={() => togglePanel('abandon')}>
-            放弃
+            {t('tsk.actions.abandonBtn')}
           </Button>
         ) : null}
       </div>
@@ -460,6 +466,7 @@ export function TaskActions({
 // A work waiting to be accepted, as the overview and work page show it: the answer is typed
 // and sent where the work is seen, without opening its page first.
 export function AcceptNow({ task, context }: { task: Task; context?: string | undefined }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const control = useTaskAct(task.id, () => { void client.invalidateQueries({ queryKey: [PAGE] }); });
   const { draft, pending, error, type } = control;
@@ -470,13 +477,13 @@ export function AcceptNow({ task, context }: { task: Task; context?: string | un
 
   if (inReview) {
     return (
-      <section className="overflow-hidden rounded-xl border border-border bg-raised shadow-sm" aria-label={`审阅中 · ${task.title}`}>
+      <section className="overflow-hidden rounded-xl border border-border bg-raised shadow-sm" aria-label={t('tsk.actions.acceptNowInReviewAria', { title: task.title })}>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3.5 py-2.5 text-sm">
           <StatusDot state="running" className="size-3.5" />
           <Link to={`/task/${encodeURIComponent(task.id)}`} className="font-medium no-underline wrap-anywhere hover:underline">{task.title}</Link>
-          <span className="text-xs text-muted-foreground">正在自动审阅中</span>
+          <span className="text-xs text-muted-foreground">{t('tsk.actions.autoReviewing')}</span>
           <Link to={reviewTaskId ? `/task/${encodeURIComponent(reviewTaskId)}` : `/task/${encodeURIComponent(task.id)}`} className="ml-auto text-xs">
-            查看审阅任务
+            {t('tsk.actions.viewReviewTask')}
           </Link>
         </div>
       </section>
@@ -484,10 +491,10 @@ export function AcceptNow({ task, context }: { task: Task; context?: string | un
   }
 
   return (
-    <section className="overflow-hidden rounded-xl border border-waiting-border bg-raised shadow-sm" aria-label={`待验收 · ${task.title}`}>
+    <section className="overflow-hidden rounded-xl border border-waiting-border bg-raised shadow-sm" aria-label={t('tsk.actions.acceptNowReadyAria', { title: task.title })}>
       <p className="flex items-center gap-1.5 border-b border-waiting-border bg-waiting-soft px-3.5 py-2 text-xs font-medium text-waiting-foreground">
         <StatusDot state="ready" className="size-3.5" />
-        {reviewHeld ? '独立审阅已停住' : '待验收'}
+        {reviewHeld ? t('tsk.actions.reviewHeldTitle') : t('home.readyReview')}
         {context ? <span className="min-w-0 truncate font-normal">{`· ${context}`}</span> : null}
       </p>
       <div className="grid gap-2.5 px-3.5 py-3">
@@ -497,13 +504,13 @@ export function AcceptNow({ task, context }: { task: Task; context?: string | un
         </div>
         {reviewHeld ? (
           <p className="text-sm">
-            {effectiveGate?.review_reason ?? effectiveGate?.message ?? task.accept_blocked ?? '独立审阅已停住'}{' '}
-            <Link to={reviewTaskId ? `/task/${encodeURIComponent(reviewTaskId)}` : `/task/${encodeURIComponent(task.id)}`}>前往处理审阅任务</Link>
+            {effectiveGate?.review_reason ?? effectiveGate?.message ?? task.accept_blocked ?? t('tsk.actions.reviewHeldTitle')}{' '}
+            <Link to={reviewTaskId ? `/task/${encodeURIComponent(reviewTaskId)}` : `/task/${encodeURIComponent(task.id)}`}>{t('tsk.actions.goHandleReview')}</Link>
           </p>
         ) : task.accept_blocked || effectiveGate ? (
           <p className="text-sm">
             {effectiveGate?.message ?? task.accept_blocked}{' '}
-            <Link to={`/task/${encodeURIComponent(task.id)}`}>前往请求审阅</Link>
+            <Link to={`/task/${encodeURIComponent(task.id)}`}>{t('tsk.actions.goRequestReview')}</Link>
           </p>
         ) : (
           <div className="flex flex-wrap items-end gap-2">
@@ -512,11 +519,11 @@ export function AcceptNow({ task, context }: { task: Task; context?: string | un
               className="max-h-[30vh] w-auto min-w-[160px] flex-1 overflow-y-auto"
               value={draft}
               readOnly={pending}
-              placeholder="验收备注（可选）"
-              aria-label="验收依据"
+              placeholder={t('tsk.actions.acceptNotePlaceholder')}
+              aria-label={t('tsk.actions.acceptBasisAria')}
               onChange={(event) => type(event.target.value)}
             />
-            <Button variant="primary" disabled={pending} onClick={() => void control.act('accept')}>{pending ? '发送中' : '验收通过'}</Button>
+            <Button variant="primary" disabled={pending} onClick={() => void control.act('accept')}>{pending ? t('common.sending') : t('tsk.actions.acceptPassBtn')}</Button>
           </div>
         )}
         {error ? <p role="alert" className="text-sm text-destructive wrap-anywhere">{error}</p> : null}

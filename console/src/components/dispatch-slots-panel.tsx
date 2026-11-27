@@ -2,6 +2,7 @@
 // AccountsPage (global defaults + Dispatch Simulator) and ProjectSettings (per-project overrides).
 import { ArrowDown, ChevronDown, Layers, SlidersHorizontal } from 'lucide-react';
 import { useMemo, useState, type ReactNode } from 'react';
+import { t as translate } from '@shared/i18n.ts';
 import { tierDisplayLabel } from '@shared/labels.ts';
 import { TIERS, tierValueFrom, type TierId } from '@shared/tiers.ts';
 import {
@@ -39,7 +40,7 @@ export interface LogicalAccountEntry {
 }
 
 function usageSummaryOf(usage: NonNullable<Account['status']>['usage']): { label: string; remain: number } {
-  if (usage.length === 0) return { label: '按量/无窗', remain: 100 };
+  if (usage.length === 0) return { label: translate('acct.slots.usagePayg'), remain: 100 };
   for (const item of usage) {
     const special = formatSpecialQuotaLabel(item.window);
     if (special) return { label: `${special.label} ${special.value}`, remain: 100 };
@@ -49,8 +50,8 @@ function usageSummaryOf(usage: NonNullable<Account['status']>['usage']): { label
     if (item.used > peak.used) peak = item;
   }
   const remain = Math.max(0, Math.min(100, Math.round((1 - peak.used) * 100)));
-  const prefix = peak.window === 'five_hour' ? '5h' : peak.window === 'seven_day' ? '7d' : '窗口';
-  return { label: `${prefix} 剩 ${remain}%`, remain };
+  const prefix = peak.window === 'five_hour' ? '5h' : peak.window === 'seven_day' ? '7d' : translate('acct.slots.windowGeneric');
+  return { label: translate('acct.slots.windowRemain', { prefix, remain }), remain };
 }
 
 function supportedTiersOf(tiersList: readonly (Record<string, { kind: string; text: string } | undefined> | undefined)[]): Record<TierId, boolean> {
@@ -121,7 +122,7 @@ export function buildLogicalAccountEntries(
       identityHint,
       executor: account.executor,
       route: account.provider?.line ?? null,
-      scopeShort: '全机分发',
+      scopeShort: translate('acct.scope.allMachines'),
       quotaLabel: q.label,
       quotaRemain: q.remain,
       maxRuns: account.max_runs ?? null,
@@ -193,7 +194,7 @@ export function buildLogicalAccountEntries(
     const identityHint = [
       ...(accounts.length === 1 && accounts[0] !== label ? [accounts[0]] : []),
       ...(plans.length === 1 ? [plans[0]] : []),
-      ...(route && !label.includes(route) ? [`线路 ${route}`] : []),
+      ...(route && !label.includes(route) ? [translate('acct.routeLabel', { route })] : []),
       ...(members.length === 1 && route ? [machineNames[0]] : []),
     ].join(' · ') || null;
     const online = members.filter((m) => Boolean(m.machine.node?.connected)).map((m) => m.machine.id);
@@ -206,7 +207,7 @@ export function buildLogicalAccountEntries(
       identityHint,
       executor,
       route,
-      scopeShort: `${online.length}/${members.length} 台`,
+      scopeShort: translate('acct.slots.scopeMachines', { online: online.length, total: members.length }),
       quotaLabel: q.label,
       quotaRemain: q.remain,
       maxRuns,
@@ -259,7 +260,7 @@ export function DispatchSlotsPanel({
   compact = false,
   hideSimulator = false,
   showTierSupport = false,
-  ariaLabel = '各档位全局默认派发策略',
+  ariaLabel,
   hint,
 }: {
   page: AccountsAndMachines;
@@ -274,7 +275,8 @@ export function DispatchSlotsPanel({
   ariaLabel?: string;
   hint?: ReactNode;
 }) {
-  const { locale, t, bi } = useI18n();
+  const { locale, t } = useI18n();
+  const resolvedAriaLabel = ariaLabel ?? t('acct.slots.defaultAria');
   const [simOpen, setSimOpen] = useState(false);
   const [simTier, setSimTier] = useState<TierId>('decide');
   const [simMachine, setSimMachine] = useState<string>('any');
@@ -321,7 +323,7 @@ export function DispatchSlotsPanel({
         });
         const winner = sorted[0]!;
         const host = simMachine === 'any'
-          ? (winner.availableMachines[0] ?? '任一在线机器')
+          ? (winner.availableMachines[0] ?? t('acct.slots.simAnyOnlineHost'))
           : simMachine;
         return {
           ok: true as const,
@@ -329,23 +331,23 @@ export function DispatchSlotsPanel({
           winner,
           host,
           reason: candidates.length > 1
-            ? `同属 ${slotName} 槽并行均衡：活跃最少（${simBusy[winner.key] ?? 0} 轮）且剩额更优（${winner.quotaLabel}）`
+            ? t('acct.slots.simReasonBalanced', { slot: slotName, active: simBusy[winner.key] ?? 0, quota: winner.quotaLabel })
             : slotName === 'P2'
-              ? 'P1 槽无可用或已满载，自动降级至 P2'
-              : '命中 P1 主力槽',
+              ? t('acct.slots.simReasonFallback')
+              : t('acct.slots.simReasonPrimary'),
         };
       }
     }
     return {
       ok: false as const,
-      reason: '当前条件下 P1 / P2 槽均无可用候选，任务将等待容量释放。',
+      reason: t('acct.slots.simReasonNoCandidate'),
     };
-  }, [slotsByTier, simTier, simMachine, simBusy, entryMap, page.machines.length]);
+  }, [slotsByTier, simTier, simMachine, simBusy, entryMap, page.machines.length, t]);
 
   const showSim = !hideSimulator && entries.length > 0;
 
   return (
-    <section aria-label={ariaLabel} className={cn('space-y-3', !compact && 'max-w-[960px]')}>
+    <section aria-label={resolvedAriaLabel} className={cn('space-y-3', !compact && 'max-w-[960px]')}>
       {/* Compact single-line principle hint */}
       {hint !== null ? (
         <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -353,7 +355,10 @@ export function DispatchSlotsPanel({
           <span>
             {hint ?? (
               <>
-                <strong className="font-medium text-foreground">P1 主力槽</strong>内按「最少活跃并发 → 剩余额度优先」自动均衡；全满或冷却时降级至 <strong className="font-medium text-foreground">P2 备选槽</strong>；同执行器不同线路（如内网与官网）会自动拆行独立设槽。
+                <strong className="font-medium text-foreground">{t('acct.slots.hintP1Strong')}</strong>
+                {t('acct.slots.hintMid')}
+                <strong className="font-medium text-foreground">{t('acct.slots.hintP2Strong')}</strong>
+                {t('acct.slots.hintEnd')}
               </>
             )}
           </span>
@@ -406,21 +411,22 @@ export function DispatchSlotsPanel({
                   {TIERS.map((tier) => {
                     const supported = !showTierSupport || entry.supportedTiers[tier.id];
                     const current = slotOf(tier.id, entry.key);
+                    const tierLabel = tierDisplayLabel(tier.id, locale);
                     return (
                       <div key={tier.id} className="flex flex-col items-center gap-1 sm:justify-center">
-                        <span className="text-2xs text-muted-foreground sm:hidden">{tier.label}</span>
+                        <span className="text-2xs text-muted-foreground sm:hidden">{tierLabel}</span>
                         {!supported ? (
-                          <span className="text-2xs text-faint">未配档位</span>
+                          <span className="text-2xs text-faint">{t('slots.unconfiguredTier')}</span>
                         ) : (
                           <div
                             role="group"
-                            aria-label={`${tier.label} ${entry.name} 槽位`}
+                            aria-label={t('acct.slots.rowGroupAria', { tier: tierLabel, name: entry.name })}
                             className="inline-flex items-center rounded-md border border-border bg-muted/70 p-0.5 text-2xs"
                           >
                             {([
                               ['p1', 'P1'],
                               ['p2', 'P2'],
-                              ['off', '停'],
+                              ['off', t('slots.offLabel')],
                             ] as const).map(([slotKey, label]) => {
                               const active = current === slotKey;
                               return (
@@ -429,7 +435,7 @@ export function DispatchSlotsPanel({
                                   type="button"
                                   disabled={busy}
                                   aria-pressed={active}
-                                  aria-label={`把 ${entry.name} 设为 ${label}`}
+                                  aria-label={t('acct.slots.setSlotAria', { name: entry.name, slot: label })}
                                   onClick={() => { if (!active) moveKey(tier.id, entry.key, slotKey); }}
                                   className={cn(
                                     'cursor-pointer rounded px-2 py-0.5 font-mono transition-colors disabled:opacity-50',
@@ -456,7 +462,7 @@ export function DispatchSlotsPanel({
             ))}
           </div>
         ) : (
-          <p className="px-4 py-4 text-xs text-muted-foreground">暂无可用的登录或渠道。</p>
+          <p className="px-4 py-4 text-xs text-muted-foreground">{t('acct.slots.emptyEntries')}</p>
         )}
 
         {/* Built-in Live Effective Topology Footer — 3-column tier-aligned cards */}
@@ -497,7 +503,7 @@ export function DispatchSlotsPanel({
                 <div
                   key={tier.id}
                   role="region"
-                  aria-label={bi(`${tier.label}派发槽位`, `${tierTitle} dispatch slots`)}
+                  aria-label={t('acct.slots.tierRegionAria', { tier: tierTitle })}
                   className="flex flex-col gap-2 rounded-lg border border-border/80 bg-raised/90 p-2.5"
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -563,33 +569,33 @@ export function DispatchSlotsPanel({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <label className="inline-flex items-center gap-1.5 text-muted-foreground">
-                目标机器
+                {t('slots.simTargetMachine')}
                 <select
-                  aria-label="模拟目标机器"
+                  aria-label={t('acct.slots.simTargetMachineAria')}
                   value={simMachine}
                   onChange={(e) => setSimMachine(e.target.value)}
                   className="h-7 rounded-md border border-border bg-background px-2 text-xs text-foreground"
                 >
-                  <option value="any">不限机器（自动负载均衡）</option>
+                  <option value="any">{t('slots.simAnyMachine')}</option>
                   {machineOptions.map((m) => (
-                    <option key={m.id} value={m.id}>{`限定 ${m.id}${m.online ? '' : '（离线）'}`}</option>
+                    <option key={m.id} value={m.id}>{t(m.online ? 'acct.slots.simPinMachine' : 'acct.slots.simPinMachineOffline', { id: m.id })}</option>
                   ))}
                 </select>
               </label>
               <label className="inline-flex items-center gap-1.5 text-muted-foreground">
-                档位
+                {t('slots.simTier')}
                 <select
-                  aria-label="模拟任务档位"
+                  aria-label={t('acct.slots.simTierAria')}
                   value={simTier}
                   onChange={(e) => setSimTier(e.target.value as TierId)}
                   className="h-7 rounded-md border border-border bg-background px-2 text-xs text-foreground"
                 >
-                  {TIERS.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                  {TIERS.map((tier) => <option key={tier.id} value={tier.id}>{tierDisplayLabel(tier.id, locale)}</option>)}
                 </select>
               </label>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-muted-foreground">模拟并发：</span>
+              <span className="text-muted-foreground">{t('slots.simConcurrency')}</span>
               {entries.map((entry) => {
                 const cur = simBusy[entry.key] ?? 0;
                 const cap = entry.maxRuns ?? 3;
@@ -610,7 +616,7 @@ export function DispatchSlotsPanel({
                   onClick={() => setSimBusy({})}
                   className="cursor-pointer text-2xs text-muted-foreground underline hover:text-foreground"
                 >
-                  归零
+                  {t('acct.slots.simResetBusy')}
                 </button>
               ) : null}
             </div>
@@ -627,8 +633,8 @@ export function DispatchSlotsPanel({
             <Layers className="size-3.5 flex-none" />
             <span>
               {simulation.ok
-                ? <><strong>{`命中 → ${simulation.winner.name} @ ${simulation.host}（${simulation.slot} 槽）`}</strong> · {simulation.reason}</>
-                : <><strong>等待容量 → </strong>{simulation.reason}</>}
+                ? <><strong>{t('acct.slots.simMatched', { name: simulation.winner.name, host: simulation.host, slot: simulation.slot })}</strong> · {simulation.reason}</>
+                : <><strong>{t('acct.slots.simWaiting')}</strong>{simulation.reason}</>}
             </span>
           </div>
         </div>

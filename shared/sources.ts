@@ -32,6 +32,7 @@
 // does not speak it takes no round at all, and so none that has a source. B changes that
 // constant.
 
+import { t } from './i18n.ts';
 import { machineRemote, remoteHasSecret } from './remote.ts';
 
 // The ledger version this shape lands in. The constant is the agreement between blocks; A moves
@@ -196,32 +197,32 @@ export type SourceView = Source & { default: boolean; label: string };
 // file is shared and does not import service/, so the ledger's entry turns it into InputError.
 // Nothing downstream re-checks what this accepted.
 export function parseSources(input: unknown): Source[] {
-  if (!Array.isArray(input)) throw new Error('代码来源要是一个清单');
+  if (!Array.isArray(input)) throw new Error(t('sh.sources.err.notList'));
   const seen = new Set<string>();
   return input.map((value, index) => {
-    const at = `第 ${index + 1} 个代码来源`;
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${at}不对：要是一项来源`);
+    const at = t('sh.sources.itemAt', { index: index + 1 });
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(t('sh.sources.err.notObject', { at }));
     const item = value as Record<string, unknown>;
     const id = typeof item.id === 'string' ? item.id.trim() : '';
-    if (id === '') throw new Error(`${at}没有编号`);
-    if (seen.has(id)) throw new Error(`代码来源的编号重复了：${id}`);
+    if (id === '') throw new Error(t('sh.sources.err.missingId', { at }));
+    if (seen.has(id)) throw new Error(t('sh.sources.err.duplicateId', { id }));
     seen.add(id);
     if (item.kind === 'repo') {
       const url = typeof item.url === 'string' ? item.url.trim() : '';
-      if (url === '') throw new Error(`${at}（仓库）要填地址`);
-      if (remoteHasSecret(url)) throw new Error(`${at}（仓库）的地址里带着登录名、密码或查询串：机器上不该有秘密，去掉它们再填`);
+      if (url === '') throw new Error(t('sh.sources.err.repoMissingUrl', { at }));
+      if (remoteHasSecret(url)) throw new Error(t('sh.sources.err.repoHasSecret', { at }));
       const remote = machineRemote(url);
-      if (remote === null) throw new Error(`${at}的仓库地址机器用不了：只收 https、http、ssh 或 git 的网络地址，不能带秘密，也不是本机路径或 file://`);
+      if (remote === null) throw new Error(t('sh.sources.err.repoBadUrl', { at }));
       return { id, kind: 'repo', url: remote };
     }
     if (item.kind === 'folder') {
       const machineUid = typeof item.machine_uid === 'string' ? item.machine_uid.trim() : '';
-      if (machineUid === '') throw new Error(`${at}（工作目录）要选一台机器`);
+      if (machineUid === '') throw new Error(t('sh.sources.err.folderMissingMachine', { at }));
       const path = typeof item.path === 'string' ? item.path.trim() : '';
-      if (path === '') throw new Error(`${at}（工作目录）要填文件夹路径`);
+      if (path === '') throw new Error(t('sh.sources.err.folderMissingPath', { at }));
       return { id, kind: 'folder', machine_uid: machineUid, path };
     }
-    throw new Error(`${at}只有两种：仓库（repo）或机器上的文件夹（folder）`);
+    throw new Error(t('sh.sources.err.badKind', { at }));
   });
 }
 
@@ -253,6 +254,8 @@ export function snapshotSourceOf(source: Source): SnapshotSource {
 // caller passes no name, and the label says so instead of showing a registration id, which is
 // not the owner's word for anything.
 export function sourceLabel(source: Source, machineName?: string): string {
-  if (source.kind === 'repo') return `仓库 ${source.url}`;
-  return machineName === undefined ? `已删除的机器上的 ${source.path}` : `${machineName} 上的 ${source.path}`;
+  if (source.kind === 'repo') return t('sh.sources.label.repo', { url: source.url });
+  return machineName === undefined
+    ? t('sh.sources.label.folderDeletedMachine', { path: source.path })
+    : t('sh.sources.label.folderMachine', { machine: machineName, path: source.path });
 }

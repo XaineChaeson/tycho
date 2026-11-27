@@ -3,7 +3,7 @@
 // and active project knowledge & skills.
 import { useQuery } from '@tanstack/react-query';
 import { BellOff, BellRing, BookOpen, ChevronDown, CornerDownRight, FolderOpen, Layers } from 'lucide-react';
-import { useEffect, useId, useMemo, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Link } from 'react-router';
 import { GLOBAL_LABEL, KIND_LABELS } from '@shared/knowledge.ts';
 import { taskLine, WORK_GROUPS, workGroup } from '@shared/labels.ts';
@@ -13,6 +13,7 @@ import { TaskIdentityStrip } from '@/components/task-identity-strip';
 import { Progress } from '@/components/work-row';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useI18n } from '@/lib/i18n';
 import { knowledgeQuery, projectFilesQuery, tasksQuery } from '@/lib/queries';
 import type { KnowledgeEntry, ProjectFileSummary, Task } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -28,10 +29,10 @@ export interface ProjectWorkspaceRailProps {
   onAttachToComposer?: (file: ProjectFileSummary) => void;
 }
 
-const RAIL_TABS: readonly { id: RailTab; label: string; icon: typeof Layers }[] = [
-  { id: 'threads', label: '线程', icon: Layers },
-  { id: 'files', label: '文件', icon: FolderOpen },
-  { id: 'knowledge', label: '知识', icon: BookOpen },
+const RAIL_TABS: readonly { id: RailTab; labelKey: string; icon: typeof Layers }[] = [
+  { id: 'threads', labelKey: 'proj.rail.tabThreads', icon: Layers },
+  { id: 'files', labelKey: 'proj.rail.tabFiles', icon: FolderOpen },
+  { id: 'knowledge', labelKey: 'nav.knowledge', icon: BookOpen },
 ];
 
 const MAX_RECENT_RESUMABLE = 10;
@@ -41,6 +42,7 @@ export const SNOOZED_STORAGE_KEY = 'tycho.snoozedTasks';
 export interface SnoozeEntry {
   at: number;
   state: string;
+  updatedAt?: string;
 }
 
 export type SnoozeMap = Record<string, SnoozeEntry>;
@@ -62,7 +64,13 @@ function readSnoozed(): SnoozeMap {
         && typeof (entry as SnoozeEntry).at === 'number'
         && typeof (entry as SnoozeEntry).state === 'string'
       ) {
-        clean[id] = { at: (entry as SnoozeEntry).at, state: (entry as SnoozeEntry).state };
+        clean[id] = {
+          at: (entry as SnoozeEntry).at,
+          state: (entry as SnoozeEntry).state,
+          ...(typeof (entry as { updatedAt?: unknown }).updatedAt === 'string'
+            ? { updatedAt: (entry as { updatedAt: string }).updatedAt }
+            : {}),
+        };
       }
     }
     return clean;
@@ -80,8 +88,18 @@ function writeSnoozed(map: SnoozeMap): void {
   }
 }
 
-function shouldAutoUnsnooze(task: Task, entry: SnoozeEntry): boolean {
-  return (task.state === 'waiting_person' || task.state === 'ready') && task.state !== entry.state;
+function shouldAutoUnsnooze(task: Task, entry: SnoozeEntry & { updatedAt?: string }): boolean {
+  if (task.state !== 'waiting_person' && task.state !== 'ready') return false;
+  if (task.state !== entry.state) return true;
+  // A fresh attention episode on the same state (e.g. waiting_person -> running -> waiting_person)
+  // advances updated_at beyond the snoozed revision and must unsnooze automatically.
+  const taskStamp = task.updated_at ?? '';
+  if (entry.updatedAt && taskStamp && taskStamp !== entry.updatedAt) return true;
+  if (!entry.updatedAt && taskStamp) {
+    const updatedMs = Date.parse(taskStamp);
+    if (Number.isFinite(updatedMs) && updatedMs > entry.at) return true;
+  }
+  return false;
 }
 
 const isInReview = (task: Task): boolean =>
@@ -94,7 +112,7 @@ const isInReview = (task: Task): boolean =>
 type ActionPillTone = 'waiting' | 'running' | 'failed' | 'brand' | 'ended';
 
 interface ActionPill {
-  label: string;
+  labelKey: string;
   tone: ActionPillTone;
   resumable?: boolean;
 }
@@ -109,25 +127,25 @@ const PILL_STYLES: Record<ActionPillTone, string> = {
 
 function actionPillOf(task: ResumableTask, showResumablePill: boolean): ActionPill | null {
   if (task.state === 'waiting_person' || task.summary?.dot === 'waiting_person') {
-    return { label: '待回复', tone: 'waiting' };
+    return { labelKey: 'proj.rail.pillReply', tone: 'waiting' };
   }
   if (task.state === 'held') {
-    return { label: '已停住', tone: 'failed' };
+    return { labelKey: 'proj.rail.pillHeld', tone: 'failed' };
   }
   if (isInReview(task)) {
-    return { label: '审阅中', tone: 'running' };
+    return { labelKey: 'proj.rail.pillReviewing', tone: 'running' };
   }
   if (task.state === 'ready') {
-    return { label: '待验收', tone: 'waiting' };
+    return { labelKey: 'proj.rail.pillReady', tone: 'waiting' };
   }
   if (task.state === 'running' || task.state === 'stopping') {
-    return { label: '执行中', tone: 'running' };
+    return { labelKey: 'proj.rail.pillRunning', tone: 'running' };
   }
   if (task.state === 'queued' || task.state === 'waiting_timer' || task.state === 'needs_verification') {
-    return { label: '排队中', tone: 'ended' };
+    return { labelKey: 'proj.rail.pillQueued', tone: 'ended' };
   }
   if (task.state === 'done' && showResumablePill && task.resumable === true) {
-    return { label: '可续接', tone: 'brand', resumable: true };
+    return { labelKey: 'project.resumable', tone: 'brand', resumable: true };
   }
   return null;
 }
@@ -143,12 +161,12 @@ function taskSortMs(task: Task): number {
   return Number.isNaN(ms) ? 0 : ms;
 }
 
-function formatMachineBadge(machineIds: readonly string[]): { label: string; title: string } {
+function formatMachineBadge(machineIds: readonly string[], format: (machines: string) => string): { label: string; title: string } {
   const full = machineIds.join(', ');
   const short = machineIds.length <= 2
     ? full
     : `${machineIds.slice(0, 2).join(', ')} +${machineIds.length - 2}`;
-  return { label: `机器: ${short}`, title: `机器: ${full}` };
+  return { label: format(short), title: format(full) };
 }
 
 function GroupHeader({
@@ -190,6 +208,7 @@ function ThreadCard({
   onSelect: (taskId: string) => void;
   onToggleSnooze: (task: ResumableTask) => void;
 }) {
+  const { t } = useI18n();
   const line = taskLine(task);
   const timestamp = taskTimestamp(task);
   const pill = actionPillOf(task, showResumablePill);
@@ -222,7 +241,7 @@ function ThreadCard({
                 )}
               >
                 {pill.resumable ? <CornerDownRight className="size-2.5" aria-hidden="true" /> : null}
-                {pill.label}
+                {t(pill.labelKey)}
               </span>
             ) : null}
           </span>
@@ -250,8 +269,8 @@ function ThreadCard({
 
       <button
         type="button"
-        aria-label={snoozed ? '取消延后' : '延后'}
-        title={snoozed ? '取消延后，恢复到列表' : '稍后提醒（延后）'}
+        aria-label={snoozed ? t('proj.rail.unsnooze') : t('proj.rail.snooze')}
+        title={snoozed ? t('proj.rail.unsnoozeTitle') : t('proj.rail.snoozeTitle')}
         onClick={(event) => {
           event.stopPropagation();
           onToggleSnooze(task);
@@ -265,12 +284,12 @@ function ThreadCard({
         {snoozed ? (
           <>
             <BellRing className="size-2.5" aria-hidden="true" />
-            <span>取消延后</span>
+            <span>{t('proj.rail.unsnooze')}</span>
           </>
         ) : (
           <>
             <BellOff className="size-2.5" aria-hidden="true" />
-            <span>延后</span>
+            <span>{t('proj.rail.snooze')}</span>
           </>
         )}
       </button>
@@ -303,10 +322,11 @@ function ThreadsPane({
   onSelectThread: (taskId: string) => void;
   onToggleSnooze: (task: ResumableTask) => void;
 }) {
+  const { t } = useI18n();
   const [doneOpen, setDoneOpen] = useState(false);
   const [snoozedOpen, setSnoozedOpen] = useState(false);
   const hasActive = waitingThreads.length > 0 || runningThreads.length > 0;
-  const showDoneList = !hasActive || doneOpen || recentDoneThreads.some((t) => t.id === selectedThreadId);
+  const showDoneList = !hasActive || doneOpen || recentDoneThreads.some((task) => task.id === selectedThreadId);
   const hasAny = hasActive
     || recentDoneThreads.length > 0
     || snoozedThreads.length > 0;
@@ -324,8 +344,8 @@ function ThreadsPane({
         ) : hasAny ? (
           <div className="flex flex-col gap-4">
             {waitingThreads.length > 0 ? (
-              <section aria-label="待你处理">
-                <GroupHeader tone="waiting" title="待你处理" count={waitingThreads.length} />
+              <section aria-label={t('proj.rail.groupWaiting')}>
+                <GroupHeader tone="waiting" title={t('proj.rail.groupWaiting')} count={waitingThreads.length} />
                 <div className="flex flex-col gap-1">
                   {waitingThreads.map((task) => (
                     <ThreadCard
@@ -344,8 +364,8 @@ function ThreadsPane({
             ) : null}
 
             {runningThreads.length > 0 ? (
-              <section aria-label="进行中">
-                <GroupHeader tone="running" pulse title="进行中" count={runningThreads.length} />
+              <section aria-label={t('proj.rail.groupRunning')}>
+                <GroupHeader tone="running" pulse title={t('proj.rail.groupRunning')} count={runningThreads.length} />
                 <div className="flex flex-col gap-1">
                   {runningThreads.map((task) => (
                     <ThreadCard
@@ -364,7 +384,7 @@ function ThreadsPane({
             ) : null}
 
             {recentDoneThreads.length > 0 ? (
-              <section aria-label="近期可续接" className={cn(hasActive && 'border-t border-border/70 pt-2')}>
+              <section aria-label={t('proj.rail.groupResumable')} className={cn(hasActive && 'border-t border-border/70 pt-2')}>
                 {hasActive ? (
                   <button
                     type="button"
@@ -373,7 +393,7 @@ function ThreadsPane({
                     className="flex w-full items-center gap-1.5 rounded-sm px-1 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
                   >
                     <Dot tone="success" pulse={false} />
-                    <span className="font-medium">近期可续接</span>
+                    <span className="font-medium">{t('proj.rail.groupResumable')}</span>
                     <span className="rounded-xs bg-hover px-1.5 font-mono text-2xs leading-4 text-muted-foreground tabular-nums">
                       {recentDoneThreads.length}
                     </span>
@@ -386,7 +406,7 @@ function ThreadsPane({
                     />
                   </button>
                 ) : (
-                  <GroupHeader tone="success" title="近期可续接" count={recentDoneThreads.length} />
+                  <GroupHeader tone="success" title={t('proj.rail.groupResumable')} count={recentDoneThreads.length} />
                 )}
                 {showDoneList ? (
                   <div className="mt-1 flex flex-col gap-1">
@@ -408,7 +428,7 @@ function ThreadsPane({
             ) : null}
 
             {snoozedThreads.length > 0 ? (
-              <section aria-label="已延后" className="border-t border-border/70 pt-2">
+              <section aria-label={t('proj.rail.groupSnoozed')} className="border-t border-border/70 pt-2">
                 <button
                   type="button"
                   aria-expanded={snoozedOpen}
@@ -416,7 +436,7 @@ function ThreadsPane({
                   className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left text-xs text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
                 >
                   <BellOff className="size-3 flex-none text-faint" aria-hidden="true" />
-                  <span className="font-medium">已延后</span>
+                  <span className="font-medium">{t('proj.rail.groupSnoozed')}</span>
                   <span className="rounded-full bg-hover px-1.5 text-2xs leading-4 text-muted-foreground tabular-nums">
                     {snoozedThreads.length}
                   </span>
@@ -450,7 +470,7 @@ function ThreadsPane({
         ) : (
           <div className="rounded-lg border border-dashed border-border-strong bg-muted/35 px-3 py-5 text-center">
             <Note className="text-xs leading-relaxed">
-              暂无线程。给负责人发消息，建好的执行线程会显示在这里。
+              {t('proj.rail.noThreads')}
             </Note>
           </div>
         )}
@@ -461,7 +481,7 @@ function ThreadsPane({
           to={`/projects/${encodeURIComponent(projectId)}/work`}
           className="text-muted-foreground no-underline transition-colors hover:text-foreground"
         >
-          全部工作 →
+          {t('proj.rail.allWorkLink')}
         </Link>
       </footer>
     </div>
@@ -479,8 +499,11 @@ function KnowledgeEntryCard({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useI18n();
   const isGlobal = entry.project_ids === null;
-  const machineBadge = machineIds && machineIds.length > 0 ? formatMachineBadge(machineIds) : null;
+  const machineBadge = machineIds && machineIds.length > 0
+    ? formatMachineBadge(machineIds, (machines) => t('proj.rail.machineBadge', { machines }))
+    : null;
   const trimmedBody = entry.body.trim();
   const bodyPreview = trimmedBody.length > KNOWLEDGE_PREVIEW_LIMIT
     ? `${trimmedBody.slice(0, KNOWLEDGE_PREVIEW_LIMIT).trimEnd()}…`
@@ -503,7 +526,7 @@ function KnowledgeEntryCard({
               tone={isGlobal ? 'plain' : 'running'}
               className="min-h-4 px-1.5 py-0 text-2xs leading-3.5"
             >
-              {isGlobal ? GLOBAL_LABEL : '本项目'}
+              {isGlobal ? GLOBAL_LABEL : t('proj.rail.scopeThisProject')}
             </Badge>
             {entry.kind === 'skill' ? (
               <Badge tone="waiting" className="min-h-4 px-1.5 py-0 text-2xs leading-3.5">
@@ -534,7 +557,7 @@ function KnowledgeEntryCard({
         <div className="grid gap-2 border-t border-border/80 bg-muted/35 px-2.5 py-2 text-xs">
           {entry.when_to_use.trim() ? (
             <div className="rounded-md border border-border/70 bg-background/70 px-2 py-1.5">
-              <span className="block text-2xs font-medium text-faint">触发场景</span>
+              <span className="block text-2xs font-medium text-faint">{t('proj.rail.whenToUse')}</span>
               <p className="mt-0.5 text-xs leading-relaxed text-foreground wrap-anywhere">
                 {entry.when_to_use.trim()}
               </p>
@@ -552,7 +575,7 @@ function KnowledgeEntryCard({
               to={`/knowledge/entries/${encodeURIComponent(entry.id)}`}
               className="text-2xs font-medium text-link no-underline hover:underline"
             >
-              在知识库编辑 →
+              {t('proj.rail.editInKnowledge')}
             </Link>
           </div>
         </div>
@@ -576,6 +599,7 @@ function KnowledgePane({
   loading: boolean;
   error: string | undefined;
 }) {
+  const { t } = useI18n();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const toggleEntry = (id: string) => {
     setExpandedIds((prev) => {
@@ -602,8 +626,8 @@ function KnowledgePane({
         ) : hasAny ? (
           <div className="flex flex-col gap-4">
             {residentEntries.length > 0 ? (
-              <section aria-label="常驻规则与记忆">
-                <GroupHeader tone="running" pulse={false} title="常驻规则与记忆" count={residentEntries.length} />
+              <section aria-label={t('proj.rail.groupResident')}>
+                <GroupHeader tone="running" pulse={false} title={t('proj.rail.groupResident')} count={residentEntries.length} />
                 <div className="flex flex-col gap-1.5">
                   {residentEntries.map((entry) => (
                     <KnowledgeEntryCard
@@ -619,8 +643,8 @@ function KnowledgePane({
             ) : null}
 
             {onDemandEntries.length > 0 ? (
-              <section aria-label="按需知识与技能">
-                <GroupHeader tone="ended" title="按需知识与技能" count={onDemandEntries.length} />
+              <section aria-label={t('proj.rail.groupOnDemand')}>
+                <GroupHeader tone="ended" title={t('proj.rail.groupOnDemand')} count={onDemandEntries.length} />
                 <div className="flex flex-col gap-1.5">
                   {onDemandEntries.map((entry) => (
                     <KnowledgeEntryCard
@@ -638,7 +662,7 @@ function KnowledgePane({
         ) : (
           <div className="rounded-lg border border-dashed border-border-strong bg-muted/35 px-3 py-5 text-center">
             <Note className="text-xs leading-relaxed">
-              暂无适用于本项目的生效知识条目。
+              {t('proj.rail.noKnowledge')}
             </Note>
           </div>
         )}
@@ -649,13 +673,13 @@ function KnowledgePane({
           to="/knowledge"
           className="text-muted-foreground no-underline transition-colors hover:text-foreground"
         >
-          管理全部知识 →
+          {t('proj.rail.manageKnowledgeLink')}
         </Link>
         <Link
           to={`/projects/${encodeURIComponent(projectId)}/settings`}
           className="text-muted-foreground no-underline transition-colors hover:text-foreground"
         >
-          项目常驻规则 →
+          {t('proj.rail.projectRulesLink')}
         </Link>
       </footer>
     </div>
@@ -670,10 +694,12 @@ export function ProjectWorkspaceRail({
   onSelectThread,
   onAttachToComposer,
 }: ProjectWorkspaceRailProps) {
+  const { t } = useI18n();
   const idPrefix = useId();
   const tasksRes = useQuery(tasksQuery);
   const filesRes = useQuery(projectFilesQuery(projectId));
   const knowledgeRes = useQuery(knowledgeQuery);
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const [snoozed, setSnoozed] = useState<SnoozeMap>(readSnoozed);
 
   // Auto-unsnooze any task whose state transitioned to waiting_person or ready after it was snoozed.
@@ -702,7 +728,7 @@ export function ProjectWorkspaceRail({
       if (next[task.id]) {
         delete next[task.id];
       } else {
-        next[task.id] = { at: Date.now(), state: task.state };
+        next[task.id] = { at: Date.now(), state: task.state, ...(task.updated_at ? { updatedAt: task.updated_at } : {}) };
       }
       writeSnoozed(next);
       return next;
@@ -786,11 +812,16 @@ export function ProjectWorkspaceRail({
   };
 
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number): void {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    let nextIndex = -1;
+    if (event.key === 'ArrowRight') nextIndex = (index + 1) % RAIL_TABS.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + RAIL_TABS.length) % RAIL_TABS.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = RAIL_TABS.length - 1;
+    if (nextIndex === -1) return;
     event.preventDefault();
-    const delta = event.key === 'ArrowRight' ? 1 : -1;
-    const next = RAIL_TABS[(index + delta + RAIL_TABS.length) % RAIL_TABS.length]!;
+    const next = RAIL_TABS[nextIndex]!;
     onTabChange(next.id);
+    tabRefs.current[nextIndex]?.focus();
   }
 
   return (
@@ -799,7 +830,7 @@ export function ProjectWorkspaceRail({
       <div className="flex-none border-b border-border px-2.5 py-2">
         <div
           role="tablist"
-          aria-label="项目工作台"
+          aria-label={t('project.workspaceRail')}
           className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1"
         >
           {RAIL_TABS.map((tab, index) => {
@@ -809,6 +840,7 @@ export function ProjectWorkspaceRail({
             return (
               <button
                 key={tab.id}
+                ref={(el) => { tabRefs.current[index] = el; }}
                 id={`${idPrefix}-tab-${tab.id}`}
                 type="button"
                 role="tab"
@@ -825,7 +857,7 @@ export function ProjectWorkspaceRail({
                 )}
               >
                 <Icon className="size-3.5 flex-none opacity-80" aria-hidden="true" />
-                <span>{tab.label}</span>
+                <span>{t(tab.labelKey)}</span>
                 {count > 0 ? (
                   <span
                     className={cn(

@@ -4,7 +4,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, test, vi } from 'vitest';
-import { CopyButton } from './bits.tsx';
+import { clearDisclosureMemory, CopyButton, Details } from './bits.tsx';
 
 // The page's own navigator, with the clipboard as the browser in question has it: a
 // browser with none is one whose property is undefined. It is shadowed rather than
@@ -42,4 +42,48 @@ test('a browser with no clipboard at all is the same refusal, not a claim that i
   await user.click(screen.getByRole('button'));
   expect(screen.getByRole('button')).toHaveTextContent('复制不了');
   expect(screen.getByRole('button')).not.toHaveTextContent('已复制');
+});
+
+test('Details with defaultOpen starts expanded, remembers explicit collapse, and never pollutes memory on mount', async () => {
+  clearDisclosureMemory();
+  const user = userEvent.setup();
+
+  // Mounting with defaultOpen=true without clicking must not pollute remembered state when defaultOpen later flips false.
+  const first = render(
+    <Details id="round:test-auto" defaultOpen title={(open) => <span>{open ? '已展开' : '已折叠预览'}</span>}>
+      <p>正文内容</p>
+    </Details>,
+  );
+  const firstDetails = screen.getByText('已展开').closest('details')!;
+  expect(firstDetails).toHaveAttribute('open');
+  first.unmount();
+
+  const second = render(
+    <Details id="round:test-auto" defaultOpen={false} title={(open) => <span>{open ? '已展开' : '已折叠预览'}</span>}>
+      <p>正文内容</p>
+    </Details>,
+  );
+  expect(screen.getByText('已折叠预览').closest('details')).not.toHaveAttribute('open');
+  second.unmount();
+
+  // Explicitly collapsing a defaultOpen section remembers the closed choice across remounts.
+  const third = render(
+    <Details id="round:test-manual" defaultOpen title={(open) => <span>{open ? '第 4 轮' : '第 4 轮 · 预览'}</span>}>
+      <p>第四轮内容</p>
+    </Details>,
+  );
+  const summary = screen.getByText('第 4 轮').closest('summary')!;
+  expect(summary.closest('details')).toHaveAttribute('open');
+  await user.click(summary);
+  expect(summary.closest('details')).not.toHaveAttribute('open');
+  expect(screen.getByText('第 4 轮 · 预览')).toBeInTheDocument();
+  third.unmount();
+
+  render(
+    <Details id="round:test-manual" defaultOpen title={(open) => <span>{open ? '第 4 轮' : '第 4 轮 · 预览'}</span>}>
+      <p>第四轮内容</p>
+    </Details>,
+  );
+  expect(screen.getByText('第 4 轮 · 预览').closest('details')).not.toHaveAttribute('open');
+  clearDisclosureMemory();
 });

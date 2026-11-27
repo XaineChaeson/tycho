@@ -11,18 +11,19 @@ import { Confirm, Sheet, SheetContent } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { del, messageOf, projectFileRawUrl, uploadProjectFile } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { projectFilesQuery } from '@/lib/queries';
 import type { ProjectFileOrigin, ProjectFileSummary } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 type FileFilter = 'all' | 'artifact' | 'upload' | 'doc' | 'temp';
 
-const FILTERS: { id: FileFilter; label: string }[] = [
-  { id: 'all', label: '项目资料' },
-  { id: 'artifact', label: '交互产物' },
-  { id: 'doc', label: '文档' },
-  { id: 'upload', label: '上传附件' },
-  { id: 'temp', label: '临时附件' },
+const FILTERS: { id: FileFilter; labelKey: string }[] = [
+  { id: 'all', labelKey: 'proj.files.filterAll' },
+  { id: 'artifact', labelKey: 'proj.files.filterArtifact' },
+  { id: 'doc', labelKey: 'proj.files.filterDoc' },
+  { id: 'upload', labelKey: 'proj.files.filterUpload' },
+  { id: 'temp', labelKey: 'proj.files.filterTemp' },
 ];
 
 export function isEphemeralProjectFile(file: ProjectFileSummary): boolean {
@@ -37,10 +38,10 @@ export function isProjectLibraryFile(file: ProjectFileSummary): boolean {
   return !isEphemeralProjectFile(file);
 }
 
-const ORIGIN_LABELS: Record<ProjectFileOrigin, string> = {
-  owner: '主人',
-  router: '负责人',
-  worker: '执行者',
+const ORIGIN_LABEL_KEYS: Record<ProjectFileOrigin, string> = {
+  owner: 'proj.files.originOwner',
+  router: 'project.routerSpeaker',
+  worker: 'quote.source.worker',
 };
 
 const ORIGIN_TONES: Record<ProjectFileOrigin, BadgeTone> = {
@@ -90,6 +91,7 @@ function FileThumbnail({
   onPreview: (file: ProjectFileSummary) => void;
   compact?: boolean;
 }) {
+  const { t } = useI18n();
   const sizeClass = compact ? 'size-8 rounded-md' : 'size-11 rounded-lg';
   const iconClass = compact ? 'size-4' : 'size-5';
 
@@ -97,7 +99,7 @@ function FileThumbnail({
     return (
       <button
         type="button"
-        aria-label={`预览图片：${file.name}`}
+        aria-label={t('proj.files.previewImageAria', { name: file.name })}
         onClick={() => onPreview(file)}
         className={cn(
           sizeClass,
@@ -124,7 +126,7 @@ function FileThumbnail({
     return (
       <button
         type="button"
-        aria-label={`预览产物：${file.name}`}
+        aria-label={t('proj.files.previewArtifactAria', { name: file.name })}
         onClick={() => onPreview(file)}
         className={cn(
           sizeClass,
@@ -161,6 +163,7 @@ export function ProjectFilesPanel({
   onAttachToComposer,
   compact = false,
 }: ProjectFilesPanelProps) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const query = useQuery(projectFilesQuery(projectId));
   const files = query.data?.files ?? [];
@@ -229,14 +232,14 @@ export function ProjectFilesPanel({
           await uploadProjectFile(projectId, file, { kind: 'upload' });
           uploadedAny = true;
         } catch (err) {
-          errors.push(`${file.name}：${messageOf(err)}`);
+          errors.push(t('proj.files.uploadFileError', { name: file.name, reason: messageOf(err) }));
         }
       }
       if (uploadedAny) {
         await client.invalidateQueries({ queryKey: projectFilesQuery(projectId).queryKey });
       }
       if (errors.length > 0) {
-        setUploadError(errors.join('；'));
+        setUploadError(errors.join(t('proj.files.errorSep')));
       }
     } finally {
       setUploading(false);
@@ -325,14 +328,14 @@ export function ProjectFilesPanel({
             {uploading ? (
               <span className="inline-flex items-center gap-1.5 text-foreground">
                 <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-                {compact ? '上传中…' : '正在上传文件…'}
+                {compact ? t('proj.files.uploadingCompact') : t('proj.files.uploadingFull')}
               </span>
             ) : dragging ? (
               <span className="font-medium text-brand-foreground">
-                {compact ? '松开即可上传' : '松开鼠标即可上传到此项目'}
+                {compact ? t('proj.files.dropCompact') : t('proj.files.dropFull')}
               </span>
             ) : (
-              compact ? '拖拽或上传项目文件' : '支持拖拽文件到此抽屉，或点击右侧按钮上传'
+              compact ? t('proj.files.uploadPromptCompact') : t('proj.files.uploadPromptFull')
             )}
           </div>
           <input
@@ -340,7 +343,7 @@ export function ProjectFilesPanel({
             type="file"
             multiple
             className="sr-only"
-            aria-label="选择要上传的文件"
+            aria-label={t('proj.files.selectFilesAria')}
             onChange={onInputChange}
           />
           <Button
@@ -351,12 +354,12 @@ export function ProjectFilesPanel({
             onClick={() => fileInputRef.current?.click()}
           >
             {uploading ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : <Upload className="size-3.5" aria-hidden="true" />}
-            {compact ? '上传' : '上传文件'}
+            {compact ? t('proj.files.uploadBtnCompact') : t('proj.files.uploadBtnFull')}
           </Button>
         </div>
 
         {uploadError ? (
-          <Callout tone="failed" role="alert" title="上传失败" className={compact ? 'px-2.5 py-2' : undefined}>
+          <Callout tone="failed" role="alert" title={t('proj.files.uploadFailedTitle')} className={compact ? 'px-2.5 py-2' : undefined}>
             <p className="mt-1 text-xs">{uploadError}</p>
           </Callout>
         ) : null}
@@ -370,7 +373,7 @@ export function ProjectFilesPanel({
           <div
             className={cn('flex flex-wrap items-center', compact ? 'gap-1' : 'gap-1.5')}
             role="group"
-            aria-label="按类型筛选文件"
+            aria-label={t('proj.files.filterGroupAria')}
           >
             {FILTERS.map((item) => {
               const active = filter === item.id;
@@ -388,7 +391,7 @@ export function ProjectFilesPanel({
                     compact && 'min-h-6 gap-1 px-2 py-0.5 text-2xs',
                   )}
                 >
-                  {item.label}
+                  {t(item.labelKey)}
                   {count > 0 ? <span className="text-2xs opacity-75 tabular-nums">{count}</span> : null}
                 </Button>
               );
@@ -405,7 +408,7 @@ export function ProjectFilesPanel({
                 )}
               >
                 <Trash2 className="size-3" aria-hidden="true" />
-                {cleaningTemp ? '清理中…' : `清理全部 (${tempFiles.length})`}
+                {cleaningTemp ? t('proj.files.cleaningTemp') : t('proj.files.clearAllTemp', { count: tempFiles.length })}
               </Button>
             ) : null}
           </div>
@@ -416,8 +419,8 @@ export function ProjectFilesPanel({
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder={compact ? '搜索文件…' : '按文件名或说明筛选…'}
-                aria-label="搜索项目文件"
+                placeholder={compact ? t('proj.files.searchCompact') : t('proj.files.searchFull')}
+                aria-label={t('proj.files.searchAria')}
                 className={cn('pl-8 text-xs', compact && 'h-7 min-h-7 py-1')}
               />
             </div>
@@ -458,7 +461,7 @@ export function ProjectFilesPanel({
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-2xs text-muted-foreground">
                         <Badge tone={ORIGIN_TONES[file.origin]} className="min-h-4 px-1.5 py-0 text-2xs leading-3.5">
-                          {ORIGIN_LABELS[file.origin]}
+                          {t(ORIGIN_LABEL_KEYS[file.origin])}
                         </Badge>
                         <span className="tabular-nums">{formatFileSize(file.size)}</span>
                         <span aria-hidden="true">·</span>
@@ -472,8 +475,8 @@ export function ProjectFilesPanel({
                           <Button
                             variant="ghost"
                             size="icon-sm"
-                            aria-label={`预览 ${file.name}`}
-                            title="预览"
+                            aria-label={t('proj.files.previewNamed', { name: file.name })}
+                            title={t('proj.files.preview')}
                             className="size-6"
                             onClick={() => openPreview(file)}
                           >
@@ -484,8 +487,8 @@ export function ProjectFilesPanel({
                           <Button
                             variant="ghost"
                             size="icon-sm"
-                            aria-label={`引用 ${file.name}`}
-                            title="引用到输入框"
+                            aria-label={t('proj.files.attachNamed', { name: file.name })}
+                            title={t('proj.files.attachTooltip')}
                             className="size-6"
                             onClick={() => onAttachToComposer(file)}
                           >
@@ -496,13 +499,13 @@ export function ProjectFilesPanel({
                           variant="ghost"
                           size="icon-sm"
                           className="size-6"
-                          title="下载"
+                          title={t('proj.files.download')}
                           asChild
                         >
                           <a
                             href={projectFileRawUrl(projectId, file.id, true)}
                             download={file.name}
-                            aria-label={`下载 ${file.name}`}
+                            aria-label={t('proj.files.downloadNamed', { name: file.name })}
                           >
                             <Download className="size-3.5" aria-hidden="true" />
                           </a>
@@ -510,8 +513,8 @@ export function ProjectFilesPanel({
                         <Button
                           variant="danger"
                           size="icon-sm"
-                          aria-label={`删除 ${file.name}`}
-                          title="删除"
+                          aria-label={t('proj.files.deleteNamed', { name: file.name })}
+                          title={t('common.delete')}
                           className="ml-auto size-6"
                           onClick={() => {
                             setDeleteError(null);
@@ -535,7 +538,7 @@ export function ProjectFilesPanel({
                         <span className="min-w-0 truncate text-sm font-medium text-foreground" title={file.name}>
                           {file.name}
                         </span>
-                        <Badge tone={ORIGIN_TONES[file.origin]}>{ORIGIN_LABELS[file.origin]}</Badge>
+                        <Badge tone={ORIGIN_TONES[file.origin]}>{t(ORIGIN_LABEL_KEYS[file.origin])}</Badge>
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                         <span className="tabular-nums">{formatFileSize(file.size)}</span>
@@ -551,19 +554,19 @@ export function ProjectFilesPanel({
                     {canPreview ? (
                       <Button variant="ghost" size="sm" onClick={() => openPreview(file)}>
                         <Eye className="size-3.5" aria-hidden="true" />
-                        预览
+                        {t('proj.files.preview')}
                       </Button>
                     ) : null}
                     {onAttachToComposer ? (
                       <Button variant="ghost" size="sm" onClick={() => onAttachToComposer(file)}>
                         <Paperclip className="size-3.5" aria-hidden="true" />
-                        引用
+                        {t('quote.action')}
                       </Button>
                     ) : null}
                     <Button variant="ghost" size="sm" asChild>
                       <a href={projectFileRawUrl(projectId, file.id, true)} download={file.name}>
                         <Download className="size-3.5" aria-hidden="true" />
-                        下载
+                        {t('proj.files.download')}
                       </a>
                     </Button>
                     <Button
@@ -575,7 +578,7 @@ export function ProjectFilesPanel({
                       }}
                     >
                       <Trash2 className="size-3.5" aria-hidden="true" />
-                      删除
+                      {t('common.delete')}
                     </Button>
                   </div>
                 </div>
@@ -585,18 +588,18 @@ export function ProjectFilesPanel({
         ) : files.length === 0 ? (
           <Empty
             icon={<FolderOpen />}
-            title="还没有项目文件"
+            title={t('proj.files.emptyTitle')}
             className={compact ? 'px-4 py-6' : undefined}
           >
-            {compact ? '上传参考图、文档，或由负责人/执行者生成产物。' : '上传参考图、文档，或让负责人和执行者生成交互产物，都会沉淀在这里。'}
+            {compact ? t('proj.files.emptyDescCompact') : t('proj.files.emptyDescFull')}
           </Empty>
         ) : (
           <Empty
             icon={<Search />}
-            title="没有匹配的文件"
+            title={t('proj.files.noMatchTitle')}
             className={compact ? 'px-4 py-6' : undefined}
           >
-            换个筛选条件或搜索关键词试试。
+            {t('proj.files.noMatchDesc')}
           </Empty>
         )}
       </div>
@@ -630,9 +633,9 @@ export function ProjectFilesPanel({
 
       <Confirm
         open={deletingFile !== null}
-        title="删除项目文件"
-        description={deletingFile ? `确定删除「${deletingFile.name}」吗？删除后无法恢复。` : undefined}
-        confirm={deletingBusy ? '正在删除…' : '删除'}
+        title={t('proj.files.deleteDialogTitle')}
+        description={deletingFile ? t('proj.files.deleteDialogDesc', { name: deletingFile.name }) : undefined}
+        confirm={deletingBusy ? t('proj.files.deleting') : t('common.delete')}
         busy={deletingBusy}
         error={deleteError}
         onConfirm={() => void confirmDelete()}
@@ -658,11 +661,12 @@ export function ProjectFilesSheet({
   onOpenChange,
   onAttachToComposer,
 }: ProjectFilesSheetProps) {
+  const { t } = useI18n();
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
-        title="项目文件"
-        description="上传附件、交互产物与项目文档"
+        title={t('project.files')}
+        description={t('proj.files.sheetDesc')}
         className="w-[min(620px,95vw)] max-w-none"
         bodyClassName="flex flex-col gap-4"
       >

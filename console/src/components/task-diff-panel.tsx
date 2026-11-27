@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, FileDiff, GitBranch, GitCommitHorizontal, MessageSquarePlus, RotateCcw, Send, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { t as translate } from '@shared/i18n.ts';
 import { Callout, Mono, Note, Problem } from '@/components/bits';
 import { Badge, type BadgeTone } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,6 +10,7 @@ import { Option, Select } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useMounted } from '@/hooks/use-mounted';
 import { api, messageOf, post } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { PAGE, taskQuery, tasksQuery } from '@/lib/queries';
 import type { FileChange, TaskDiffFile, TaskDiffResponse } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -132,8 +134,8 @@ export function formatAnnotationsMarkdown(
   commit: string | null,
 ): string {
   const header = commit
-    ? `请根据以下行级代码批注进行修改（参考提交 \`${commit.slice(0, 10)}\`）：`
-    : '请根据以下行级代码批注进行修改：';
+    ? translate('tsk.diff.annotationHeaderWithCommit', { commit: commit.slice(0, 10) })
+    : translate('tsk.diff.annotationHeader');
   const items = annotations.map((ann, idx) => {
     const codeSnippet = ann.code.trimEnd();
     const quoted = codeSnippet
@@ -156,10 +158,10 @@ const FILE_STATUS_LABEL: Record<TaskDiffFile['status'], { short: string; tone: B
   renamed: { short: 'R', tone: 'waiting' },
 };
 
-const CHANGE_OP_LABEL: Record<NonNullable<FileChange['op']>, string> = {
-  add: '新增',
-  update: '修改',
-  delete: '删除',
+const CHANGE_OP_KEYS: Record<NonNullable<FileChange['op']>, string> = {
+  add: 'tsk.site.fileOp.add',
+  update: 'tsk.site.fileOp.update',
+  delete: 'tsk.site.fileOp.delete',
 };
 
 export function TaskDiffPanel({
@@ -171,6 +173,7 @@ export function TaskDiffPanel({
   onSubmitted,
   className,
 }: TaskDiffPanelProps) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const mounted = useMounted();
   const diffQueryKey = useMemo(
@@ -356,7 +359,7 @@ export function TaskDiffPanel({
 
   if (isPending) {
     return (
-      <div role="status" aria-label="正在加载代码变更" className={cn('grid gap-3 py-2', className)}>
+      <div role="status" aria-label={t('tsk.diff.loadingAria')} className={cn('grid gap-3 py-2', className)}>
         <Skeleton className="h-9 w-full" />
         <Skeleton className="h-44 w-full" />
       </div>
@@ -369,17 +372,17 @@ export function TaskDiffPanel({
     const fallback = fallbackChanges ?? [];
     if (fallback.length > 0) {
       return (
-        <section aria-label="代码变更" className={cn('grid gap-3', className)}>
+        <section aria-label={t('tsk.diff.sectionAria')} className={cn('grid gap-3', className)}>
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs">
-            <Badge tone="plain">执行器报告</Badge>
-            <span className="text-muted-foreground">{`共 ${fallback.length} 个文件（暂无权威 Git Diff，展示执行器上报的变更摘要）`}</span>
+            <Badge tone="plain">{t('tsk.diff.executorReportBadge')}</Badge>
+            <span className="text-muted-foreground">{t('tsk.diff.fallbackSummary', { count: fallback.length })}</span>
           </div>
           <ul className="grid gap-2">
             {fallback.map((change, idx) => (
               <li key={`${change.path}:${idx}`} className="overflow-hidden rounded-lg border border-border bg-raised">
                 <div className="flex items-center gap-2 border-b border-border/60 bg-muted/40 px-3 py-1.5 text-xs">
                   <Badge tone={change.op === 'add' ? 'success' : change.op === 'delete' ? 'failed' : 'plain'}>
-                    {change.op ? CHANGE_OP_LABEL[change.op] : '变更'}
+                    {change.op ? t(CHANGE_OP_KEYS[change.op]) : t('tsk.diff.opChange')}
                   </Badge>
                   <Mono className="min-w-0 flex-1 truncate">{change.path}</Mono>
                 </div>
@@ -395,11 +398,11 @@ export function TaskDiffPanel({
       );
     }
     return (
-      <section aria-label="代码变更" className={cn('rounded-xl border border-dashed border-border-strong px-4 py-8 text-center', className)}>
+      <section aria-label={t('tsk.diff.sectionAria')} className={cn('rounded-xl border border-dashed border-border-strong px-4 py-8 text-center', className)}>
         <FileDiff className="mx-auto mb-2 size-6 text-faint" aria-hidden="true" />
-        <p className="text-sm font-medium text-foreground">暂无代码变更</p>
+        <p className="text-sm font-medium text-foreground">{t('tsk.diff.emptyTitle')}</p>
         <Note className="mt-1 text-xs">
-          {!isError && data?.reason ? data.reason : '这一轮没有可展示的 Git 差异或文件变更记录。'}
+          {!isError && data?.reason ? data.reason : t('tsk.diff.emptyReason')}
         </Note>
       </section>
     );
@@ -409,11 +412,11 @@ export function TaskDiffPanel({
     annotations.filter((ann) => ann.path === path && ann.line === line);
 
   return (
-    <section aria-label="代码变更" className={cn('flex flex-col gap-3', className)}>
+    <section aria-label={t('tsk.diff.sectionAria')} className={cn('flex flex-col gap-3', className)}>
       {/* Header strip */}
       <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-xl border border-border bg-muted/50 px-3 py-2 text-xs">
         <Badge tone={data.source === 'git' ? 'running' : 'plain'}>
-          {data.source === 'git' ? '权威 Git Diff' : '执行器报告'}
+          {data.source === 'git' ? t('tsk.diff.gitDiffBadge') : t('tsk.diff.executorReportBadge')}
         </Badge>
         {data.branch ? (
           <span className="inline-flex items-center gap-1 text-muted-foreground">
@@ -427,31 +430,31 @@ export function TaskDiffPanel({
             <Mono>{data.commit.slice(0, 10)}</Mono>
           </span>
         ) : null}
-        <span className="text-muted-foreground tabular-nums">{`${files.length} 个文件`}</span>
+        <span className="text-muted-foreground tabular-nums">{t('tsk.diff.fileCount', { count: files.length })}</span>
         <span className="inline-flex items-center gap-1.5 font-mono tabular-nums">
           <span className="text-success-foreground">{`+${totals.additions}`}</span>
           <span className="text-failed-foreground">{`-${totals.deletions}`}</span>
         </span>
         {data.truncated ? (
-          <Badge tone="waiting" className="text-2xs">内容已截断</Badge>
+          <Badge tone="waiting" className="text-2xs">{t('tsk.diff.truncatedBadge')}</Badge>
         ) : null}
 
         {distinctCheckpoints.length >= 2 ? (
           <div className="ml-auto flex flex-wrap items-center gap-1.5">
             {confirmRollback ? (
               <>
-                <span className="text-muted-foreground">{`确认回退到 ${rollbackTarget.slice(0, 10)}？`}</span>
+                <span className="text-muted-foreground">{t('tsk.diff.confirmRollbackPrompt', { commit: rollbackTarget.slice(0, 10) })}</span>
                 <Button size="sm" variant="danger-solid" disabled={rollingBack} onClick={() => void runRollback()}>
-                  {rollingBack ? '回退中…' : '确认回退'}
+                  {rollingBack ? t('tsk.diff.rollingBack') : t('tsk.diff.confirmRollbackBtn')}
                 </Button>
                 <Button size="sm" variant="ghost" disabled={rollingBack} onClick={() => setConfirmRollback(false)}>
-                  取消
+                  {t('common.cancel')}
                 </Button>
               </>
             ) : (
               <>
                 <Select
-                  aria-label="选择回退检查点"
+                  aria-label={t('tsk.diff.selectCheckpointAria')}
                   value={rollbackTarget}
                   onChange={(event) => setRollbackTarget(event.target.value)}
                   className="h-7 text-xs"
@@ -469,7 +472,7 @@ export function TaskDiffPanel({
                   onClick={() => setConfirmRollback(true)}
                 >
                   <RotateCcw className="size-3.5" aria-hidden="true" />
-                  回退检查点
+                  {t('tsk.diff.rollbackBtn')}
                 </Button>
               </>
             )}
@@ -480,7 +483,7 @@ export function TaskDiffPanel({
       {rollbackError ? <Problem role="alert">{rollbackError}</Problem> : null}
 
       {/* File switcher */}
-      <div role="tablist" aria-label="变更文件列表" className="flex flex-wrap gap-1.5">
+      <div role="tablist" aria-label={t('tsk.diff.fileListAria')} className="flex flex-wrap gap-1.5">
         {files.map((file) => {
           const active = activeFile?.path === file.path;
           const badge = FILE_STATUS_LABEL[file.status];
@@ -524,7 +527,7 @@ export function TaskDiffPanel({
             </span>
           </div>
           {parsedLines.length === 0 ? (
-            <Note className="px-3 py-4 text-xs">此文件无文本补丁内容（可能是二进制文件或仅权限变更）。</Note>
+            <Note className="px-3 py-4 text-xs">{t('tsk.diff.noTextPatch')}</Note>
           ) : (
             <div className="overflow-x-auto font-mono text-xs leading-5">
               {parsedLines.map((line) => {
@@ -560,12 +563,12 @@ export function TaskDiffPanel({
                       {canAnnotate && lineNumber !== null ? (
                         <button
                           type="button"
-                          aria-label={`在第 ${lineNumber} 行添加批注`}
+                          aria-label={t('tsk.diff.addAnnotationAria', { line: lineNumber })}
                           onClick={() => openEditor(activeFile.path, lineNumber, line.content)}
                           className="mr-1.5 my-0.5 inline-flex flex-none items-center gap-0.5 rounded px-1.5 py-0 text-2xs font-sans text-muted-foreground opacity-0 transition-opacity hover:bg-hover hover:text-foreground focus-visible:opacity-100 group-hover/diffline:opacity-100"
                         >
                           <MessageSquarePlus className="size-3" aria-hidden="true" />
-                          + 批注
+                          {t('tsk.diff.addAnnotationBtn')}
                         </button>
                       ) : null}
                     </div>
@@ -582,7 +585,7 @@ export function TaskDiffPanel({
                           type="button"
                           variant="ghost"
                           size="icon-sm"
-                          aria-label={`删除 ${ann.path} 第 ${ann.line} 行批注`}
+                          aria-label={t('tsk.diff.deleteAnnotationAria', { path: ann.path, line: ann.line })}
                           className="size-6 flex-none"
                           onClick={() => removeAnnotation(ann.id)}
                         >
@@ -595,14 +598,14 @@ export function TaskDiffPanel({
                     {isEditingThis && lineNumber !== null ? (
                       <div className="border-y border-border bg-muted/50 px-3 py-2.5 font-sans">
                         <div className="mb-1.5 flex items-center justify-between text-xs text-muted-foreground">
-                          <span>{`批注 ${activeFile.path}:L${lineNumber}`}</span>
-                          <span className="text-2xs text-faint">Cmd/Ctrl+Enter 保存 · Esc 取消</span>
+                          <span>{t('tsk.diff.annotatingHeader', { path: activeFile.path, line: lineNumber })}</span>
+                          <span className="text-2xs text-faint">{t('tsk.diff.editorShortcutHint')}</span>
                         </div>
                         <Textarea
                           ref={editorRef}
                           rows={2}
-                          aria-label={`第 ${lineNumber} 行批注内容`}
-                          placeholder="写下这段代码需要修改的问题或建议…"
+                          aria-label={t('tsk.diff.editorAria', { line: lineNumber })}
+                          placeholder={t('tsk.diff.editorPlaceholder')}
                           value={draftComment}
                           onChange={(event) => setDraftComment(event.target.value)}
                           onKeyDown={onEditorKeyDown}
@@ -618,7 +621,7 @@ export function TaskDiffPanel({
                               setDraftComment('');
                             }}
                           >
-                            取消
+                            {t('common.cancel')}
                           </Button>
                           <Button
                             type="button"
@@ -627,7 +630,7 @@ export function TaskDiffPanel({
                             disabled={!draftComment.trim()}
                             onClick={saveAnnotation}
                           >
-                            保存批注
+                            {t('tsk.diff.saveAnnotationBtn')}
                           </Button>
                         </div>
                       </div>
@@ -644,12 +647,12 @@ export function TaskDiffPanel({
       {annotations.length > 0 ? (
         <div
           role="region"
-          aria-label="批注草稿箱"
+          aria-label={t('tsk.diff.draftTrayAria')}
           className="sticky bottom-0 z-10 grid gap-2.5 rounded-xl border border-border-strong bg-raised p-3 shadow-card"
         >
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-xs font-semibold text-foreground">
-              {`已暂存 ${annotations.length} 条行级批注`}
+              {t('tsk.diff.draftCount', { count: annotations.length })}
             </span>
             <Button
               type="button"
@@ -658,7 +661,7 @@ export function TaskDiffPanel({
               className="h-7 text-xs"
               onClick={() => setAnnotations([])}
             >
-              清空全部
+              {t('tsk.diff.clearAll')}
             </Button>
           </div>
 
@@ -667,9 +670,12 @@ export function TaskDiffPanel({
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 size-4 flex-none text-waiting-foreground" aria-hidden="true" />
                 <div className="min-w-0 flex-1">
-                  <p className="font-medium text-foreground">代码提交已变化，批注可能已过期</p>
+                  <p className="font-medium text-foreground">{t('tsk.diff.staleTitle')}</p>
                   <p className="mt-0.5 text-muted-foreground">
-                    {`批注写于 ${staleAnnotation.commit?.slice(0, 10) ?? ''}，当前提交为 ${currentCommit?.slice(0, 10) ?? ''}。请先刷新基线或确认仍按当前内容发送。`}
+                    {t('tsk.diff.staleDetail', {
+                      oldCommit: staleAnnotation.commit?.slice(0, 10) ?? '',
+                      currentCommit: currentCommit?.slice(0, 10) ?? '',
+                    })}
                   </p>
                 </div>
               </div>
@@ -680,10 +686,10 @@ export function TaskDiffPanel({
                     checked={staleConfirmed}
                     onChange={(event) => setStaleConfirmed(event.target.checked)}
                   />
-                  确认内容仍适用并发送
+                  {t('tsk.diff.staleConfirmCheck')}
                 </label>
                 <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" onClick={rebaseAnnotationsToCurrent}>
-                  更新为当前提交基线
+                  {t('tsk.diff.rebaseBtn')}
                 </Button>
               </div>
             </Callout>
@@ -703,7 +709,7 @@ export function TaskDiffPanel({
                   type="button"
                   variant="ghost"
                   size="icon-sm"
-                  aria-label={`移除批注 ${ann.path}:L${ann.line}`}
+                  aria-label={t('tsk.diff.removeAnnotationAria', { path: ann.path, line: ann.line })}
                   className="size-6 flex-none"
                   onClick={() => removeAnnotation(ann.id)}
                 >
@@ -724,7 +730,7 @@ export function TaskDiffPanel({
               onClick={() => void submitAnnotations()}
             >
               <Send className="size-3.5" aria-hidden="true" />
-              {submitting ? '发送中…' : '打包发送给当前线程返工'}
+              {submitting ? t('tsk.diff.sending') : t('tsk.diff.sendToRework')}
             </Button>
           </div>
         </div>

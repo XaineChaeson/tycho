@@ -6,6 +6,7 @@
     "lib": ["es2024"],
     "types": ["node"],
     "strict": true,
+    "resolveJsonModule": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": false,

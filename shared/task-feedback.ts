@@ -1,8 +1,10 @@
-export const TASK_FEEDBACK_LABELS = {
-  reuse: '值得复用',
-  slow: '哪里等太久',
-  incorrect: '结论有误',
-} as const;
+import { localeMap } from './i18n.ts';
+
+export const TASK_FEEDBACK_LABELS = localeMap({
+  reuse: 'sh.taskFeedback.reuse',
+  slow: 'sh.taskFeedback.slow',
+  incorrect: 'sh.taskFeedback.incorrect',
+});
 export type TaskFeedbackKind = keyof typeof TASK_FEEDBACK_LABELS;
 export const TASK_FEEDBACK_NOTE_LIMIT = 2048;
 

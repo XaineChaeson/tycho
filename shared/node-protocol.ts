@@ -8,6 +8,7 @@
 // carried (".tycho/tasks/<task>/runs/<run>"): the client resolves it under its own data directory
 // (nodes.md §7). The host never learns where that is.
 import type { ModelInfo, QuotaWindow } from '../adapters/types.ts';
+import { t } from './i18n.ts';
 import type { CodeCheck, ReadOnlyLayer } from './roles.ts';
 import type { ConfigKind } from './machine-inputs.ts';
 import type { ExecutorIdentity } from './logins.ts';
@@ -267,9 +268,9 @@ export function wayProblem(way: NodeCredentialWay | null): string | undefined {
   if (way === null) return undefined;
   // A host still asking for the pipe is one this program no longer hands a token to
   // (tests/fixtures/claude/2.1.303-win/auth-status): told plainly, never run without it.
-  if ((way.via as string) === 'fd') return '主机要求用文件描述符交令牌，这一版的 tycho 已经不这么交：把主机升级到同一版';
-  if (way.via !== 'env') return `主机给的凭据交付方式不认识：${JSON.stringify(way.via)}`;
-  if (typeof way.variable !== 'string' || !ENV_NAME.test(way.variable)) return `主机给的凭据变量名不能用：${JSON.stringify(String(way.variable).slice(0, 80))}`;
+  if ((way.via as string) === 'fd') return t('sh.nodeProtocol.way.fd');
+  if (way.via !== 'env') return t('sh.nodeProtocol.way.unknown', { via: JSON.stringify(way.via) });
+  if (typeof way.variable !== 'string' || !ENV_NAME.test(way.variable)) return t('sh.nodeProtocol.way.badVariable', { variable: JSON.stringify(String(way.variable).slice(0, 80)) });
   return undefined;
 }
 
@@ -742,7 +743,7 @@ export function entryPublisherOf(value: unknown): EntryPublisher {
     if (isEntryPublisherId(raw.id)) return { id: raw.id, ...(isEntryPublisherSource(raw.source) ? { source: { hostname: raw.source.hostname, port: raw.source.port } } : {}) };
     if (typeof raw.problem === 'string' && raw.problem.trim() !== '') return { problem: raw.problem };
   }
-  return { problem: '主机没有提供可核实的全局知识发布方，未改动投影' };
+  return { problem: t('sh.nodeProtocol.entryPublisherInvalid') };
 }
 
 
@@ -895,4 +896,4 @@ export interface NodeCredentialAnswer {
 
 // A refused protocol version, in the words the owner reads on the machine.
 export const protocolMismatchText = (theirs: number): string =>
-  `协议版本不符：这台机器上的客户端是第 ${theirs} 版，主机是第 ${NODE_PROTOCOL} 版。升级落后的那一个（tycho update），再重试。`;
+  t('sh.nodeProtocol.protocolMismatch', { theirs, ours: NODE_PROTOCOL });

@@ -54,20 +54,20 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBound
     if (this.state.error) {
       const loc = getActiveLocale();
       return (
-        <div role="alert" className="flex min-h-screen items-center justify-center bg-canvas p-6 text-foreground">
+        <div role="alert" className="flex min-h-dvh items-center justify-center bg-canvas p-6 text-foreground">
           <div className="grid w-full max-w-md gap-4 rounded-xl border border-border bg-raised p-6 shadow-card">
             <div className="grid gap-1.5">
-              <h1 className="text-base font-semibold">{translate(loc, 'error.renderTitle')}</h1>
+              <h1 className="text-base font-semibold">{translate('error.renderTitle', undefined, loc)}</h1>
               <p className="text-sm text-muted-foreground wrap-anywhere">
-                {this.state.error.message || translate(loc, 'error.renderFallback')}
+                {this.state.error.message || translate('error.renderFallback', undefined, loc)}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button type="button" variant="primary" size="sm" onClick={this.handleReload}>
-                {translate(loc, 'error.reload')}
+                {translate('error.reload', undefined, loc)}
               </Button>
               <Button type="button" variant="ghost" size="sm" onClick={this.handleGoHome}>
-                {translate(loc, 'error.goHome')}
+                {translate('error.goHome', undefined, loc)}
               </Button>
             </div>
           </div>

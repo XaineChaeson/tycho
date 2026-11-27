@@ -2,7 +2,8 @@ import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 
 import { useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Ellipsis, KeyRound, Layers, Pencil, Plus, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserCheck, X } from 'lucide-react';
-import { NEEDS_LOGIN_TEXT, credentialText, loginFull, loginStatusLine, machineLoginRefusedText, modelText, tierText, usageReadLine } from '@shared/labels.ts';
+import { t as translate } from '@shared/i18n.ts';
+import { NEEDS_LOGIN_TEXT, credentialText, loginFull, loginStatusLine, machineLoginRefusedText, modelText, tierDisplayLabel, tierText, usageReadLine } from '@shared/labels.ts';
 import { loginName, RETIRED_TIER_STANDING, takesTypedLogin } from '@shared/logins.ts';
 import { isTierId, TIERS, type TierId } from '@shared/tiers.ts';
 import { effectiveRouteOfLogin, executionPermissionSummary, logicalAccountKey, normalizeRouteKey, type DispatchSlotsConfig, type TierDispatchSlots } from '@shared/dispatch-slots.ts';
@@ -37,9 +38,6 @@ import {
 import type { Account, AccountModels, AccountsAndMachines, LoginTelemetry, Machine, MachineCheck, MachineLogin } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
-const ADD = '添加账号';
-const CHECK_HINT = '挑一台在线、装了这个执行器的机器现在去问一次，不改任何东西';
-
 interface CredentialDraft { value: string; saving: boolean; error: string | null }
 const CREDENTIAL_BLANK: CredentialDraft = { value: '', saving: false, error: null };
 
@@ -47,17 +45,18 @@ function CredentialForm({ account, draft, busy, onEdit, onSave, onCancel }: {
   account: Account; draft: CredentialDraft; busy: boolean;
   onEdit: (value: string) => void; onSave: () => void; onCancel: () => void;
 }) {
+  const { t } = useI18n();
   const id = useId();
   return (
     <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
       <Field htmlFor={id} label={credentialText.typed.label} hint={credentialText.typed.help}>
-        <p className={cn('text-sm', account.credential !== 'set' ? 'text-destructive' : 'text-muted-foreground')}>{`现在：${credentialText.typed.states[account.credential]}`}</p>
+        <p className={cn('text-sm', account.credential !== 'set' ? 'text-destructive' : 'text-muted-foreground')}>{t('acct.credential.currentState', { state: credentialText.typed.states[account.credential] })}</p>
         <Input id={id} type="password" autoComplete="new-password" value={draft.value} disabled={draft.saving}
           onChange={(event) => onEdit(event.target.value)} />
       </Field>
       {draft.error ? <Problem role="alert">{draft.error}</Problem> : null}
       <DialogActions>
-        <Button variant="ghost" disabled={draft.saving} onClick={onCancel}>取消</Button>
+        <Button variant="ghost" disabled={draft.saving} onClick={onCancel}>{t('common.cancel')}</Button>
         <Button type="submit" variant="primary" disabled={busy}>{draft.saving ? credentialText.typed.saving : credentialText.typed.save}</Button>
       </DialogActions>
     </form>
@@ -67,11 +66,11 @@ function CredentialForm({ account, draft, busy, onEdit, onSave, onCancel }: {
 function standingOf(account: Account): { text: string; tone: BadgeTone } {
   const { status } = account;
   if (account.retired_tiers?.length) return { text: RETIRED_TIER_STANDING, tone: 'failed' };
-  if (account.credential === 'missing') return { text: '凭据缺失', tone: 'failed' };
-  if (account.credential === 'rejected' || status?.rejected === true) return { text: '登录失效', tone: 'failed' };
-  if (status?.rest) return { text: '歇着', tone: 'waiting' };
-  if (status && loginFull(status)) return { text: '到上限', tone: 'waiting' };
-  return { text: '可用', tone: 'success' };
+  if (account.credential === 'missing') return { text: translate('acct.status.credMissing'), tone: 'failed' };
+  if (account.credential === 'rejected' || status?.rejected === true) return { text: translate('acct.status.authExpired'), tone: 'failed' };
+  if (status?.rest) return { text: translate('acct.status.resting'), tone: 'waiting' };
+  if (status && loginFull(status)) return { text: translate('acct.status.atLimit'), tone: 'waiting' };
+  return { text: translate('acct.status.available'), tone: 'success' };
 }
 
 function dotToneOf(tone: BadgeTone): Tone {
@@ -121,16 +120,16 @@ function providerRank(executor: string): number {
 function accountIdentityLine(account: Account): string {
   const parts = [account.account_label, account.plan_label].filter((v): v is string => Boolean(v));
   if (parts.length > 0) return parts.join(' · ');
-  if (account.provider?.line === 'official') return '官方 API Key';
+  if (account.provider?.line === 'official') return translate('acct.identity.officialApiKey');
   if (account.provider?.line === 'custom') {
     const rawUrl = typeof account.provider.baseURL === 'string' ? account.provider.baseURL : '';
     try {
-      return rawUrl ? `自定义网关 · ${new URL(rawUrl).host}` : '自定义网关';
+      return rawUrl ? translate('acct.identity.customGatewayHost', { host: new URL(rawUrl).host }) : translate('acct.identity.customGateway');
     } catch {
-      return '自定义网关';
+      return translate('acct.identity.customGateway');
     }
   }
-  return account.signed_in ? '官方 OAuth 授权' : '托管密钥';
+  return account.signed_in ? translate('acct.identity.officialOAuth') : translate('acct.identity.managedKey');
 }
 
 function InlineAliasTitle({
@@ -146,6 +145,7 @@ function InlineAliasTitle({
   allowClear?: boolean;
   onSave: (nextName: string | null) => Promise<void>;
 }) {
+  const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(title);
   const [saving, setSaving] = useState(false);
@@ -160,7 +160,7 @@ function InlineAliasTitle({
   const commit = async () => {
     const trimmed = value.trim();
     if (!allowClear && trimmed === '') {
-      setErr('名字不能为空');
+      setErr(t('acct.alias.emptyError'));
       return;
     }
     if (trimmed === title) {
@@ -184,14 +184,15 @@ function InlineAliasTitle({
       <div className="inline-flex flex-wrap items-center gap-1.5">
         <Input
           autoFocus
-          aria-label="修改账号名称"
-          placeholder={placeholder ?? '输入便于辨识的别名…'}
+          aria-label={t('acct.alias.inputAria')}
+          placeholder={placeholder ?? t('acct.alias.placeholder')}
           className="h-7 w-48 text-sm font-semibold"
           value={value}
           disabled={saving}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               e.preventDefault();
               void commit();
             } else if (e.key === 'Escape') {
@@ -201,10 +202,10 @@ function InlineAliasTitle({
             }
           }}
         />
-        <Button type="button" size="icon-sm" variant="primary" aria-label="保存名称" disabled={saving} onClick={() => void commit()}>
+        <Button type="button" size="icon-sm" variant="primary" aria-label={t('acct.alias.saveAria')} disabled={saving} onClick={() => void commit()}>
           <Check className="size-3.5" />
         </Button>
-        <Button type="button" size="icon-sm" variant="ghost" aria-label="取消改名" disabled={saving} onClick={() => { setEditing(false); setErr(null); }}>
+        <Button type="button" size="icon-sm" variant="ghost" aria-label={t('acct.alias.cancelAria')} disabled={saving} onClick={() => { setEditing(false); setErr(null); }}>
           <X className="size-3.5" />
         </Button>
         {err ? <span role="alert" className="text-xs text-failed-foreground">{err}</span> : null}
@@ -218,8 +219,8 @@ function InlineAliasTitle({
       <button
         type="button"
         disabled={disabled}
-        title="修改显示别名"
-        aria-label={`重命名 ${title}`}
+        title={t('acct.alias.editTitle')}
+        aria-label={t('acct.alias.renameAria', { title })}
         onClick={start}
         className="inline-flex size-6 flex-none cursor-pointer items-center justify-center rounded-md text-faint opacity-60 transition-all hover:bg-hover hover:text-foreground group-hover:opacity-100 disabled:opacity-30"
       >
@@ -277,6 +278,7 @@ function sumTelemetry(ids: readonly (string | null | undefined)[], map: Readonly
 }
 
 function TelemetrySummaryCard({ telemetry, note }: { telemetry: LoginTelemetry | null; note?: string }) {
+  const { t } = useI18n();
   const weekTokens = telemetry ? (telemetry.week_tokens ?? telemetry.day_tokens) : 0;
   const weekRuns = telemetry ? (telemetry.week_runs ?? telemetry.day_runs) : 0;
   const totalTokens = telemetry ? (telemetry.total_tokens ?? weekTokens) : 0;
@@ -285,46 +287,46 @@ function TelemetrySummaryCard({ telemetry, note }: { telemetry: LoginTelemetry |
     <div className="grid gap-2 rounded-lg border border-border/70 bg-muted/35 px-3.5 py-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-xs font-semibold text-muted-foreground">账本消耗遥测</h3>
+          <h3 className="text-xs font-semibold text-muted-foreground">{t('acct.telemetry.title')}</h3>
           {note ? <span className="text-2xs text-faint">· {note}</span> : null}
         </div>
-        <HashLink href="#/usage" className="text-xs text-link hover:underline">查看完整用量 →</HashLink>
+        <HashLink href="#/usage" className="text-xs text-link hover:underline">{t('acct.telemetry.viewFullUsage')}</HashLink>
       </div>
       <div className="grid grid-cols-2 gap-2.5 text-xs sm:grid-cols-4">
         <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
-          <div className="text-faint">近 5 小时</div>
+          <div className="text-faint">{t('acct.telemetry.last5h')}</div>
           <div className="mt-0.5 font-mono text-sm font-semibold text-foreground tabular-nums">
             {telemetry ? `${formatCompactTokens(telemetry.five_hour_tokens)} tok` : '0 tok'}
           </div>
           <div className="text-2xs text-muted-foreground tabular-nums">
-            {telemetry ? `${telemetry.five_hour_runs} 轮` : '暂无轮次'}
+            {telemetry ? t('acct.telemetry.runsCount', { count: telemetry.five_hour_runs }) : t('acct.telemetry.noRuns')}
           </div>
         </div>
         <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
-          <div className="text-faint">近 24 小时</div>
+          <div className="text-faint">{t('acct.telemetry.last24h')}</div>
           <div className="mt-0.5 font-mono text-sm font-semibold text-foreground tabular-nums">
             {telemetry ? `${formatCompactTokens(telemetry.day_tokens)} tok` : '0 tok'}
           </div>
           <div className="text-2xs text-muted-foreground tabular-nums">
-            {telemetry ? `${telemetry.day_runs} 轮` : '暂无轮次'}
+            {telemetry ? t('acct.telemetry.runsCount', { count: telemetry.day_runs }) : t('acct.telemetry.noRuns')}
           </div>
         </div>
         <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
-          <div className="text-faint">近 7 天</div>
+          <div className="text-faint">{t('acct.telemetry.last7d')}</div>
           <div className="mt-0.5 font-mono text-sm font-semibold text-foreground tabular-nums">
             {`${formatCompactTokens(weekTokens)} tok`}
           </div>
           <div className="text-2xs text-muted-foreground tabular-nums">
-            {`${weekRuns} 轮`}
+            {t('acct.telemetry.runsCount', { count: weekRuns })}
           </div>
         </div>
         <div className="rounded-md border border-border/60 bg-background/70 px-3 py-2">
-          <div className="text-faint">累计总量</div>
+          <div className="text-faint">{t('acct.telemetry.total')}</div>
           <div className="mt-0.5 font-mono text-sm font-semibold text-foreground tabular-nums">
             {`${formatCompactTokens(totalTokens)} tok`}
           </div>
           <div className="text-2xs text-muted-foreground tabular-nums">
-            {telemetry?.last_at ? `最近 ${formatTime(telemetry.last_at)}` : `${totalRuns} 轮`}
+            {telemetry?.last_at ? t('acct.telemetry.lastAt', { time: formatTime(telemetry.last_at) }) : t('acct.telemetry.runsCount', { count: totalRuns })}
           </div>
         </div>
       </div>
@@ -337,16 +339,17 @@ function SlotMiniPills({ logicalKey, slotsByTier, onOpenPolicy }: {
   slotsByTier: Record<TierId, TierDispatchSlots>;
   onOpenPolicy: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <button
       type="button"
       onClick={onOpenPolicy}
-      title="点击前往「派发策略」调整 P1 / P2 优先级槽"
+      title={t('acct.slots.miniPillsTitle')}
       className="mt-1 flex cursor-pointer flex-wrap gap-1 text-left"
     >
       {TIERS.map((tier) => {
         const slot = slotsByTier[tier.id];
-        const tag = slot.p1.includes(logicalKey) ? 'P1' : slot.p2.includes(logicalKey) ? 'P2' : '停';
+        const tag = slot.p1.includes(logicalKey) ? 'P1' : slot.p2.includes(logicalKey) ? 'P2' : t('slots.offLabel');
         const tone = tag === 'P1'
           ? 'border-brand-border bg-brand-soft text-brand-foreground'
           : tag === 'P2'
@@ -354,7 +357,7 @@ function SlotMiniPills({ logicalKey, slotsByTier, onOpenPolicy }: {
             : 'border-border bg-muted text-muted-foreground';
         return (
           <span key={tier.id} className={cn('rounded border px-1.5 py-0.5 font-mono text-2xs tabular-nums', tone)}>
-            {`${tier.label.slice(0, 2)}·${tag}`}
+            {`${t(`acct.tier.short.${tier.id}`)}·${tag}`}
           </span>
         );
       })}
@@ -401,10 +404,11 @@ function UnifiedGroupDetail({
   onRetryMember: (member: OwnMember) => void;
   onDeleteMember: (member: OwnMember) => void;
 }) {
+  const { t, locale } = useI18n();
   const provider = formatProviderName(executor);
   const sampleRoute = effectiveRouteOfLogin({ routeLabel: members[0]!.login.route_label, tiers: members[0]!.login.tiers });
   const displayTitle = page.login_aliases?.[groupKeyId] || identityLabel || (sampleRoute ? `${provider} · ${sampleRoute}` : provider);
-  const verifiedIdentity = [identityLabel, planLabel, sampleRoute ? `线路 ${sampleRoute}` : null].filter(Boolean).join(' · ') || '各机本地 OAuth 授权';
+  const verifiedIdentity = [identityLabel, planLabel, sampleRoute ? t('acct.routeLabel', { route: sampleRoute }) : null].filter(Boolean).join(' · ') || t('acct.group.localOAuthFallback');
   const onlineCount = members.filter((m) => m.machine.node.connected).length;
   const readyCount = members.filter((m) => machineLoginStanding(m.login).tone === 'success').length;
   const telemetry = sumTelemetry(members.map((m) => m.login.id), page.login_telemetry);
@@ -420,11 +424,12 @@ function UnifiedGroupDetail({
     tiers: sample.tiers,
   });
   const maxRuns = members.map((m) => m.login.max_runs).find((v): v is number => typeof v === 'number' && v > 0) ?? null;
+  const latestUsageRead = usageReadLine(latestUsage);
 
   return (
     <section
       id={groupKeyId}
-      aria-label={`${provider} 统一逻辑账号`}
+      aria-label={t('acct.group.regionAria', { provider })}
       className="grid gap-5 rounded-xl bg-raised p-5 shadow-card"
     >
       <header className="flex flex-wrap items-start justify-between gap-3">
@@ -432,26 +437,26 @@ function UnifiedGroupDetail({
           <div className="flex flex-wrap items-center gap-2">
             <Dot tone={readyCount > 0 ? 'success' : 'waiting'} />
             <InlineAliasTitle title={displayTitle} placeholder={provider} disabled={busy} allowClear onSave={onRename} />
-            <Mono title="执行器" className="rounded bg-hover px-1.5 py-0.5 text-xs text-muted-foreground">{executor}</Mono>
-            <Badge tone="running">{`${members.length} 台授权`}</Badge>
+            <Mono title={t('acct.executorTitle')} className="rounded bg-hover px-1.5 py-0.5 text-xs text-muted-foreground">{executor}</Mono>
+            <Badge tone="running">{t('acct.group.authorizedBadge', { count: members.length })}</Badge>
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-muted/50 px-2 py-0.5 font-mono text-[11px] text-foreground">
               <UserCheck className="size-3 text-primary" aria-hidden="true" />
               {verifiedIdentity}
             </span>
-            <span>凭据留在各机本地防互踢；档位、权限和并发可一键同步全部 {members.length} 台。</span>
+            <span>{t('acct.group.localCredHint', { count: members.length })}</span>
           </div>
         </div>
         <Button size="sm" variant="primary" disabled={busy} onClick={onBatchEdit}>
           <Layers className="size-3.5" aria-hidden="true" />
-          统一修改全部 {members.length} 台
+          {t('acct.group.batchEditBtn', { count: members.length })}
         </Button>
       </header>
 
       <div className="grid grid-cols-1 gap-3 rounded-lg border border-border/70 bg-muted/40 px-3.5 py-3 text-xs sm:grid-cols-3">
         <div>
-          <div className="text-faint">执行权限（防卡死保障）</div>
+          <div className="text-faint">{t('acct.detail.execPermTitle')}</div>
           <div className="mt-0.5 flex items-center gap-1.5 font-medium text-foreground">
             <ShieldCheck className={cn('size-3.5 flex-none', perm.autoFullAccess ? 'text-success' : 'text-waiting')} />
             <span>{perm.label}</span>
@@ -459,12 +464,12 @@ function UnifiedGroupDetail({
           <div className="mt-0.5 font-mono text-2xs text-faint">{perm.mode}</div>
         </div>
         <div>
-          <div className="text-faint">已授权机器 · 并发上限</div>
-          <div className="mt-0.5 font-mono font-semibold text-foreground tabular-nums">{onlineCount} / {members.length} 在线 · {readyCount} 就绪</div>
-          <div className="mt-0.5 text-2xs text-muted-foreground">{maxRuns ? `上限 ${maxRuns} 并发 / 机` : '默认不限并发'}</div>
+          <div className="text-faint">{t('acct.group.machinesConcurrencyTitle')}</div>
+          <div className="mt-0.5 font-mono font-semibold text-foreground tabular-nums">{t('acct.group.onlineReadyLine', { online: onlineCount, total: members.length, ready: readyCount })}</div>
+          <div className="mt-0.5 text-2xs text-muted-foreground">{maxRuns ? t('acct.group.maxRunsPerMachine', { max: maxRuns }) : t('acct.group.unlimitedConcurrency')}</div>
         </div>
         <div>
-          <div className="text-faint">当前路由槽位</div>
+          <div className="text-faint">{t('acct.detail.currentSlotTitle')}</div>
           <SlotMiniPills logicalKey={logicalKey} slotsByTier={slotsByTier} onOpenPolicy={onOpenPolicy} />
         </div>
       </div>
@@ -473,10 +478,10 @@ function UnifiedGroupDetail({
         <div className="grid gap-2.5 rounded-lg border border-border/70 bg-muted/35 px-3.5 py-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-xs font-semibold text-muted-foreground">
-              {`账号剩余额度${usageReadLine(latestUsage) ? ` · ${usageReadLine(latestUsage)}` : ''}`}
+              {latestUsageRead ? t('acct.group.quotaHeadingWithRead', { read: latestUsageRead }) : t('acct.group.quotaHeading')}
             </h3>
             <div className="flex items-center gap-2">
-              <HashLink href="#/usage" className="text-xs text-link hover:underline">查看完整用量 →</HashLink>
+              <HashLink href="#/usage" className="text-xs text-link hover:underline">{t('acct.telemetry.viewFullUsage')}</HashLink>
               <Button
                 type="button"
                 size="sm"
@@ -486,7 +491,7 @@ function UnifiedGroupDetail({
                 onClick={onRefreshQuota}
               >
                 <RefreshCw aria-hidden="true" className={cn('size-3.5', refreshingQuota && 'animate-spin motion-reduce:animate-none')} />
-                {refreshingQuota ? '刷新中…' : '刷新额度'}
+                {refreshingQuota ? t('acct.quota.refreshingEllipsis') : t('acct.quota.refreshBtn')}
               </Button>
             </div>
           </div>
@@ -508,35 +513,36 @@ function UnifiedGroupDetail({
         </div>
       ) : null}
 
-      <TelemetrySummaryCard telemetry={telemetry} note="多机聚合账本消耗" />
+      <TelemetrySummaryCard telemetry={telemetry} note={t('acct.group.telemetryNote')} />
 
       <div className="grid gap-2.5">
         <div className="flex items-center justify-between gap-2">
-          <h3 className="text-xs font-semibold text-muted-foreground">档位模型配置（统一快照）</h3>
-          <span className="text-xs text-faint">点右上角可一键同步全部机器</span>
+          <h3 className="text-xs font-semibold text-muted-foreground">{t('acct.group.tiersHeading')}</h3>
+          <span className="text-xs text-faint">{t('acct.group.tiersSyncHint')}</span>
         </div>
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
           {TIERS.map((decl) => {
             const tier = sample.tiers?.[decl.id];
+            const tierName = tierDisplayLabel(decl.id, locale);
             if (!tier) {
               return (
                 <div key={decl.id} className="grid gap-1 rounded-lg border border-dashed border-border/80 bg-muted/25 px-3 py-2.5">
-                  <span className="text-xs font-medium text-muted-foreground">{decl.label}</span>
-                  <span className="text-xs text-faint">未配置</span>
+                  <span className="text-xs font-medium text-muted-foreground">{tierName}</span>
+                  <span className="text-xs text-faint">{t('acct.tier.unconfigured')}</span>
                 </div>
               );
             }
             const parsed = editor?.parse(tier.text);
             return (
               <div key={decl.id} className="grid content-start gap-1 rounded-lg border border-border bg-background/70 px-3 py-2.5">
-                <span className="text-xs font-semibold text-foreground">{decl.label}</span>
+                <span className="text-xs font-semibold text-foreground">{tierName}</span>
                 {parsed?.model ? (
                   <>
                     <Mono className="text-xs font-medium text-foreground">{parsed.model}</Mono>
-                    {parsed.effort ? <span className="text-[11px] text-muted-foreground">{`推理强度 ${parsed.effort}`}</span> : null}
+                    {parsed.effort ? <span className="text-[11px] text-muted-foreground">{t('acct.tier.effortValue', { effort: parsed.effort })}</span> : null}
                   </>
                 ) : tier.text.trim() === '' ? (
-                  <span className="text-xs text-muted-foreground">使用各机默认配置</span>
+                  <span className="text-xs text-muted-foreground">{t('acct.group.defaultMachineConfig')}</span>
                 ) : (
                   <Mono className="line-clamp-2 text-[11px] text-muted-foreground">{tier.text.trim()}</Mono>
                 )}
@@ -547,7 +553,7 @@ function UnifiedGroupDetail({
       </div>
 
       <div className="grid gap-2">
-        <h3 className="text-xs font-semibold text-muted-foreground">已授权机器矩阵（自动负载均衡，无需手工排序）</h3>
+        <h3 className="text-xs font-semibold text-muted-foreground">{t('acct.group.machineMatrixHeading')}</h3>
         <div className="divide-y divide-border/70 rounded-lg border border-border bg-background/70">
           {members.map((member) => {
             const { key, machine, login } = member;
@@ -560,7 +566,7 @@ function UnifiedGroupDetail({
                   <Dot tone={machine.node.connected ? dotToneOf(standing.tone) : 'ended'} />
                   <span className="font-mono font-semibold text-foreground">{machine.id}</span>
                   <Badge tone={standing.tone}>{standing.text}</Badge>
-                  <span className="text-muted-foreground">{tierCount} 档</span>
+                  <span className="text-muted-foreground">{t('acct.group.tierCount', { count: tierCount })}</span>
                   {(() => {
                     const route = effectiveRouteText(login, editor);
                     return route ? <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-2xs text-muted-foreground">{route}</span> : null;
@@ -576,15 +582,15 @@ function UnifiedGroupDetail({
                 <div className="flex items-center gap-1">
                   {login.status?.rest ? (
                     <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={busy} onClick={() => onRetryMember(member)}>
-                      现在就试
+                      {t('acct.action.tryNow')}
                     </Button>
                   ) : null}
                   <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={busy} onClick={() => onEditMember(member)}>
-                    微调
+                    {t('acct.action.tweak')}
                   </Button>
                   {login.configured ? (
                     <Button size="sm" variant="danger" className="h-7 px-2 text-xs" disabled={busy} onClick={() => onDeleteMember(member)}>
-                      删除
+                      {t('common.delete')}
                     </Button>
                   ) : null}
                 </div>
@@ -616,17 +622,17 @@ function effectiveRouteText(login: MachineLogin, editor: ReturnType<typeof tierE
   if (providers.length === 1) {
     const p = providers[0]!;
     return login.route_label && login.route_label !== p
-      ? `${p}（已覆写本机默认 ${login.route_label}）`
+      ? translate('acct.route.overrideLocal', { provider: p, route: login.route_label })
       : p;
   }
-  if (providers.length > 1) return `${providers.join(' / ')}（分档）`;
-  return login.route_label ? `默认线路 ${login.route_label}` : null;
+  if (providers.length > 1) return translate('acct.route.perTier', { providers: providers.join(' / ') });
+  return login.route_label ? translate('acct.route.defaultRoute', { route: login.route_label }) : null;
 }
 
 function ownRailLabel(machine: Machine, login: MachineLogin): string {
   const parts = [machine.id, login.executor];
   if (login.account_label) parts.push(login.account_label);
-  return `选择单机登录 ${parts.join(' · ')}`;
+  return translate('acct.rail.selectOwnAria', { label: parts.join(' · ') });
 }
 
 function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft, busy, failure, refreshingQuota, quotaError, onRename, onOpenPolicy, onRefreshQuota, onCheck, onRetry, onRelogin, onEdit, onToken, onDelete, onEditLinkedOwn, onDeleteLinkedOwn }: {
@@ -641,6 +647,7 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft,
   onEditLinkedOwn?: (member: OwnMember) => void;
   onDeleteLinkedOwn?: (member: OwnMember) => void;
 }) {
+  const { t, locale } = useI18n();
   const account = row.kind === 'account' ? row.account : null;
   const own = row.kind === 'machine' ? row.login : null;
   const login = account ?? own!;
@@ -683,22 +690,22 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft,
 
   const facts: { label: string; value: string }[] = [
     ...(row.kind === 'machine'
-      ? [{ label: '范围', value: `机器 ${row.machine.id}` }]
-      : [{ label: '范围', value: '全机共用' }]),
+      ? [{ label: t('acct.detail.factScope'), value: t('acct.detail.scopeMachine', { id: row.machine.id }) }]
+      : [{ label: t('acct.detail.factScope'), value: t('acct.detail.scopeAll') }]),
     ...(account
-      ? [{ label: '凭据', value: isSignedInAccount ? '官方授权' : '托管密钥' }]
+      ? [{ label: t('acct.detail.factCredential'), value: isSignedInAccount ? t('acct.detail.credOfficialAuth') : t('acct.identity.managedKey') }]
       : []),
-    ...(account?.provider ? [{ label: '线路', value: lineLine(page, account) }] : []),
+    ...(account?.provider ? [{ label: t('acct.detail.factRoute'), value: lineLine(page, account) }] : []),
     ...(own ? (() => {
       const route = effectiveRouteText(own, editor);
-      return route ? [{ label: '线路', value: route }] : [];
+      return route ? [{ label: t('acct.detail.factRoute'), value: route }] : [];
     })() : []),
   ];
   const limitBadges: string[] = [
-    ...(login.permission_mode ? [`权限 ${login.permission_mode}`] : []),
-    ...(login.timeout_ms ? [`时限 ${login.timeout_ms / 60_000} 分钟`] : []),
-    ...(login.max_runs ? [`上限 ${login.max_runs} 轮`] : []),
-    ...(login.queued_tasks > 0 ? [`排队 ${login.queued_tasks}`] : []),
+    ...(login.permission_mode ? [t('acct.detail.badgePerm', { mode: login.permission_mode })] : []),
+    ...(login.timeout_ms ? [t('acct.detail.badgeTimeout', { minutes: login.timeout_ms / 60_000 })] : []),
+    ...(login.max_runs ? [t('acct.detail.badgeMaxRuns', { max: login.max_runs })] : []),
+    ...(login.queued_tasks > 0 ? [t('acct.detail.badgeQueued', { count: login.queued_tasks })] : []),
   ];
 
   const displayTitle = account
@@ -706,7 +713,7 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft,
     : own!.display_name || (own!.id ? page.login_aliases?.[own!.id] : undefined) || own!.account_label || formatProviderName(login.executor);
   const verifiedIdentity = row.kind === 'account'
     ? accountIdentityLine(row.account)
-    : [row.login.account_label, row.login.plan_label, row.login.route_label ? `线路 ${row.login.route_label}` : null, `机器 ${row.machine.id}`]
+    : [row.login.account_label, row.login.plan_label, row.login.route_label ? t('acct.routeLabel', { route: row.login.route_label }) : null, t('acct.detail.scopeMachine', { id: row.machine.id })]
       .filter(Boolean)
       .join(' · ');
 
@@ -727,13 +734,13 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft,
               allowClear={!account}
               onSave={onRename}
             />
-            <Mono title="执行器" className="rounded bg-hover px-1.5 py-0.5 text-xs text-muted-foreground">
+            <Mono title={t('acct.executorTitle')} className="rounded bg-hover px-1.5 py-0.5 text-xs text-muted-foreground">
               {login.executor}
             </Mono>
             <Badge tone={standing.tone}>{standing.text}</Badge>
             {row.kind === 'machine'
-              ? <Badge tone="plain">{`单机 · ${row.machine.id}`}</Badge>
-              : <Badge tone="running">全机分发</Badge>}
+              ? <Badge tone="plain">{t('acct.detail.singleMachineBadge', { id: row.machine.id })}</Badge>
+              : <Badge tone="running">{t('acct.scope.allMachines')}</Badge>}
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-muted/50 px-2 py-0.5 font-mono text-[11px] text-foreground">
@@ -741,42 +748,42 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft,
               {verifiedIdentity}
             </span>
             {row.kind === 'machine' ? (
-              <span>仅在所在机器本地可用的登录，不跨机分发。</span>
+              <span>{t('acct.detail.localOnlyHint')}</span>
             ) : null}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-1">
           {account && account.credential !== 'missing' ? (
-            <Button size="sm" variant="ghost" title={CHECK_HINT} disabled={draft.checking} onClick={onCheck}>
-              {draft.checking ? '测试中' : '测试连接'}
+            <Button size="sm" variant="ghost" title={t('acct.check.hint')} disabled={draft.checking} onClick={onCheck}>
+              {draft.checking ? t('acct.action.checking') : t('acct.action.testConn')}
             </Button>
           ) : null}
           {status?.rest && !rejected ? (
             <Button size="sm" variant="ghost" disabled={busy} onClick={onRetry}>
-              {draft.retrying ? '正在放行' : '现在就试'}
+              {draft.retrying ? t('acct.action.retrying') : t('acct.action.tryNow')}
             </Button>
           ) : null}
           {account?.credential === 'missing' && kept === credentialText.typed ? (
-            <Button size="sm" variant="ghost" disabled={busy} onClick={onToken}>补填密钥</Button>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={onToken}>{t('acct.action.fillKey')}</Button>
           ) : null}
           {signIn ? (
             <Button size="sm" variant="ghost" disabled={busy || !signIn.available} title={signIn.available ? undefined : signIn.why} onClick={() => onRelogin(signIn.way as 'page' | 'device')}>
-              重新登录
+              {t('acct.action.relogin')}
             </Button>
           ) : null}
-          <Button size="sm" disabled={busy} onClick={onEdit}>{own && !own.configured ? '填档位' : '修改'}</Button>
+          <Button size="sm" disabled={busy} onClick={onEdit}>{own && !own.configured ? t('acct.action.configureTiers') : t('common.edit')}</Button>
           {account ? (
             <Menu>
               <MenuTrigger asChild>
-                <Button size="icon-sm" variant="ghost" aria-label="更多" disabled={busy}><Ellipsis /></Button>
+                <Button size="icon-sm" variant="ghost" aria-label={t('common.more')} disabled={busy}><Ellipsis /></Button>
               </MenuTrigger>
               <MenuContent>
                 {kept === credentialText.typed ? <MenuItem onSelect={onToken}><KeyRound />{credentialText.typed.change}</MenuItem> : null}
-                <MenuItem danger onSelect={onDelete}>删除</MenuItem>
+                <MenuItem danger onSelect={onDelete}>{t('common.delete')}</MenuItem>
               </MenuContent>
             </Menu>
           ) : own?.configured ? (
-            <Button size="sm" variant="danger" disabled={busy} onClick={onDelete}>删除</Button>
+            <Button size="sm" variant="danger" disabled={busy} onClick={onDelete}>{t('common.delete')}</Button>
           ) : null}
         </div>
       </header>
@@ -810,14 +817,14 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft,
             </p>
           ) : null}
           {rejected && signIn && !signIn.available ? <Note className="text-xs">{signIn.why}</Note> : null}
-          {status?.rest?.reason ? <Note className="text-xs">{`执行器的原话：${status.rest.reason}`}</Note> : null}
+          {status?.rest?.reason ? <Note className="text-xs">{t('acct.detail.executorSaid', { reason: status.rest.reason })}</Note> : null}
         </div>
       ) : null}
 
       <div className="grid gap-3 rounded-lg border border-border/70 bg-muted/40 px-3.5 py-3 text-xs">
         <dl className="grid grid-cols-1 gap-x-4 gap-y-2.5 sm:grid-cols-3">
           <div className="min-w-0">
-            <dt className="text-faint">执行权限（防卡死保障）</dt>
+            <dt className="text-faint">{t('acct.detail.execPermTitle')}</dt>
             <dd className="mt-0.5 flex items-center gap-1.5 font-medium text-foreground">
               <ShieldCheck className={cn('size-3.5 flex-none', perm.autoFullAccess ? 'text-success' : 'text-waiting')} />
               <span className="wrap-anywhere">{perm.label}</span>
@@ -831,7 +838,7 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft,
             </div>
           ))}
           <div className="min-w-0">
-            <dt className="text-faint">当前路由槽位</dt>
+            <dt className="text-faint">{t('acct.detail.currentSlotTitle')}</dt>
             <dd>
               <SlotMiniPills logicalKey={logicalKey} slotsByTier={slotsByTier} onOpenPolicy={onOpenPolicy} />
             </dd>
@@ -849,13 +856,13 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft,
       {usage.length > 0 ? (
         <div className="grid gap-2 rounded-lg border border-border/70 bg-muted/35 px-3.5 py-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-xs font-semibold text-muted-foreground">额度窗口</h3>
+            <h3 className="text-xs font-semibold text-muted-foreground">{t('acct.detail.quotaWindowsHeading')}</h3>
             <div className="flex flex-wrap items-center gap-2">
               {read ? (
                 <p className="text-xs text-faint wrap-anywhere">
                   {read}
                   <span aria-hidden="true"> · </span>
-                  <HashLink href="#/usage" className="text-link hover:underline">在用量页刷新</HashLink>
+                  <HashLink href="#/usage" className="text-link hover:underline">{t('acct.detail.refreshOnUsagePage')}</HashLink>
                 </p>
               ) : null}
               {(account?.id ?? own?.id) ? (
@@ -868,7 +875,7 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft,
                   onClick={onRefreshQuota}
                 >
                   <RefreshCw aria-hidden="true" className={cn('size-3.5', refreshingQuota && 'animate-spin motion-reduce:animate-none')} />
-                  {refreshingQuota ? '刷新中…' : '刷新额度'}
+                  {refreshingQuota ? t('acct.quota.refreshingEllipsis') : t('acct.quota.refreshBtn')}
                 </Button>
               ) : null}
             </div>
@@ -892,37 +899,38 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft,
       ) : (
         <TelemetrySummaryCard
           telemetry={(account?.id ?? own?.id) ? (page.login_telemetry?.[account?.id ?? own!.id!] ?? null) : null}
-          note={login.executor === 'dsh' ? '支持官方 / New-API 网关余额查询' : '实时记录每轮 Token 消耗'}
+          note={login.executor === 'dsh' ? t('acct.detail.dshBalanceNote') : t('acct.detail.liveTokensNote')}
         />
       )}
 
       <div className="grid gap-2.5">
         <div className="flex items-center justify-between gap-2">
-          <h3 className="text-xs font-semibold text-muted-foreground">档位配置</h3>
-          <span className="text-xs text-faint">{configuredCount > 0 ? `已配 ${configuredCount} 个档位` : '没有档位'}</span>
+          <h3 className="text-xs font-semibold text-muted-foreground">{t('acct.detail.tiersHeading')}</h3>
+          <span className="text-xs text-faint">{configuredCount > 0 ? t('acct.detail.tiersConfiguredCount', { count: configuredCount }) : t('acct.detail.tiersEmpty')}</span>
         </div>
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
           {TIERS.map((decl) => {
             const tier = login.tiers?.[decl.id];
+            const tierName = tierDisplayLabel(decl.id, locale);
             if (!tier) {
               return (
                 <div key={decl.id} className="grid gap-1 rounded-lg border border-dashed border-border/80 bg-muted/25 px-3 py-2.5">
-                  <span className="text-xs font-medium text-muted-foreground">{decl.label}</span>
-                  <span className="text-xs text-faint">未配置</span>
+                  <span className="text-xs font-medium text-muted-foreground">{tierName}</span>
+                  <span className="text-xs text-faint">{t('acct.tier.unconfigured')}</span>
                 </div>
               );
             }
             const parsed = editor?.parse(tier.text);
             return (
               <div key={decl.id} title={tier.text} className="grid content-start gap-1 rounded-lg border border-border bg-background/70 px-3 py-2.5">
-                <span className="text-xs font-semibold text-foreground">{decl.label}</span>
+                <span className="text-xs font-semibold text-foreground">{tierName}</span>
                 {parsed?.model ? (
                   <>
                     <Mono className="text-xs font-medium text-foreground">{parsed.model}</Mono>
-                    {parsed.effort ? <span className="text-[11px] text-muted-foreground">{`推理强度 ${parsed.effort}`}</span> : null}
+                    {parsed.effort ? <span className="text-[11px] text-muted-foreground">{t('acct.tier.effortValue', { effort: parsed.effort })}</span> : null}
                   </>
                 ) : tier.text.trim() === '' ? (
-                  <span className="text-xs text-muted-foreground">使用本机默认配置</span>
+                  <span className="text-xs text-muted-foreground">{t('acct.detail.defaultLocalConfig')}</span>
                 ) : (
                   <Mono className="line-clamp-2 text-[11px] text-muted-foreground">{tier.text.trim()}</Mono>
                 )}
@@ -949,18 +957,18 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft,
         <div className="grid gap-1 rounded-lg border border-border/70 bg-muted px-3.5 py-2.5">
           {draft.check.machine ? <div><CheckLine answer={draft.check.machine} /></div> : null}
           {draft.check.unchecked ? <Note>{draft.check.unchecked}</Note> : null}
-          {account.models?.at ? <Note className="text-xs">{`${modelText.label}：${modelsLine(account.models)}`}</Note> : null}
+          {account.models?.at ? <Note className="text-xs">{t('acct.pairColon', { label: modelText.label, value: modelsLine(account.models) })}</Note> : null}
           {draft.check.modelsFailure ? <Problem>{modelText.queryFailed(draft.check.modelsFailure)}</Problem> : null}
           {draft.check.failure ? <Problem>{draft.check.failure}</Problem> : null}
-          <p className="text-xs text-faint">{`${formatTime(draft.check.at)} 测试连接的结果`}</p>
+          <p className="text-xs text-faint">{t('acct.detail.checkResultAt', { time: formatTime(draft.check.at) })}</p>
         </div>
       ) : null}
 
       {linkedOwns && linkedOwns.length > 0 ? (
         <div className="grid gap-2 rounded-lg border border-border/75 bg-muted/35 px-3.5 py-3 text-xs">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="font-semibold text-muted-foreground">{`同账号本机冗余登录（${linkedOwns.length} 台）`}</h3>
-            <span className="text-faint">已由当前全机分发账号覆盖并自动合并展示，可按需清理</span>
+            <h3 className="font-semibold text-muted-foreground">{t('acct.detail.linkedOwnsTitle', { count: linkedOwns.length })}</h3>
+            <span className="text-faint">{t('acct.detail.linkedOwnsHint')}</span>
           </div>
           <ul className="divide-y divide-border/60 rounded-md border border-border/70 bg-background/70">
             {linkedOwns.map((member) => (
@@ -968,17 +976,17 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft,
                 <div className="flex min-w-0 items-center gap-2">
                   <Dot tone={member.machine.node.connected ? 'success' : 'waiting'} />
                   <Mono className="font-medium text-foreground">{`${member.machine.id}/${member.login.executor}`}</Mono>
-                  <span className="text-muted-foreground">{member.machine.node.connected ? '在线' : '离线'}</span>
+                  <span className="text-muted-foreground">{member.machine.node.connected ? t('common.online') : t('common.offline')}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   {onEditLinkedOwn ? (
                     <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={busy} onClick={() => onEditLinkedOwn(member)}>
-                      修改本机档位
+                      {t('acct.detail.editLocalTiers')}
                     </Button>
                   ) : null}
                   {onDeleteLinkedOwn ? (
                     <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-destructive hover:text-destructive" disabled={busy} onClick={() => onDeleteLinkedOwn(member)}>
-                      删除冗余登录
+                      {t('acct.detail.deleteRedundantLogin')}
                     </Button>
                   ) : null}
                 </div>
@@ -996,7 +1004,7 @@ function LoginDetail({ row, page, slotsByTier, usageOverride, linkedOwns, draft,
 type Taken = (accounts: Account[], answer: unknown) => Account[];
 
 export function AccountsPage() {
-  const { t, bi } = useI18n();
+  const { t, locale } = useI18n();
   const { data, isPending, error } = useQuery(accountsQuery);
   const [query] = useSearchParams();
   const focus = query.get('login');
@@ -1153,8 +1161,8 @@ export function AccountsPage() {
     const { form } = draftOf(key);
     if (!form || !change.free()) return;
     const name = form.name.trim();
-    const refused = name === '' ? '先给这个账号起个名字'
-      : page.accounts.some((each) => each.name === name && each.id !== account.id) ? `已经有叫 ${name} 的账号了。要改它，点它的“修改”`
+    const refused = name === '' ? t('acct.error.nameRequired')
+      : page.accounts.some((each) => each.name === name && each.id !== account.id) ? t('acct.error.duplicateName', { name })
       : null;
     const tierProblem = refused ? null : tierRefusal(form.tiers, tierEditorOf(page.tier_forms, form.executor));
     if (refused || tierProblem) {
@@ -1467,7 +1475,7 @@ export function AccountsPage() {
 
   const logicalEntries = useMemo(
     () => (data ? buildLogicalAccountEntries(data, usageByAccount) : []),
-    [data, usageByAccount],
+    [data, usageByAccount, locale],
   );
   const slotsByTier = useMemo(
     () => (data ? effectiveSlotsByTier(data, logicalEntries) : {
@@ -1623,7 +1631,7 @@ export function AccountsPage() {
 
           {allRows.length > 0 ? (
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div role="tablist" aria-label={bi('账号视图切换', 'Accounts view')} className="inline-flex items-center rounded-lg border border-border bg-muted/70 p-0.5 text-xs">
+              <div role="tablist" aria-label={t('acct.viewSwitchAria')} className="inline-flex items-center rounded-lg border border-border bg-muted/70 p-0.5 text-xs">
                 <button
                   type="button"
                   role="tab"
@@ -1661,19 +1669,19 @@ export function AccountsPage() {
                   onClick={() => setActiveTab('policy')}
                   className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border bg-raised px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
                 >
-                  <span>{bi('决策档 P1：', 'Decide P1: ')}</span>
+                  <span>{t('acct.decideP1Prefix')}</span>
                   <strong className="font-medium text-foreground">{decideP1Names.join(' + ')}</strong>
-                  <span className="text-primary">{bi('调整 →', 'Edit →')}</span>
+                  <span className="text-primary">{t('acct.decideP1Edit')}</span>
                 </button>
               ) : null}
             </div>
           ) : (
-            <PageLead className="mb-3">{bi('一处添加并统一保管账号，项目放行的所有在线机器共用；额度耗尽时按策略自动切换。', 'Manage shared accounts in one place across online machines with automatic quota failover.')}</PageLead>
+            <PageLead className="mb-3">{t('acct.lead')}</PageLead>
           )}
 
           {allRows.length === 0 ? (
-            <Empty icon={<KeyRound />} title="还没有集中托管账号">
-              点右上角的“添加账号”，完成一次授权或填入密钥即可分发给所有在线机器共用。
+            <Empty icon={<KeyRound />} title={t('acct.emptyTitle')}>
+              {t('acct.emptyBody')}
             </Empty>
           ) : activeTab === 'policy' ? (
             <DispatchSlotsPanel
@@ -1687,7 +1695,7 @@ export function AccountsPage() {
           ) : (
             <div className="grid grid-cols-1 items-start gap-5 shell:grid-cols-[268px_minmax(0,1fr)] wide:grid-cols-[296px_minmax(0,1fr)]">
               <aside
-                aria-label="账号列表"
+                aria-label={t('acct.rail.listAria')}
                 className="overflow-hidden rounded-xl bg-raised shadow-card shell:sticky shell:top-4"
                 onKeyDown={handleRailKeyDown}
               >
@@ -1696,8 +1704,8 @@ export function AccountsPage() {
                     <div className="relative">
                       <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-faint" aria-hidden="true" />
                       <Input
-                        aria-label="搜索账号"
-                        placeholder="搜索别名、登录身份、渠道或机器…"
+                        aria-label={t('acct.rail.searchAria')}
+                        placeholder={t('acct.rail.searchPlaceholder')}
                         value={search}
                         onChange={(event) => setSearch(event.target.value)}
                         className="h-8 pl-8 text-xs"
@@ -1719,7 +1727,7 @@ export function AccountsPage() {
                             {section.rows.length}
                           </span>
                         </div>
-                        <ul role="group" aria-label={`${section.label} 账号`} className="divide-y divide-border/50">
+                        <ul role="group" aria-label={t('acct.rail.providerGroupAria', { provider: section.label })} className="divide-y divide-border/50">
                           {section.rows.map((row) => {
                             const active = selectedRow?.key === row.key;
                             if (row.kind === 'account') {
@@ -1737,7 +1745,7 @@ export function AccountsPage() {
                                       else rowRefs.current.delete(row.key);
                                     }}
                                     type="button"
-                                    aria-label={`选择账号 ${account.name}`}
+                                    aria-label={t('acct.rail.selectAccountAria', { name: account.name })}
                                     aria-current={active ? 'true' : undefined}
                                     onClick={() => setSelectedKey(row.key)}
                                     className={cn(
@@ -1752,7 +1760,7 @@ export function AccountsPage() {
                                         {account.name}
                                       </span>
                                       <span className="flex-none rounded-md bg-brand-soft/80 px-1.5 py-0.5 text-[10px] font-medium text-brand-foreground">
-                                        全机分发
+                                        {t('acct.scope.allMachines')}
                                       </span>
                                     </div>
                                     <div className="flex items-center justify-between gap-2 pl-4 text-xs text-muted-foreground">
@@ -1763,7 +1771,7 @@ export function AccountsPage() {
                                         <span className="flex-none text-[11px] text-muted-foreground tabular-nums">{quota}</span>
                                       ) : account.queued_tasks > 0 ? (
                                         <span className="flex-none rounded-full bg-hover px-1.5 text-[10px] leading-[16px] text-muted-foreground tabular-nums">
-                                          {`排队 ${account.queued_tasks}`}
+                                          {t('acct.detail.badgeQueued', { count: account.queued_tasks })}
                                         </span>
                                       ) : null}
                                     </div>
@@ -1787,7 +1795,7 @@ export function AccountsPage() {
                               const subLeft = [
                                 ...(row.identityLabel && row.identityLabel !== title ? [row.identityLabel] : []),
                                 ...(row.planLabel ? [row.planLabel] : []),
-                                `${readyCount}/${row.members.length} 在线`,
+                                t('acct.rail.onlineCount', { ready: readyCount, total: row.members.length }),
                               ].join(' · ');
                               return (
                                 <li key={row.key}>
@@ -1797,7 +1805,7 @@ export function AccountsPage() {
                                       else rowRefs.current.delete(row.key);
                                     }}
                                     type="button"
-                                    aria-label={`选择逻辑账号 ${provider}`}
+                                    aria-label={t('acct.rail.selectGroupAria', { provider })}
                                     aria-current={active ? 'true' : undefined}
                                     onClick={() => setSelectedKey(row.key)}
                                     className={cn(
@@ -1812,7 +1820,7 @@ export function AccountsPage() {
                                         {title}
                                       </span>
                                       <span className="flex-none rounded-md bg-hover px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground tabular-nums">
-                                        {`${row.members.length} 台授权`}
+                                        {t('acct.group.authorizedBadge', { count: row.members.length })}
                                       </span>
                                     </div>
                                     <div className="flex items-center justify-between gap-2 pl-4 text-xs text-muted-foreground">
@@ -1863,7 +1871,7 @@ export function AccountsPage() {
                                       {title}
                                     </span>
                                     <span className="flex-none rounded-md bg-hover px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                                      1 台授权
+                                      {t('acct.rail.singleAuthorizedBadge')}
                                     </span>
                                   </div>
                                   <div className="flex items-center justify-between gap-2 pl-4 text-xs text-muted-foreground">
@@ -1885,14 +1893,14 @@ export function AccountsPage() {
                     ))}
                   </div>
                 ) : (
-                  <p className="px-3.5 py-6 text-center text-xs text-faint">没有匹配的账号</p>
+                  <p className="px-3.5 py-6 text-center text-xs text-faint">{t('acct.rail.noMatches')}</p>
                 )}
               </aside>
 
               <div className="min-w-0">
                 {selectedRow ? renderDetail(selectedRow) : (
                   <div className="rounded-xl bg-raised px-6 py-10 text-center shadow-card">
-                    <Note className="text-xs">当前筛选下没有匹配的账号。</Note>
+                    <Note className="text-xs">{t('acct.rail.noMatchesFilter')}</Note>
                   </div>
                 )}
               </div>
@@ -1901,7 +1909,7 @@ export function AccountsPage() {
 
           <Sheet open={editing !== null} onOpenChange={(open) => { if (!open && editing && !editing.draft.saving) closeEditor(editing.key); }}>
             {editing?.draft.form ? (
-              <SheetContent title={`修改 ${editing.account.name}`}>
+              <SheetContent title={t('acct.sheet.editTitle', { name: editing.account.name })}>
                 <LoginEditor
                   account={editing.account}
                   form={editing.draft.form}
@@ -1935,7 +1943,7 @@ export function AccountsPage() {
 
           <Sheet open={editingOwn !== null} onOpenChange={(open) => { if (!open && editingOwn && !editingOwn.draft.saving) closeEditor(editingOwn.key); }}>
             {editingOwn && editingOwn.draft.form ? (
-              <SheetContent title={`修改 ${loginName(editingOwn.login.name)}`} description="这台机器本地已登录的执行器，仅在这台机器上使用。">
+              <SheetContent title={t('acct.sheet.editTitle', { name: loginName(editingOwn.login.name) })} description={t('acct.sheet.editOwnDesc')}>
                 <LoginEditor
                   own={editingOwn.login}
                   form={editingOwn.draft.form}
@@ -1959,22 +1967,22 @@ export function AccountsPage() {
           <Sheet open={editingGroup !== null} onOpenChange={(open) => { if (!open && editingGroup && !editingGroup.draft.saving) closeEditor(editingGroup.key); }}>
             {editingGroup && editingGroup.draft.form ? (
               <SheetContent
-                title={`统一修改 ${formatProviderName(editingGroup.executor)}（${editingGroup.members.length} 台机器）`}
-                description={`保存后将同步写入 ${editingGroup.members.map((m) => m.machine.id).join('、')} 的档位、权限、超时和并发设置；各机器本地 OAuth 授权不受影响。`}
+                title={t('acct.sheet.editGroupTitle', { provider: formatProviderName(editingGroup.executor), count: editingGroup.members.length })}
+                description={t('acct.sheet.editGroupDesc', { machines: editingGroup.members.map((m) => m.machine.id).join(t('acct.listSep')) })}
               >
                 {tierEditorOf(data.tier_forms, editingGroup.executor)?.fields.includes('provider') ? (
                   <div className="mb-4 rounded-lg border border-border bg-muted/45 px-3 py-2.5 text-xs">
                     <Choice className="items-start">
                       <Checkbox
-                        aria-label="保留各台机器原有线路"
+                        aria-label={t('acct.sheet.preserveRoutesTitle')}
                         checked={preserveGroupRoutes}
                         disabled={editingGroup.draft.saving}
                         onChange={() => setPreserveGroupRoutes((prev) => !prev)}
                       />
                       <span>
-                        <strong className="font-medium text-foreground">保留各台机器原有线路</strong>
+                        <strong className="font-medium text-foreground">{t('acct.sheet.preserveRoutesTitle')}</strong>
                         <span className="mt-0.5 block text-muted-foreground">
-                          勾选时仅同步模型、推理强度、权限与并发，避免公司与家里走不同线路时互相覆盖。
+                          {t('acct.sheet.preserveRoutesHint')}
                         </span>
                       </span>
                     </Choice>
@@ -2002,7 +2010,7 @@ export function AccountsPage() {
 
           <Dialog open={tokenAccount !== undefined} onOpenChange={(open) => { if (!open && tokenAccount && !credentialDraft(tokenAccount.id).saving) closeToken(tokenAccount.id); }}>
             {tokenAccount ? (
-              <DialogContent title={`更换 ${tokenAccount.name} 的 ${credentialText.typed.label}`} description="新的存好了才替换旧的；填的内容只送出去一次，不会再显示。">
+              <DialogContent title={t('acct.dialog.replaceCredTitle', { name: tokenAccount.name, label: credentialText.typed.label })} description={t('acct.dialog.replaceCredDesc')}>
                 <CredentialForm
                   account={tokenAccount}
                   draft={credentialDraft(tokenAccount.id)}
@@ -2017,10 +2025,10 @@ export function AccountsPage() {
 
           <Confirm
             open={doomed !== undefined}
-            title={`删除账号 ${doomed?.name ?? ''}？`}
-            description="删掉以后，tycho 不再保管这份登录。它上面还有排队的任务或没结束的执行时，服务会先说代价，再点一次才删。"
-            confirm={doomed && draftOf(doomed.id).saving ? '删除中' : `确认删除 ${doomed?.name ?? ''}`}
-            cancel="不删了"
+            title={t('acct.dialog.deleteAccountTitle', { name: doomed?.name ?? '' })}
+            description={t('acct.dialog.deleteAccountDesc')}
+            confirm={doomed && draftOf(doomed.id).saving ? t('acct.action.deleting') : t('acct.dialog.confirmDeleteAccount', { name: doomed?.name ?? '' })}
+            cancel={t('acct.dialog.keepIt')}
             busy={doomed ? draftOf(doomed.id).saving : false}
             error={doomed ? draftOf(doomed.id).error : null}
             onConfirm={() => { if (doomed) void deleteAccount(doomed); }}
@@ -2029,10 +2037,10 @@ export function AccountsPage() {
 
           <Confirm
             open={ownDoomed !== null}
-            title={ownDoomed ? `删除 ${loginName(ownDoomed.login.name)}？` : ''}
-            description="删掉的是 tycho 给这份单机登录记录的档位和限制；那台机器上执行器本身的登录状态不受影响。若之后还要用，到“机器”页重新启用即可。"
-            confirm={ownDoomed && draftOf(ownDoomed.key).saving ? '删除中' : '确认删除'}
-            cancel="不删了"
+            title={ownDoomed ? t('acct.dialog.deleteOwnTitle', { name: loginName(ownDoomed.login.name) }) : ''}
+            description={t('acct.dialog.deleteOwnDesc')}
+            confirm={ownDoomed && draftOf(ownDoomed.key).saving ? t('acct.action.deleting') : t('acct.dialog.confirmDelete')}
+            cancel={t('acct.dialog.keepIt')}
             busy={ownDoomed ? draftOf(ownDoomed.key).saving : false}
             error={ownDoomed ? draftOf(ownDoomed.key).error : null}
             onConfirm={() => { if (ownDoomed) void deleteOwn(ownDoomed.machine, ownDoomed.login); }}

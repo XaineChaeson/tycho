@@ -29,15 +29,16 @@ interface Devices {
 }
 
 const SESSIONS = '/api/console-sessions';
-const METHODS: Record<string, string> = {
-  link: '一次性链接',
-  device: '被另一台设备放行',
-  wecom: '在企业微信里放行',
-  weixin: '在微信里放行',
-  passphrase: '口令登录',
+const METHOD_KEYS: Record<string, string> = {
+  link: 'core.devices.method.link',
+  device: 'core.devices.method.device',
+  wecom: 'core.devices.method.wecom',
+  weixin: 'core.devices.method.weixin',
+  passphrase: 'core.devices.method.passphrase',
 };
 
 function DeviceManager() {
+  const { t } = useI18n();
   const { data, error, isPending, isFetching, refetch } = useQuery({ queryKey: [PAGE, 'console-sessions'], queryFn: () => api<Devices>(SESSIONS), refetchInterval: POLL_MS });
   const [confirmation, setConfirmation] = useState<ConsoleDevice | 'others' | null>(null);
   const [busy, setBusy] = useState(false);
@@ -59,7 +60,7 @@ function DeviceManager() {
         session.toLogin();
       } else {
         await post(target === 'others' ? SESSIONS + '/revoke-others' : SESSIONS + '/' + encodeURIComponent(target.id) + '/revoke');
-        setNotice(target === 'others' ? '其他设备已全部退出' : '已让这台设备退出：' + target.device);
+        setNotice(target === 'others' ? t('core.devices.revokedOthers') : t('core.devices.revokedOne', { device: target.device }));
         await refetch();
       }
     } catch (error) {
@@ -75,37 +76,44 @@ function DeviceManager() {
   const current = selected?.current ?? false;
   return (
     <div className="grid gap-4">
-      <section aria-label="已登录的设备" className="grid min-w-0 gap-3">
+      <section aria-label={t('core.devices.sectionTitle')} className="grid min-w-0 gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="font-semibold">已登录的设备</h2>
-          <Button variant="ghost" size="sm" disabled={isFetching || busy} onClick={() => { void refetch(); }}><RefreshCw />刷新设备</Button>
+          <h2 className="font-semibold">{t('core.devices.sectionTitle')}</h2>
+          <Button variant="ghost" size="sm" disabled={isFetching || busy} onClick={() => { void refetch(); }}><RefreshCw />{t('core.devices.refresh')}</Button>
         </div>
         {isPending ? <Skeleton className="h-28" /> : null}
         {error ? <Problem role="alert">{messageOf(error)}</Problem> : null}
         {failure ? <Problem role="alert">{failure}</Problem> : null}
         {notice ? <Callout tone="plain" role="status">{notice}</Callout> : null}
-        {data?.sessions.map((device) => (
-          <section key={device.id} aria-label={device.device} className="grid min-w-0 gap-2 rounded-lg border border-border p-3.5 wrap-anywhere">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="min-w-0 font-medium">{device.device}</h3>
-              {device.current ? <Badge tone="plain">这一台</Badge> : null}
-            </div>
-            <p className="text-muted-foreground">{device.entry === 'outside' ? '从外面' : '在主机这台电脑上'}{device.method ? ' · ' + (METHODS[device.method] ?? device.method) : ''}</p>
-            <dl className="grid gap-0.5 text-xs text-muted-foreground tabular-nums">
-              <div><dt className="inline">登录：</dt><dd className="inline">{fullTime(device.created_at)}</dd></div>
-              <div><dt className="inline">最近使用：</dt><dd className="inline">{fullTime(device.last_seen_at)}</dd></div>
-              <div><dt className="inline">到期：</dt><dd className="inline">{fullTime(device.expires_at)}</dd></div>
-            </dl>
-            <Button size="sm" className="mt-1 justify-self-start" disabled={busy} onClick={() => setConfirmation(device)}>{device.current ? '注销' : '让它退出'}</Button>
-          </section>
-        ))}
-        {data ? <Button className="justify-self-start" disabled={busy || !data.sessions.some((device) => !device.current)} onClick={() => setConfirmation('others')}>全部退出，只留这一台</Button> : null}
+        {data?.sessions.map((device) => {
+          const methodKey = device.method ? METHOD_KEYS[device.method] : undefined;
+          const methodLabel = methodKey ? t(methodKey) : device.method;
+          return (
+            <section key={device.id} aria-label={device.device} className="grid min-w-0 gap-2 rounded-lg border border-border p-3.5 wrap-anywhere">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="min-w-0 font-medium">{device.device}</h3>
+                {device.current ? <Badge tone="plain">{t('core.devices.thisDevice')}</Badge> : null}
+              </div>
+              <p className="text-muted-foreground">
+                {device.entry === 'outside' ? t('core.admit.entryOutside') : t('core.admit.entryInside')}
+                {methodLabel ? ' · ' + methodLabel : ''}
+              </p>
+              <dl className="grid gap-0.5 text-xs text-muted-foreground tabular-nums">
+                <div><dt className="inline">{t('core.devices.signedInAt')}</dt><dd className="inline">{fullTime(device.created_at)}</dd></div>
+                <div><dt className="inline">{t('core.devices.lastSeenAt')}</dt><dd className="inline">{fullTime(device.last_seen_at)}</dd></div>
+                <div><dt className="inline">{t('core.devices.expiresAt')}</dt><dd className="inline">{fullTime(device.expires_at)}</dd></div>
+              </dl>
+              <Button size="sm" className="mt-1 justify-self-start" disabled={busy} onClick={() => setConfirmation(device)}>{device.current ? t('core.devices.logout') : t('core.devices.revoke')}</Button>
+            </section>
+          );
+        })}
+        {data ? <Button className="justify-self-start" disabled={busy || !data.sessions.some((device) => !device.current)} onClick={() => setConfirmation('others')}>{t('core.devices.revokeOthers')}</Button> : null}
       </section>
       <Confirm
         open={confirmation !== null}
-        title={others ? '让其他设备全部退出？' : current ? '注销这一台？' : '让这台设备退出？'}
-        description={others ? '其他设备会立即失效，只有这一台继续保持登录。' : current ? '这一台会返回登录页，再次使用需要重新登录。' : (selected?.device ?? '') + ' 会立即失效，再次使用需要重新登录。'}
-        confirm={current ? '确认注销' : '确认退出'}
+        title={others ? t('core.devices.confirmOthersTitle') : current ? t('core.devices.confirmCurrentTitle') : t('core.devices.confirmOneTitle')}
+        description={others ? t('core.devices.confirmOthersDesc') : current ? t('core.devices.confirmCurrentDesc') : t('core.devices.confirmOneDesc', { device: selected?.device ?? '' })}
+        confirm={current ? t('core.devices.confirmLogout') : t('core.devices.confirmRevoke')}
         onConfirm={() => { void revoke(); }}
         onCancel={() => setConfirmation(null)}
       />
@@ -114,12 +122,12 @@ function DeviceManager() {
 }
 
 export function DeviceLogin() {
-  const { t, bi } = useI18n();
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild><Button variant="ghost" size="sm" className="gap-1 px-1.5"><MonitorSmartphone />{t('nav.devices')}</Button></SheetTrigger>
-      <SheetContent title={t('nav.devices')} description={bi('查看和管理已登录的设备。放行新设备在侧栏的“放行”里。', 'Inspect and revoke signed-in devices. Approve new devices via "Admit" in the sidebar.')} className="w-[min(440px,100%)]">
+      <SheetContent title={t('nav.devices')} description={t('core.devices.sheetDesc')} className="w-[min(440px,100%)]">
         {open ? <DeviceManager /> : null}
       </SheetContent>
     </Sheet>

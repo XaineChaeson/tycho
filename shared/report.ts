@@ -1,5 +1,5 @@
 // The receipt spelling is also the read-only Worker's delivery instruction.
-export const FINAL_MESSAGE_REF = '最后一条消息';
+export const FINAL_MESSAGE_REF = '最后一条消息'; // i18n-ignore
 export const REPORT_TEXT_LIMIT = 128 * 1024;
 
 export interface RunReport {
@@ -24,7 +24,7 @@ export function finalMessageDelivery(run: { snapshot_json: string; receipt_json:
 export type RunReportInfo = Omit<RunReport, 'text'>;
 export type ReportDescriptor = { ref: string; name: string; kind?: 'file' } | {
   ref: string;
-  name: '最后回复';
+  name: string;
   kind: 'final_message';
   state: 'saved' | 'truncated' | 'unavailable';
   bytes?: number;

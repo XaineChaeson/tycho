@@ -9,6 +9,7 @@ import { Note, Problem, Rows } from '@/components/bits';
 import { BLANK_CANDIDATE, OwnerChangeForm, draftOf, entryPath, ROW_LINK } from '@/components/knowledge-bits';
 import { Button } from '@/components/ui/button';
 import { messageOf } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { knowledgeQuery } from '@/lib/queries';
 import type { KnowledgeEntry, Project } from '@/lib/types';
 
@@ -17,35 +18,42 @@ const standing = (entry: KnowledgeEntry): boolean =>
   entry.state === 'active' && entry.kind === 'knowledge' && entry.loading === 'resident' && entry.roles.length === 0;
 
 export function ProjectRules({ project }: { project: Project }) {
+  const { t } = useI18n();
   const { data, error } = useQuery(knowledgeQuery);
   const [writing, setWriting] = useState<KnowledgeEntry | 'new' | null>(null);
   const own = data?.entries.filter((entry) => standing(entry) && entry.project_ids?.includes(project.id)) ?? [];
   const global = data?.entries.filter((entry) => standing(entry) && entry.project_ids === null).length ?? 0;
   return (
     <>
-      {error ? <Problem>{`知识读不到：${messageOf(error)}`}</Problem> : !data ? <Note>正在读……</Note> : own.length ? (
+      {error ? <Problem>{t('proj.rules.loadFailed', { reason: messageOf(error) })}</Problem> : !data ? <Note>{t('proj.rules.loading')}</Note> : own.length ? (
         <Rows>
-          <ul aria-label={`${project.name} 的常驻规则`} className="divide-y divide-border">
+          <ul aria-label={t('proj.rules.listAria', { name: project.name })} className="divide-y divide-border">
             {own.map((entry) => (
               <li key={entry.id} className="flex items-center gap-2 pr-2">
                 <Link to={entryPath(entry.id)} className={`${ROW_LINK} min-w-0 flex-1`}>
                   <span className="block truncate font-medium">{entry.title}</span>
                   <span className="block truncate text-xs text-muted-foreground">{entry.when_to_use}</span>
                 </Link>
-                <Button size="sm" variant="ghost" aria-label={`修改 ${entry.title}`} onClick={() => setWriting(entry)}>修改</Button>
+                <Button size="sm" variant="ghost" aria-label={t('proj.rules.editNamed', { title: entry.title })} onClick={() => setWriting(entry)}>{t('common.edit')}</Button>
               </li>
             ))}
           </ul>
         </Rows>
-      ) : <Note>还没有只属于这个项目的常驻规则。</Note>}
+      ) : <Note>{t('proj.rules.empty')}</Note>}
       <div className="mt-2 flex flex-wrap items-center gap-3">
-        <Button disabled={!data} onClick={() => setWriting('new')}>新建规则</Button>
-        {global ? <Note className="text-xs">另有 {global} 条全局常驻的也适用，在<Link to="/knowledge" className="mx-0.5">知识</Link>页。</Note> : null}
+        <Button disabled={!data} onClick={() => setWriting('new')}>{t('proj.rules.createBtn')}</Button>
+        {global ? (
+          <Note className="text-xs">
+            {t('proj.rules.globalHintPrefix', { count: global })}
+            <Link to="/knowledge" className="mx-0.5">{t('nav.knowledge')}</Link>
+            {t('proj.rules.globalHintSuffix')}
+          </Note>
+        ) : null}
       </div>
       {data && writing === 'new' ? (
         <OwnerChangeForm
-          label="新建这个项目的规则"
-          lead="这个项目的每一轮和它的负责人都会带上全文。你自己写的不用把关，保存就直接生效，算已审阅。"
+          label={t('proj.rules.newTitle')}
+          lead={t('proj.rules.newLead')}
           names={data}
           initial={{ ...BLANK_CANDIDATE, scope: 'projects', projects: [project.id], loading: 'resident' }}
           wrap={(output) => ({ outputs: [output] })}
@@ -55,8 +63,8 @@ export function ProjectRules({ project }: { project: Project }) {
       ) : null}
       {data && writing !== null && writing !== 'new' ? (
         <OwnerChangeForm
-          label={`修改 ${writing.title}`}
-          lead="改完就是这一条的新修订，直接生效，算已审阅。"
+          label={t('proj.rules.editNamed', { title: writing.title })}
+          lead={t('proj.rules.editLead')}
           names={data}
           initial={draftOf(writing, writing.kind)}
           edits

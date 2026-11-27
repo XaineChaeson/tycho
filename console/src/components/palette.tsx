@@ -83,7 +83,7 @@ function altDigitIndex(event: KeyboardEvent): number | null {
 }
 
 export function Palette({ open, onOpenChange, onNewProject }: { open: boolean; onOpenChange: (open: boolean) => void; onNewProject: () => void }) {
-  const { t, bi } = useI18n();
+  const { t } = useI18n();
   const navigate = useNavigate();
   const { data: projects } = useQuery(projectsQuery);
   const shown = activeProjects(projects ?? []);
@@ -168,14 +168,16 @@ export function Palette({ open, onOpenChange, onNewProject }: { open: boolean; o
 
   const knowledgeItems = useMemo(() => {
     if (!knowledge) return [];
+    const kwKnowledge = t('core.palette.kwKnowledge');
+    const skillLabel = t('core.palette.skillLabel');
     const fromLedger = knowledge.entries
       .filter((entry) => entry.state === 'active')
       .map((entry) => ({
         id: entry.id,
         title: entry.title,
         hint: entry.when_to_use,
-        meta: `${entry.kind === 'skill' ? '技能' : LOADING_LABELS[entry.loading]} · ${entry.id}`,
-        search: `知识 技能 ${entry.title} ${entry.when_to_use} ${entry.id}`,
+        meta: `${entry.kind === 'skill' ? skillLabel : LOADING_LABELS[entry.loading]} · ${entry.id}`,
+        search: `${kwKnowledge} ${entry.title} ${entry.when_to_use} ${entry.id}`,
       }));
     const fromDir = (knowledge.directory_skills ?? [])
       .filter((skill) => skill.binding.enabled && skill.managed_ledger_id === null)
@@ -184,10 +186,10 @@ export function Palette({ open, onOpenChange, onNewProject }: { open: boolean; o
         title: skill.name,
         hint: skill.description,
         meta: `${LOADING_LABELS[skill.binding.loading]} · ${skill.slug}`,
-        search: `知识 技能 ${skill.name} ${skill.description} ${skill.slug} ${skill.id}`,
+        search: `${kwKnowledge} ${skill.name} ${skill.description} ${skill.slug} ${skill.id}`,
       }));
     return [...fromLedger, ...fromDir];
-  }, [knowledge]);
+  }, [knowledge, t]);
 
   const go = (to: string) => () => { onOpenChange(false); void navigate(to); };
 
@@ -205,24 +207,24 @@ export function Palette({ open, onOpenChange, onNewProject }: { open: boolean; o
               aria-label={t('nav.searchOrJump')}
               value={search}
               onValueChange={setSearch}
-              placeholder={bi('去哪儿：页面、项目、工作、知识与技能…', 'Jump to a page, project, work, or skill…')}
+              placeholder={t('core.palette.placeholder')}
               wrapperClassName="min-h-12 border-b border-border px-4"
             />
             <CommandList className="p-1">
-              <CommandEmpty>{bi('没有匹配的页面、项目、工作或知识。', 'No matching pages, projects, work, or knowledge.')}</CommandEmpty>
+              <CommandEmpty>{t('core.palette.empty')}</CommandEmpty>
               {orderedTasks.length ? (
                 <CommandGroup heading={t('nav.work')}>
                   {orderedTasks.map((task) => {
                     const quickIndex = quickIndexById.get(task.id);
                     return (
-                      <CommandItem key={task.id} value={`工作 work ${task.title} ${task.id}`} onSelect={go(`/work/${encodeURIComponent(task.id)}`)}>
+                      <CommandItem key={task.id} value={`${t('core.palette.kwWork')} ${task.title} ${task.id}`} onSelect={go(`/work/${encodeURIComponent(task.id)}`)}>
                         <StatusDot state={task.summary?.dot ?? task.state} />
                         <span className="min-w-0 flex-1 truncate">{task.title}</span>
                         <span className="max-w-[38%] flex-none truncate text-xs text-faint">{taskLine(task)}</span>
                         {quickIndex !== undefined ? (
                           <kbd
                             aria-hidden="true"
-                            title={bi(`Alt+${quickIndex} 快速跳转`, `Alt+${quickIndex} quick jump`)}
+                            title={t('core.palette.quickJumpHint', { index: quickIndex })}
                             className="inline-flex min-w-4 flex-none items-center justify-center rounded-xs border border-border bg-muted/70 px-1 font-mono text-2xs leading-4 text-faint tabular-nums"
                           >
                             {quickIndex}
@@ -234,9 +236,9 @@ export function Palette({ open, onOpenChange, onNewProject }: { open: boolean; o
                 </CommandGroup>
               ) : null}
               {orderedChildren.length ? (
-                <CommandGroup heading={bi('子任务与审阅', 'Subtasks & Reviews')}>
+                <CommandGroup heading={t('core.palette.subtasksGroup')}>
                   {orderedChildren.map(({ task, parentTitle }) => (
-                    <CommandItem key={task.id} value={`子任务 审阅 任务 subtask review ${task.title} ${parentTitle} ${task.id}`} onSelect={go(`/task/${encodeURIComponent(task.id)}`)}>
+                    <CommandItem key={task.id} value={`${t('core.palette.kwSubtask')} ${task.title} ${parentTitle} ${task.id}`} onSelect={go(`/task/${encodeURIComponent(task.id)}`)}>
                       <StatusDot state={task.summary?.dot ?? task.state} />
                       <span className="min-w-0 flex-1 truncate">{task.title}</span>
                       <span className="max-w-[40%] flex-none truncate text-xs text-faint">
@@ -249,23 +251,23 @@ export function Palette({ open, onOpenChange, onNewProject }: { open: boolean; o
               {shown.length ? (
                 <CommandGroup heading={t('nav.projects')}>
                   {shown.map((project) => (
-                    <CommandItem key={project.id} value={`项目 project ${project.name} ${project.id}`} onSelect={go(`/projects/${encodeURIComponent(project.id)}`)}>
+                    <CommandItem key={project.id} value={`${t('core.palette.kwProject')} ${project.name} ${project.id}`} onSelect={go(`/projects/${encodeURIComponent(project.id)}`)}>
                       <span className="min-w-0 flex-1 truncate">{project.name}</span>
                       <span className="text-xs text-faint">{t('nav.projectState', { paused: '', moving: project.moving, waiting: project.waiting })}</span>
                     </CommandItem>
                   ))}
                 </CommandGroup>
               ) : null}
-              <CommandGroup heading={bi('页面', 'Pages')}>
-                {PLACES.map(({ to, title, titleKey, icon: Icon }) => {
+              <CommandGroup heading={t('core.palette.pagesGroup')}>
+                {PLACES.map(({ to, titleKey, icon: Icon }) => {
                   const label = t(titleKey);
                   return (
-                    <CommandItem key={to} value={`页面 page ${title} ${label}`} onSelect={go(to)}><Icon aria-hidden="true" />{label}</CommandItem>
+                    <CommandItem key={to} value={`${t('core.palette.kwPage')} ${label}`} onSelect={go(to)}><Icon aria-hidden="true" />{label}</CommandItem>
                   );
                 })}
               </CommandGroup>
               {knowledgeItems.length ? (
-                <CommandGroup heading={bi('知识与技能', 'Knowledge & Skills')}>
+                <CommandGroup heading={t('core.palette.knowledgeGroup')}>
                   {knowledgeItems.map((item) => (
                     <CommandItem
                       key={item.id}
@@ -279,12 +281,12 @@ export function Palette({ open, onOpenChange, onNewProject }: { open: boolean; o
                   ))}
                 </CommandGroup>
               ) : null}
-              <CommandGroup heading={bi('动作', 'Actions')}>
-                <CommandItem value="动作 查看账号与额度 账号 额度 accounts quota" onSelect={go('/accounts')}>
+              <CommandGroup heading={t('core.palette.actionsGroup')}>
+                <CommandItem value={t('core.palette.kwActionAccounts')} onSelect={go('/accounts')}>
                   <Gauge aria-hidden="true" />
-                  {bi('查看账号与额度', 'View accounts & quota')}
+                  {t('core.palette.viewAccountsQuota')}
                 </CommandItem>
-                <CommandItem value="动作 新建项目 new project" onSelect={() => { onOpenChange(false); onNewProject(); }}>
+                <CommandItem value={t('core.palette.kwActionNewProject')} onSelect={() => { onOpenChange(false); onNewProject(); }}>
                   <FolderPlus aria-hidden="true" />
                   {t('nav.newProject')}
                 </CommandItem>

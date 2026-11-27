@@ -1,3 +1,5 @@
+import { localeMap, t } from './i18n.ts';
+
 // Smallest envelope budget: fixed fields plus a worst-case 512-UTF16-unit escaped reason.
 export const MIN_OUTPUT_RESULT_BYTES = 4 * 1024;
 export interface OutputPolicy { store_bytes: number; raw_bytes: number; result_bytes: number; retention_ms: number }
@@ -45,24 +47,26 @@ export interface OutputPool {
 }
 
 function object(value: unknown): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error('节点输出配置不是对象');
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(t('sh.nodeOutput.err.notObject'));
   return value as Record<string, unknown>;
 }
 export function outputInteger(value: unknown, name: string, positive = false): number {
-  if (!Number.isSafeInteger(value) || (value as number) < (positive ? 1 : 0)) throw new Error(`${name}不是安全${positive ? '正' : '非负'}整数`);
+  if (!Number.isSafeInteger(value) || (value as number) < (positive ? 1 : 0)) {
+    throw new Error(t(positive ? 'sh.nodeOutput.err.notPositiveInt' : 'sh.nodeOutput.err.notNonNegInt', { name }));
+  }
   return value as number;
 }
 export function outputSource(value: unknown): string {
-  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) throw new Error('节点输出source不合法');
+  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) throw new Error(t('sh.nodeOutput.err.invalidSource'));
   return value;
 }
 export function outputRunDir(value: unknown): string {
-  if (typeof value !== 'string' || value.length > 512 || !/^tasks\/[A-Za-z0-9_-]+\/runs\/[A-Za-z0-9_-]+$/.test(value)) throw new Error('节点输出run_dir不合法');
+  if (typeof value !== 'string' || value.length > 512 || !/^tasks\/[A-Za-z0-9_-]+\/runs\/[A-Za-z0-9_-]+$/.test(value)) throw new Error(t('sh.nodeOutput.err.invalidRunDir'));
   return value;
 }
 function resultBytes(value: unknown): number {
   const bytes = outputInteger(value, 'result_bytes', true);
-  if (bytes < MIN_OUTPUT_RESULT_BYTES) throw new Error(`result_bytes至少为${MIN_OUTPUT_RESULT_BYTES}字节`);
+  if (bytes < MIN_OUTPUT_RESULT_BYTES) throw new Error(t('sh.nodeOutput.err.minResultBytes', { min: MIN_OUTPUT_RESULT_BYTES }));
   return bytes;
 }
 export function normalizeOutputPolicy(value: unknown): OutputPolicy {
@@ -71,7 +75,16 @@ export function normalizeOutputPolicy(value: unknown): OutputPolicy {
 }
 export function normalizeCaptureSpec(value: unknown): CaptureSpec {
   const v = object(value);
-  if (v.version !== 1) throw new Error('节点输出版本不可读');
+  if (v.version !== 1) throw new Error(t('sh.nodeOutput.err.badVersion'));
   return { version: 1, source: outputSource(v.source), raw_bytes: outputInteger(v.raw_bytes, 'raw_bytes', true), result_bytes: resultBytes(v.result_bytes) };
 }
-export const outputStateText = (state: string): string => (({ pending: '原生结果尚未封存', ready: '原生结果已封存', incomplete: '原生结果不完整', released: '原生结果已按服务处置释放', missing: '原生结果不存在', unavailable: '原生结果无法核实' }) as Record<string, string>)[state] ?? '节点输出状态未知';
+const OUTPUT_STATE_LABELS: Readonly<Record<string, string>> = localeMap({
+  pending: 'sh.nodeOutput.state.pending',
+  ready: 'sh.nodeOutput.state.ready',
+  incomplete: 'sh.nodeOutput.state.incomplete',
+  released: 'sh.nodeOutput.state.released',
+  missing: 'sh.nodeOutput.state.missing',
+  unavailable: 'sh.nodeOutput.state.unavailable',
+});
+export const outputStateText = (state: string): string =>
+  (Object.hasOwn(OUTPUT_STATE_LABELS, state) ? OUTPUT_STATE_LABELS[state] : undefined) ?? t('sh.nodeOutput.state.unknown');

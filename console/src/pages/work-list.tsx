@@ -25,16 +25,20 @@ const PAGE_SIZE = 50;
 const SEARCH_DEBOUNCE_MS = 250;
 
 function Tabs({ ended }: { ended: boolean }) {
-  const { bi } = useI18n();
+  const { t } = useI18n();
   return (
     <PageTabs
-      label={bi('哪些工作', 'Work filter')}
-      tabs={[{ to: '/work', label: bi('在办', 'Active'), current: !ended }, { to: '/work?show=ended', label: bi('已结束', 'Finished'), current: ended }]}
+      label={t('tsk.workList.tabsLabel')}
+      tabs={[
+        { to: '/work', label: t('tsk.workList.tabActive'), current: !ended },
+        { to: '/work?show=ended', label: t('tsk.workList.tabEnded'), current: ended },
+      ]}
     />
   );
 }
 
 function Open({ projects }: { projects: readonly Project[] }) {
+  const { t } = useI18n();
   const { data: listing, isPending, error } = useQuery(tasksQuery);
   const archived = archivedProjectIds(projects);
   const works = (listing?.tasks ?? []).filter(
@@ -67,12 +71,13 @@ function Open({ projects }: { projects: readonly Project[] }) {
             );
           })}
         </div>
-      ) : <Empty icon={<ListChecks />} title="没有在办的工作">到一个项目里告诉它的负责人要做什么，它建的工作会列在这里。</Empty>}
+      ) : <Empty icon={<ListChecks />} title={t('tsk.workList.emptyActiveTitle')}>{t('tsk.workList.emptyActiveBody')}</Empty>}
     </PageBody>
   );
 }
 
 function Ended({ projects }: { projects: readonly Project[] }) {
+  const { t } = useI18n();
   const [params, setParams] = useSearchParams();
   const project = params.get('project') ?? '';
   const words = params.get('q') ?? '';
@@ -132,7 +137,7 @@ function Ended({ projects }: { projects: readonly Project[] }) {
     <PageBody>
       <form
         role="search"
-        aria-label="筛选已结束的工作"
+        aria-label={t('tsk.workList.filterFormAria')}
         className="mb-4 flex flex-wrap items-center gap-2"
         onSubmit={(event) => {
           event.preventDefault();
@@ -142,24 +147,24 @@ function Ended({ projects }: { projects: readonly Project[] }) {
         <span className="relative min-w-48 flex-1">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-faint" aria-hidden="true" />
           <Input
-            aria-label="按标题或编号找"
-            placeholder="按标题或编号找"
+            aria-label={t('tsk.workList.searchPlaceholder')}
+            placeholder={t('tsk.workList.searchPlaceholder')}
             className="pl-8"
             value={inputValue}
             onChange={(event) => setInputValue(event.target.value)}
           />
         </span>
-        <Select aria-label="项目" value={project} onChange={(event) => filter('project', event.target.value)}>
-          <Option value="">全部项目</Option>
+        <Select aria-label={t('project.defaultTitle')} value={project} onChange={(event) => filter('project', event.target.value)}>
+          <Option value="">{t('tsk.workList.allProjects')}</Option>
           {activeProjects(projects).map((each) => <Option key={each.id} value={each.id}>{each.name}</Option>)}
-          {archived ? <Option value={archived.id} disabled>{`${archived.name}（已归档）`}</Option> : null}
+          {archived ? <Option value={archived.id} disabled>{t('tsk.workList.archivedProject', { name: archived.name })}</Option> : null}
         </Select>
-        {total !== undefined ? <span className="text-xs text-faint tabular-nums">{`共 ${total} 项`}</span> : null}
+        {total !== undefined ? <span className="text-xs text-faint tabular-nums">{t('tsk.workList.totalCount', { total })}</span> : null}
       </form>
       {query.error ? <Problem role="alert" className="mb-3">{query.error.message}</Problem> : null}
       {query.isPending ? <Skeleton className="h-40" /> : works.length ? (
         <Rows className={cn(reading && 'opacity-60 transition-opacity')}>
-          <ul aria-label="已结束的工作" aria-busy={reading || undefined} className="divide-y divide-border">
+          <ul aria-label={t('tsk.workList.endedListAria')} aria-busy={reading || undefined} className="divide-y divide-border">
             {works.map((work) => (
               <li key={work.id}>
                 <WorkRow
@@ -172,13 +177,13 @@ function Ended({ projects }: { projects: readonly Project[] }) {
             ))}
           </ul>
         </Rows>
-      ) : query.error ? null : <Empty title="没有符合条件的已结束工作">已完成和已放弃的工作都在这里，最近结束的在前。</Empty>}
+      ) : query.error ? null : <Empty title={t('tsk.workList.emptyEndedTitle')}>{t('tsk.workList.emptyEndedBody')}</Empty>}
       {query.hasNextPage ? (
         <div className="mt-3 text-center">
-          <Button disabled={reading || query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? '正在读…' : '再读一页'}</Button>
+          <Button disabled={reading || query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? t('tsk.workList.loadingMore') : t('tsk.workList.loadMore')}</Button>
         </div>
       ) : null}
-      {!query.hasNextPage && works.length > PAGE_SIZE ? <Note className="mt-3 text-center text-xs">都在这里了</Note> : null}
+      {!query.hasNextPage && works.length > PAGE_SIZE ? <Note className="mt-3 text-center text-xs">{t('tsk.workList.allLoaded')}</Note> : null}
     </PageBody>
   );
 }

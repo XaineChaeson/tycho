@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogActions, DialogContent } from '@/components/ui/dialog';
 import { accountBody, newAccountForm, tierEditorOf, tierRefusal, type AccountForm, type TierProblem } from '@/lib/accounts';
 import { api, messageOf, post } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { accountsQuery, PAGE } from '@/lib/queries';
 import { isTychoDesktop, openExternalUrl } from '@/lib/utils';
 import type { AccountsAndMachines } from '@/lib/types';
@@ -43,6 +44,7 @@ export function CodexLoginSteps({ target, page, seen, onDone, onBack }: {
   onDone: () => void;
   onBack?: (() => void) | undefined;
 }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const active = useRef(false);
   useEffect(() => {
@@ -157,61 +159,71 @@ export function CodexLoginSteps({ target, page, seen, onDone, onBack }: {
         {error ? <Problem role="alert">{error}</Problem> : <Waiting>{`${CODEX_LOGIN_STATE_TEXT.starting}…`}</Waiting>}
         {error ? (
           <DialogActions>
-            {onBack ? <Button variant="ghost" disabled={busy} onClick={onBack}>上一步</Button> : null}
-            <Button variant="primary" disabled={busy} onClick={() => void start()}>重新授权</Button>
+            {onBack ? <Button variant="ghost" disabled={busy} onClick={onBack}>{t('acct.action.prevStep')}</Button> : null}
+            <Button variant="primary" disabled={busy} onClick={() => void start()}>{t('acct.oauth.reauthorize')}</Button>
           </DialogActions>
         ) : null}
       </div>
     );
   }
 
-  const again = <Button variant="primary" disabled={busy} onClick={() => void start()}>重新授权</Button>;
+  const again = <Button variant="primary" disabled={busy} onClick={() => void start()}>{t('acct.oauth.reauthorize')}</Button>;
 
   return (
     <div className="grid gap-4">
-      {login.state === 'starting' ? <Waiting>{`${CODEX_LOGIN_STATE_TEXT.starting}，等待授权网址和设备码…`}</Waiting> : null}
+      {login.state === 'starting' ? <Waiting>{t('acct.codex.waitingDeviceCode', { starting: CODEX_LOGIN_STATE_TEXT.starting })}</Waiting> : null}
       {login.state === 'waiting' && login.url && login.code ? (
         <Callout tone="plain" className="grid gap-3">
-          <p>在你自己的浏览器里打开验证页，登录想用的 ChatGPT 账号，再输入下面的一次性设备码。</p>
+          <p>{t('acct.codex.devicePrompt')}</p>
           <div className="flex flex-wrap items-center gap-2">
             <Button asChild variant="primary">
-              <a href={login.url} target="_blank" rel="noopener noreferrer">打开验证页</a>
+              <a href={login.url} target="_blank" rel="noopener noreferrer">{t('acct.codex.openVerifyPage')}</a>
             </Button>
-            <CopyButton value={login.url} label="复制网址" />
+            <CopyButton value={login.url} label={t('acct.oauth.copyUrl')} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-lg tracking-widest">{login.code}</span>
-            <CopyButton value={login.code} label="复制用户码" />
+            <CopyButton value={login.code} label={t('acct.codex.copyUserCode')} />
           </div>
-          <Note className="text-xs">授权完成后这里会自动变成“已登录”；tycho 在主机统一保管并自动续期，放行的每台机器都能直接用。</Note>
+          <Note className="text-xs">{t('acct.codex.autoRenewNote')}</Note>
         </Callout>
       ) : null}
       {codexLoginLive(login.state) ? (
         <DialogActions>
-          {onBack ? <Button variant="ghost" disabled={busy} onClick={() => { void cancel(); onBack(); }}>上一步</Button> : null}
-          <Button variant="ghost" disabled={busy} onClick={() => void cancel()}>取消这次登录</Button>
+          {onBack ? <Button variant="ghost" disabled={busy} onClick={() => { void cancel(); onBack(); }}>{t('acct.action.prevStep')}</Button> : null}
+          <Button variant="ghost" disabled={busy} onClick={() => void cancel()}>{t('acct.codex.cancelLogin')}</Button>
         </DialogActions>
       ) : null}
       {login.state === 'signed_in' && login.mode === 'new' ? (
         <div className="grid gap-1">
-          {login.models.refreshing ? <Note>正在读取 Codex 模型目录…</Note>
-            : login.identity.accountLabel ? <Note>{`账号标识：${login.identity.accountLabel}`}</Note>
-              : <Note>已完成 ChatGPT 授权</Note>}
-          {login.duplicate !== null ? <Problem>{duplicateCodexAccountText(login.duplicate)}。</Problem> : null}
+          {login.models.refreshing ? <Note>{t('acct.codex.loadingModels')}</Note>
+            : login.identity.accountLabel ? <Note>{t('acct.codex.accountIdentity', { label: login.identity.accountLabel })}</Note>
+              : <Note>{t('acct.codex.chatgptAuthorized')}</Note>}
+          {login.duplicate !== null ? <Problem>{t('acct.sentencePeriod', { text: duplicateCodexAccountText(login.duplicate) })}</Problem> : null}
         </div>
       ) : null}
       {login.state === 'signed_in' && login.mode === 'relogin' ? (
         <>
-          <p role="status">{CODEX_LOGIN_STATE_TEXT.signed_in}。新令牌已经换上，之后的任务用它。</p>
-          <DialogActions><Button variant="primary" onClick={onDone}>完成</Button></DialogActions>
+          <p role="status">{t('acct.oauth.reloginDone', { signedIn: CODEX_LOGIN_STATE_TEXT.signed_in })}</p>
+          <DialogActions><Button variant="primary" onClick={onDone}>{t('acct.action.done')}</Button></DialogActions>
         </>
       ) : null}
       {login.state === 'signed_in' && login.mode === 'new' && !login.saved ? (
         <>
           <Callout tone="plain">
-            <p role="status" className="font-semibold">{CODEX_LOGIN_STATE_TEXT.signed_in}。{login.duplicate === null ? '填好档位，保存后账号就建好了。' : ''}</p>
-            {login.duplicate === null && !login.models.refreshing && login.name ? <p className="mt-1">账号会叫 <strong className="font-semibold">{login.name}</strong>，建好后可以随时改名。</p> : null}
-            <Note className="mt-1 text-xs">令牌在服务里暂存，没写到任何地方；关掉这个窗口，这次拿到的令牌就作废，账号也不会建。</Note>
+            <p role="status" className="font-semibold">
+              {login.duplicate === null
+                ? t('acct.oauth.signedInFillTiers', { signedIn: CODEX_LOGIN_STATE_TEXT.signed_in })
+                : t('acct.sentencePeriod', { text: CODEX_LOGIN_STATE_TEXT.signed_in })}
+            </p>
+            {login.duplicate === null && !login.models.refreshing && login.name ? (
+              <p className="mt-1">
+                {t('acct.oauth.autoNamePrefix')}
+                <strong className="font-semibold">{login.name}</strong>
+                {t('acct.oauth.autoNameSuffix')}
+              </p>
+            ) : null}
+            <Note className="mt-1 text-xs">{t('acct.oauth.ephemeralTokenNote')}</Note>
           </Callout>
           {login.duplicate !== null ? <DialogActions>{again}</DialogActions> : form ? (
             <LoginEditor
@@ -232,7 +244,7 @@ export function CodexLoginSteps({ target, page, seen, onDone, onBack }: {
           ) : null}
         </>
       ) : null}
-      {login.state === 'signed_in' && login.mode === 'new' && login.saved ? <p role="status">账号 {login.name} 已建好。</p> : null}
+      {login.state === 'signed_in' && login.mode === 'new' && login.saved ? <p role="status">{t('acct.oauth.accountCreated', { name: login.name })}</p> : null}
       {login.state === 'failed' && login.reason ? (
         <>
           <Problem role="alert">{CODEX_LOGIN_FAIL_TEXT[login.reason]}</Problem>
@@ -256,6 +268,7 @@ export function CodexReloginWindow({ target, page, onClose }: {
   page: AccountsAndMachines;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const seen = useRef<CodexLoginView | undefined>(undefined);
   const close = (): void => {
@@ -270,8 +283,8 @@ export function CodexReloginWindow({ target, page, onClose }: {
       {target ? (
         <DialogContent
           className="max-w-[560px]"
-          title={`重新登录 ${target.name}`}
-          description="新令牌存好了才替换旧的；中途取消或失败，原来的登录不变。"
+          title={t('acct.oauth.reloginTitle', { name: target.name })}
+          description={t('acct.oauth.reloginDesc')}
         >
           <CodexLoginSteps target={target} page={page} seen={seen} onDone={close} />
         </DialogContent>

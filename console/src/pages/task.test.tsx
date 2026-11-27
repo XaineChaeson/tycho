@@ -828,8 +828,14 @@ test('ended round with mid-run prose keeps narrative visible while folding routi
     ], first_index: 0, loaded: true } },
   }));
   expect(await screen.findByText('改好了')).toBeInTheDocument();
-  // Mid-run narrative stays directly visible on the main timeline rather than hidden under 过程记录.
-  expect(screen.getByText('我先读取 brief。').closest('details')).toBeNull();
+  // Mid-run narrative starts expanded inside a collapsible process disclosure AND can be collapsed/reopened.
+  const processFold = screen.getByText('我先读取 brief。').closest('details')!;
+  expect(processFold).toHaveAttribute('open');
+  const processSummary = processFold.querySelector('summary')!;
+  await first.user.click(processSummary);
+  expect(processFold).not.toHaveAttribute('open');
+  await first.user.click(processSummary);
+  expect(processFold).toHaveAttribute('open');
   expect(screen.getByText('读取 4 次，3 个文件')).toBeInTheDocument();
   expect(screen.getByText('修改 2 个文件')).toBeInTheDocument();
   // Trailing raw receipt output is folded so it does not duplicate the Report card below.
@@ -845,8 +851,8 @@ test('ended round with mid-run prose keeps narrative visible while folding routi
   const silentEvents = NOISY.filter((event) => event.kind !== 'text');
   open('#/task/task', site({
     task: aTask({ state: 'ready' }),
-    runs: [ended({ receipt: { status: 'done', summary: '静默完成', artifacts: [] } })],
-    events: { run: { events: [
+    runs: [ended({ id: 'run-silent', receipt: { status: 'done', summary: '静默完成', artifacts: [] } })],
+    events: { 'run-silent': { events: [
       ...silentEvents,
       { kind: 'tool.start', id: 'w', category: 'edit', name: 'Write', title: 'src/a.ts', paths: ['src/a.ts'] },
       { kind: 'tool.end', id: 'w', isError: false, changes: [{ path: 'src/a.ts', op: 'add' }] },
@@ -2544,4 +2550,66 @@ test('quoting a task report attaches to TaskComposer and submits a Markdown bloc
   expect((calls[0]!.body as { note: string }).note).toBe(
     '> **[汇报]** 已完成 10 档容量精算，LZ4 日增 4.2 GiB。\n\n再对比一下 ZSTD(3) 压缩率',
   );
+});
+
+test('latest ended round starts expanded inside a collapsible round disclosure and collapses in one click', async () => {
+  const { user } = open('#/task/task-4rounds', site({
+    task: aTask({ id: 'task-4rounds', state: 'ready' }),
+    runs: [
+      ended({ id: 'r101', created_at: later(0), ended_at: later(1), receipt: { status: 'done', summary: '第一轮完成' } }),
+      ended({ id: 'r102', created_at: later(2), ended_at: later(3), receipt: { status: 'done', summary: '第二轮完成' } }),
+      ended({ id: 'r103', created_at: later(4), ended_at: later(5), receipt: { status: 'done', summary: '第三轮完成' } }),
+      ended({ id: 'r104', created_at: later(6), ended_at: later(7), receipt: { status: 'done', summary: '第四轮完整交付' } }),
+    ],
+  }));
+  await loaded();
+
+  // Rounds 1-3 start collapsed; Round 4 starts expanded inside its own <details> disclosure.
+  const round4Report = screen.getByText('第四轮完整交付');
+  const round4Details = round4Report.closest('details')!;
+  expect(round4Details).not.toBeNull();
+  expect(round4Details).toHaveAttribute('open');
+  const round4Summary = round4Details.querySelector('summary')!;
+  expect(round4Summary).toHaveTextContent('第 4 轮');
+
+  // Clicking Round 4's summary collapses it cleanly just like Rounds 1-3.
+  await user.click(round4Summary);
+  expect(round4Details).not.toHaveAttribute('open');
+  expect(round4Summary).toHaveTextContent('第四轮完整交付');
+});
+
+test('ReleaseCard invalidates open confirmation when a newer package is registered underneath', async () => {
+  let pkg = { run_id: 'r1', version: '0.2.17', file: 'tycho-0.2.17.tar.gz', sha256: 'a'.repeat(64), bytes: 1000 };
+  const app = open('#/task/task-rel', site({
+    task: aTask({ id: 'task-rel', state: 'done' }),
+    runs: [ended({ id: 'r1' })],
+    on: (call) => {
+      if (call.path === '/api/tasks/task-rel') {
+        return {
+          task: aTask({ id: 'task-rel', state: 'done' }),
+          work: aTask({ id: 'task-rel', state: 'done' }),
+          runs: [ended({ id: 'r1' })],
+          approvals: [],
+          inputs: [],
+          releases: { version: '0.2.16', attempting: false, packages: [pkg], intent: null, last: null, fetch: null, dropped: [] },
+        };
+      }
+      return undefined;
+    },
+  }));
+  await loaded();
+  const card = screen.getByRole('region', { name: '上线' });
+  await app.user.click(within(card).getByRole('button', { name: '上线' }));
+  expect(within(card).getByRole('button', { name: '确认上线' })).toBeInTheDocument();
+
+  // Package B replaces Package A while confirmation is open, and live SSE triggers refresh.
+  pkg = { run_id: 'r2', version: '0.2.18', file: 'tycho-0.2.18.tar.gz', sha256: 'b'.repeat(64), bytes: 2000 };
+  act(() => {
+    shellStream().emit('changed', {});
+  });
+
+  // Confirmation is invalidated instead of silently launching Package B under Package A's click.
+  await waitFor(() => expect(within(card).queryByRole('button', { name: '确认上线' })).toBeNull());
+  expect(within(card).getByText(/新发布包已登记/)).toBeInTheDocument();
+  expect(app.calls).toEqual([]);
 });

@@ -1,15 +1,17 @@
 // First-glance "who is doing this" identity strip for a Task: shows role · tier,
 // executing login @ machine (or 待派发), and notable placement badges without expanding details.
+import { localeMap, t } from '@shared/i18n.ts';
 import { parseLoginName } from '@shared/logins.ts';
 import { tierLabel } from '@shared/tiers.ts';
+import { useI18n } from '@/lib/i18n';
 import type { TaskAssignment, TaskPage } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
-const NOTABLE_PLACEMENT: Record<string, string> = {
-  pinned: '手工指定',
-  spread: '审阅分散',
-  prefer: '负责人优先',
-};
+const NOTABLE_PLACEMENT: Readonly<Record<string, string>> = localeMap({
+  pinned: 'tsk.identity.pinned',
+  spread: 'tsk.identity.spread',
+  prefer: 'tsk.identity.prefer',
+});
 
 function formatActor(assignment: TaskAssignment): { text: string; pending: boolean } {
   const rawLogin = assignment.login_name?.trim() || null;
@@ -28,7 +30,7 @@ function formatActor(assignment: TaskAssignment): { text: string; pending: boole
     return { text: `@ ${rawMachine}`, pending: false };
   }
 
-  return { text: '待派发', pending: true };
+  return { text: t('tsk.identity.pendingDispatch'), pending: true };
 }
 
 function formatRoleTier(assignment: TaskAssignment): string | null {
@@ -50,7 +52,7 @@ export function formatAssignmentSummary(
 
   if (!roleTier && actor.pending && !placement) return null;
 
-  const prefix = options?.showLiveLabel && !assignment.is_live ? '上轮：' : '';
+  const prefix = options?.showLiveLabel && !assignment.is_live ? t('tsk.identity.lastRoundPrefix') : '';
   const parts = [roleTier, actor.text, placement].filter((part): part is string => Boolean(part));
   return `${prefix}${parts.join(' · ')}`;
 }
@@ -93,6 +95,7 @@ export function TaskIdentityStrip({
   showLiveLabel?: boolean;
   className?: string;
 }) {
+  const { t: tr } = useI18n();
   if (!assignment) return null;
   const roleTier = formatRoleTier(assignment);
   const actor = formatActor(assignment);
@@ -113,7 +116,7 @@ export function TaskIdentityStrip({
       )}
     >
       {showLiveLabel && !assignment.is_live ? (
-        <span className="flex-none text-faint">上轮：</span>
+        <span className="flex-none text-faint">{tr('tsk.identity.lastRoundPrefix')}</span>
       ) : null}
       {roleTier ? (
         <span

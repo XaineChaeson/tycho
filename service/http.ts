@@ -1,5 +1,4 @@
 import {outputReport,releasesFor,policyOf} from './node-output.ts';
-import { normalizeLocale } from '../shared/i18n.ts';
 import { deviceLoginMissingText, joinMissingText, modelText, NEEDS_LOGIN_TEXT, RECENT_ENDED, WORK_GROUPS, workGroup } from '../shared/labels.ts';
 import { grantsOf } from '../shared/grants.ts';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -12,6 +11,16 @@ import { extname, isAbsolute, join, relative, sep } from 'node:path';
 import { importSkills } from './skill-import.ts';
 import { buildMachineSkillsManifest, packAuthorizedSkillBundle } from './skill-bundles.ts';
 import { deleteDirectoryTheme, listDirectoryThemes, saveDirectoryTheme, themesDirOf } from './themes.ts';
+import { deleteDirectoryLocale, localesDirOf, saveDirectoryLocale, syncDirectoryLocales } from './locales.ts';
+import {
+  exportLocaleTemplate,
+  getActiveLocale,
+  getLocalePack,
+  getResolvedMessages,
+  listLocalePackSummaries,
+  normalizeLocale,
+  setActiveLocale,
+} from '../shared/i18n.ts';
 import { isDirectorySkillId } from '../shared/skill-catalog.ts';
 import { knowledgeLimits } from './service-settings.ts';
 import { routerCallText } from './router-call-text.ts';
@@ -2463,8 +2472,8 @@ export function createHttp(options: HttpOptions) {
         }
       }
     }
-    const locale = body.locale === 'en' || body.locale === 'zh-CN'
-      ? body.locale
+    const locale = typeof body.locale === 'string' && body.locale.trim()
+      ? normalizeLocale(body.locale)
       : normalizeLocale(options.settings.get('ui.locale'));
     const segment = ledger.currentSegment(projectId);
     const recentMessages = (segment ? ledger.listMessages({ segmentId: segment.id, limit: 12 }) : ledger.listMessages({ projectId, limit: 12 }))
@@ -4225,6 +4234,71 @@ export function createHttp(options: HttpOptions) {
         const removed = deleteDirectoryTheme(dir, params[0]!);
         if (!removed) throw new HttpError(404, '找不到这个主题插件');
         sendJson(response, 200, { deleted: true });
+      },
+    },
+    {
+      method: 'GET', path: '/api/locales', outside: true,
+      handle({ response }) {
+        const dir = options.dataDir ?? options.releases?.dataDir;
+        if (dir) syncDirectoryLocales(dir);
+        sendJson(response, 200, {
+          dir: dir ? localesDirOf(dir) : null,
+          active: getActiveLocale(),
+          locales: listLocalePackSummaries(),
+        });
+      },
+    },
+    {
+      method: 'GET', path: '/api/locales/template', outside: true,
+      handle({ url, response }) {
+        const dir = options.dataDir ?? options.releases?.dataDir;
+        if (dir) syncDirectoryLocales(dir);
+        const base = url.searchParams.get('base') ?? 'en';
+        sendJson(response, 200, exportLocaleTemplate(normalizeLocale(base)));
+      },
+    },
+    {
+      method: 'GET', path: '/api/locales/:id', outside: true,
+      handle({ response, params }) {
+        const dir = options.dataDir ?? options.releases?.dataDir;
+        if (dir) syncDirectoryLocales(dir);
+        const pack = getLocalePack(params[0]!);
+        if (!pack) throw new HttpError(404, `Language pack not found: ${params[0]}`);
+        sendJson(response, 200, {
+          pack,
+          resolved_messages: getResolvedMessages(pack.id),
+        });
+      },
+    },
+    {
+      method: 'POST', path: '/api/locales', outside: true,
+      async handle({ request, response }) {
+        const dir = requireDataDir();
+        const body = await readJson(request);
+        const saved = saveDirectoryLocale(dir, body);
+        if (!saved.ok) throw new HttpError(400, saved.error);
+        const active = normalizeLocale(options.settings.get('ui.locale'));
+        setActiveLocale(active);
+        sendJson(response, 200, {
+          dir: localesDirOf(dir),
+          locale: saved.pack,
+          locales: listLocalePackSummaries(),
+        });
+      },
+    },
+    {
+      method: 'DELETE', path: '/api/locales/:id', outside: true,
+      handle({ response, params }) {
+        const dir = requireDataDir();
+        const removed = deleteDirectoryLocale(dir, params[0]!);
+        if (!removed) throw new HttpError(404, '找不到这个扩展语言包');
+        const active = normalizeLocale(options.settings.get('ui.locale'));
+        setActiveLocale(active);
+        sendJson(response, 200, {
+          deleted: true,
+          active: getActiveLocale(),
+          locales: listLocalePackSummaries(),
+        });
       },
     },
     { method: 'GET', path: '/api/doctor', outside: true, handle: selfCheck },

@@ -18,10 +18,14 @@ import { Button } from '@/components/ui/button';
 import { Confirm } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { del, messageOf, post, put } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { projectGroupsQuery } from '@/lib/queries';
 import type { ImGroupBinding, Project } from '@/lib/types';
 
+const IM_CHANNELS_SETTINGS_PATH = '/settings/消息通道'; // i18n-ignore
+
 export function ProjectGroupsPanel({ project }: { project: Project }) {
+  const { t } = useI18n();
   const { data, isPending, error: unread } = useQuery(projectGroupsQuery(project.id));
   const client = useQueryClient();
   const [editing, setEditing] = useState<{ id: string | null; draft: GroupBindingDraft } | null>(null);
@@ -58,7 +62,7 @@ export function ProjectGroupsPanel({ project }: { project: Project }) {
       () => (editing.id === null
         ? post('/api/im/groups', parsed.body)
         : put(`/api/im/groups/${encodeURIComponent(editing.id)}`, parsed.body)),
-      editing.id === null ? '已绑定群聊到此项目' : '已保存群聊配置',
+      editing.id === null ? t('proj.groups.boundToast') : t('proj.groups.savedToast'),
     );
     if (done) setEditing(null);
   }
@@ -75,18 +79,19 @@ export function ProjectGroupsPanel({ project }: { project: Project }) {
   const boundKeys = new Set(bindings.map((binding) => `${binding.channel}:${binding.chat_id}`));
 
   return (
-    <section aria-label={`${project.name} 的群聊与通知`} className="grid gap-4">
+    <section aria-label={t('proj.groups.sectionAria', { name: project.name })} className="grid gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <Note className="min-w-0 flex-1 text-xs">
-          绑定到此项目的企业微信 / 微信群会直接路由给本项目负责人；开启“接收告警/结果播报”后，入站告警/触发器受理、关联任务结案结论以及负责人主动汇报都会同步播报到这些群（不附带私有控制台链接）。
-          通道连接与全局权限请在<Link to="/settings/消息通道" className="mx-0.5">设置 › 消息通道</Link>管理。
+          {t('proj.groups.notePrefix')}
+          <Link to={IM_CHANNELS_SETTINGS_PATH} className="mx-0.5">{t('proj.groups.settingsLink')}</Link>
+          {t('proj.groups.noteSuffix')}
         </Note>
         <Button variant="primary" size="sm" disabled={busy || !data} onClick={() => openCreate()}>
-          <Plus />绑定群聊
+          <Plus />{t('proj.groups.bindBtn')}
         </Button>
       </div>
 
-      {unread ? <Problem role="alert">{`读不到项目群聊绑定：${unread.message}`}</Problem> : null}
+      {unread ? <Problem role="alert">{t('proj.groups.loadFailed', { reason: unread.message })}</Problem> : null}
       {!editing && !confirming && error ? <Problem role="alert">{error}</Problem> : null}
       {statusNote ? <span role="status" className="text-xs text-success-foreground">{statusNote}</span> : null}
       {isPending ? <Skeleton className="h-24" /> : null}
@@ -95,9 +100,9 @@ export function ProjectGroupsPanel({ project }: { project: Project }) {
         <>
           {bindings.length > 0 ? (
             <div>
-              <SectionTitle count={bindings.length}>已绑定到此项目的群聊</SectionTitle>
+              <SectionTitle count={bindings.length}>{t('proj.groups.boundHeading')}</SectionTitle>
               <Rows>
-                <ul aria-label={`${project.name} 已绑定群聊`} className="divide-y divide-border">
+                <ul aria-label={t('proj.groups.boundListAria', { name: project.name })} className="divide-y divide-border">
                   {bindings.map((binding) => (
                     <GroupBindingRow
                       key={binding.id}
@@ -106,7 +111,7 @@ export function ProjectGroupsPanel({ project }: { project: Project }) {
                       busy={busy}
                       onPatch={(patch) => void act(
                         () => put(`/api/im/groups/${encodeURIComponent(binding.id)}`, bindingToPayload(binding, patch)),
-                        '已更新群聊设置',
+                        t('proj.groups.updatedToast'),
                       )}
                       onEdit={() => {
                         setEditing({ id: binding.id, draft: groupBindingDraftOf(binding) });
@@ -122,8 +127,8 @@ export function ProjectGroupsPanel({ project }: { project: Project }) {
               </Rows>
             </div>
           ) : (
-            <Empty icon={<Users />} title="这个项目还没有绑定群聊">
-              在企业微信或微信群里和机器人交互后，未绑定群会出现在下方；也可以点右上角“绑定群聊”直接绑定到此项目。
+            <Empty icon={<Users />} title={t('proj.groups.emptyTitle')}>
+              {t('proj.groups.emptyDesc')}
             </Empty>
           )}
 
@@ -131,7 +136,7 @@ export function ProjectGroupsPanel({ project }: { project: Project }) {
             discovered={data.discovered}
             boundKeys={boundKeys}
             busy={busy}
-            actionLabel="绑定到此项目"
+            actionLabel={t('proj.groups.quickBindAction')}
             onQuickBind={(group) => openCreate({
               channel: group.channel,
               chatId: group.chat_id,
@@ -155,14 +160,14 @@ export function ProjectGroupsPanel({ project }: { project: Project }) {
 
       <Confirm
         open={confirming !== null}
-        title={`解绑群聊 ${confirming?.chat_name || confirming?.chat_id || ''}？`}
-        description="解绑后该群不再关联到此项目，也不会再接收本项目的告警或结果播报。"
-        confirm="确认解绑"
+        title={t('proj.groups.unbindTitle', { name: confirming?.chat_name || confirming?.chat_id || '' })}
+        description={t('proj.groups.unbindDesc')}
+        confirm={t('proj.groups.unbindConfirm')}
         busy={busy}
         error={confirming ? error : null}
         onConfirm={() => {
           if (!confirming) return;
-          void act(() => del(`/api/im/groups/${encodeURIComponent(confirming.id)}`), '已解绑群聊').then((done) => {
+          void act(() => del(`/api/im/groups/${encodeURIComponent(confirming.id)}`), t('proj.groups.unboundToast')).then((done) => {
             if (done) setConfirming(null);
           });
         }}

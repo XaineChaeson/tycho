@@ -13,6 +13,7 @@ import { Dialog, DialogActions, DialogContent } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { messageOf, post } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { newProjectBody, withName, withoutName, type NewProjectDraft } from '@/lib/projects';
 import { accountsQuery, projectsQuery } from '@/lib/queries';
 import type { Project } from '@/lib/types';
@@ -20,6 +21,7 @@ import type { Project } from '@/lib/types';
 const BLANK: NewProjectDraft = { name: '', sources: [], machines: [], spawnMachines: false };
 
 function NewProjectForm({ onMade }: { onMade: (project: Project) => void }) {
+  const { t } = useI18n();
   const { data: options } = useQuery(accountsQuery);
   const [draft, setDraft] = useState<NewProjectDraft>(BLANK);
   const [error, setError] = useState<string | null>(null);
@@ -40,17 +42,17 @@ function NewProjectForm({ onMade }: { onMade: (project: Project) => void }) {
 
   return (
     <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); void create(); }}>
-      <Field label="项目名" htmlFor="new-project-name">
-        <Input id="new-project-name" aria-label="项目名" autoFocus value={draft.name} disabled={saving} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+      <Field label={t('proj.form.nameLabel')} htmlFor="new-project-name">
+        <Input id="new-project-name" aria-label={t('proj.form.nameLabel')} autoFocus value={draft.name} disabled={saving} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
       </Field>
-      <Field label="代码" hint={`可以不填。${CODE_SOURCE_HINT}`}>
+      <Field label={t('proj.new.codeLabel')} hint={t('proj.new.codeHint', { hint: CODE_SOURCE_HINT })}>
         <SourceEditor items={draft.sources} machines={machines} disabled={saving} onChange={(sources) => setDraft({ ...draft, sources })} />
       </Field>
-      <Details id="new-project-more" title="高级">
+      <Details id="new-project-more" title={t('proj.new.advanced')}>
         <div className="grid gap-3 pt-1 pl-5">
-          <p className="text-xs text-muted-foreground">新项目用全部登录；不勾机器就是在线的都行。</p>
+          <p className="text-xs text-muted-foreground">{t('proj.new.advancedHint')}</p>
           {machines.length ? (
-            <ul aria-label="新项目允许的机器" className="grid">
+            <ul aria-label={t('proj.new.machinesAria')} className="grid">
               {machines.map(({ uid, name }) => (
                 <li key={uid}>
                   <Choice>
@@ -63,26 +65,27 @@ function NewProjectForm({ onMade }: { onMade: (project: Project) => void }) {
             </ul>
           ) : null}
           <Choice>
-            <Switch aria-label="新项目允许派生机器" checked={draft.spawnMachines} disabled={saving} onCheckedChange={(on) => setDraft({ ...draft, spawnMachines: on })} />
-            允许派生机器
+            <Switch aria-label={t('proj.new.spawnAria')} checked={draft.spawnMachines} disabled={saving} onCheckedChange={(on) => setDraft({ ...draft, spawnMachines: on })} />
+            {t('proj.settings.spawnLabel')}
           </Choice>
         </div>
       </Details>
       {error ? <Problem role="alert">{error}</Problem> : null}
       <DialogActions>
-        <Button type="submit" variant="primary" disabled={saving || draft.name.trim() === ''}>{saving ? '建立中' : '建立'}</Button>
+        <Button type="submit" variant="primary" disabled={saving || draft.name.trim() === ''}>{saving ? t('proj.new.creating') : t('proj.new.create')}</Button>
       </DialogActions>
     </form>
   );
 }
 
 export function NewProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const navigate = useNavigate();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {open ? (
-        <DialogContent title="新建项目" description="任务属于项目，每个项目有自己的负责人。">
+        <DialogContent title={t('nav.newProject')} description={t('proj.new.description')}>
           <NewProjectForm
             onMade={(project) => {
               void client.invalidateQueries({ queryKey: projectsQuery.queryKey });

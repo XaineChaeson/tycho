@@ -5,11 +5,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronDown, ChevronUp, CircleHelp } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { Link } from 'react-router';
+import { t as translate } from '@shared/i18n.ts';
 import { ACCEPT_WITHOUT_REVIEW_LABEL } from '@shared/review.ts';
 import { Markdown } from '@/components/markdown';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/input';
 import { messageOf, post } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { PAGE, taskQuery } from '@/lib/queries';
 import type { Approval, Question } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -33,23 +35,23 @@ const drafts = new Map<string, Draft>();
 
 const answerOf = (draft: Draft | undefined): string => (!draft ? '' : draft.otherOpen ? draft.other.trim() : draft.choice ?? '');
 
-const LEGACY_REVIEW_HEAD = /^审阅在(.+?)的产物上又打回了，系统不再升档，要你来定：([\s\S]*?)\n\n独立审阅打回了上一轮的产物：[^\n]*(?:\n\n([\s\S]+))?$/;
-const LEGACY_REVIEW_TAIL = /\n*按这些意见改，改完照常交回执。?\s*$/;
-const LEGACY_REVIEW_HINT = '回答之后任务回到队列，回答的内容交给下一轮；不想再做就放弃这个任务';
+const LEGACY_REVIEW_HEAD = /^审阅在(.+?)的产物上又打回了，系统不再升档，要你来定：([\s\S]*?)\n\n独立审阅打回了上一轮的产物：[^\n]*(?:\n\n([\s\S]+))?$/; // i18n-ignore
+const LEGACY_REVIEW_TAIL = /\n*按这些意见改，改完照常交回执。?\s*$/; // i18n-ignore
+const LEGACY_REVIEW_HINT = '回答之后任务回到队列，回答的内容交给下一轮；不想再做就放弃这个任务'; // i18n-ignore
 
 // Format legacy numbered review lines (`1. 违反的要求：...\n   证据：...\n   要改的范围：...`)
 // into clean nested Markdown so already-persisted approvals immediately become readable.
 function formatLegacyViolations(raw: string): { markdown: string; count: number } {
   const cleaned = raw.replace(LEGACY_REVIEW_TAIL, '').trim();
   if (!cleaned) return { markdown: '', count: 0 };
-  const itemPattern = /(?:^|\n)(\d+)\.\s*违反的要求：([^\n]*)(?:\n\s*证据：([^\n]*))?(?:\n\s*要改的范围：([^\n]*))?/g;
+  const itemPattern = /(?:^|\n)(\d+)\.\s*违反的要求：([^\n]*)(?:\n\s*证据：([^\n]*))?(?:\n\s*要改的范围：([^\n]*))?/g; // i18n-ignore
   const items: string[] = [];
   let match: RegExpExecArray | null;
   while ((match = itemPattern.exec(cleaned)) !== null) {
     const [, num, req, ev, scope] = match;
-    const lines = [`${num}. **违反要求**：${(req ?? '').trim()}`];
-    if (ev?.trim()) lines.push(`   - **证据**：${ev.trim()}`);
-    if (scope?.trim()) lines.push(`   - **修改范围**：${scope.trim()}`);
+    const lines = [translate('tsk.approval.legacyViolationReq', { num: num ?? '', req: (req ?? '').trim() })];
+    if (ev?.trim()) lines.push(translate('tsk.approval.legacyViolationEv', { evidence: ev.trim() }));
+    if (scope?.trim()) lines.push(translate('tsk.approval.legacyViolationScope', { scope: scope.trim() }));
     items.push(lines.join('\n'));
   }
   if (items.length > 0) return { markdown: items.join('\n'), count: items.length };
@@ -69,11 +71,11 @@ export function presentQuestion(question: Question): PresentedQuestion {
     const summary = (summaryRaw ?? '').trim();
     const { markdown: itemsMd, count } = formatLegacyViolations(bodyRaw);
     const parts: string[] = [];
-    if (summary) parts.push(`**审阅结论**：${summary}`);
+    if (summary) parts.push(translate('tsk.approval.legacyVerdictSummary', { summary }));
     if (itemsMd) parts.push(itemsMd);
-    const countPart = count > 0 ? `（${count} 项问题）` : '';
+    const countPart = count > 0 ? translate('tsk.approval.legacyCountPart', { count }) : '';
     return {
-      title: `审阅在${tier}的产物上又打回了${countPart}，系统不再升档，要你来定`,
+      title: translate('tsk.approval.legacyTitle', { tier: tier ?? '', countPart }),
       detail: parts.length > 0 ? parts.join('\n\n') : null,
       hint: rawAbout || null,
     };
@@ -112,6 +114,7 @@ const OPTION = [
 ].join(' ');
 
 function QuestionDetail({ detail, projectId }: { detail: string; projectId?: string }) {
+  const { t } = useI18n();
   const collapsible = shouldCollapseDetail(detail);
   const [expanded, setExpanded] = useState(false);
 
@@ -134,7 +137,7 @@ function QuestionDetail({ detail, projectId }: { detail: string; projectId?: str
           onClick={() => setExpanded((value) => !value)}
         >
           {expanded ? <ChevronUp className="size-3.5" aria-hidden="true" /> : <ChevronDown className="size-3.5" aria-hidden="true" />}
-          {expanded ? '收起明细' : '展开全部'}
+          {expanded ? t('tsk.approval.collapseDetail') : t('tsk.approval.expandAll')}
         </button>
       ) : null}
     </div>
@@ -142,11 +145,12 @@ function QuestionDetail({ detail, projectId }: { detail: string; projectId?: str
 }
 
 function QuestionView({ card, question, index, onChange }: { card: Approval; question: Question; index: number; onChange: () => void }) {
+  const { t } = useI18n();
   const key = `${card.id}:${index}`;
   const options = question.options ?? [];
   const other = useRef<HTMLTextAreaElement>(null);
+  // Read draft without mutating the module map during render; create an entry only when edited.
   const draft = drafts.get(key) ?? { choice: null, other: '', otherOpen: options.length === 0 };
-  drafts.set(key, draft);
   const update = (patch: Partial<Draft>): void => {
     drafts.set(key, { ...draft, ...patch });
     onChange();
@@ -165,7 +169,7 @@ function QuestionView({ card, question, index, onChange }: { card: Approval; que
     return (
       <div>
         {header}
-        {given === undefined ? null : <p className="mt-1.5 text-sm">{`答：${String(given)}`}</p>}
+        {given === undefined ? null : <p className="mt-1.5 text-sm">{t('tsk.approval.answerPrefix', { answer: String(given) })}</p>}
       </div>
     );
   }
@@ -182,13 +186,13 @@ function QuestionView({ card, question, index, onChange }: { card: Approval; que
                 key={optionIndex}
                 type="button"
                 aria-pressed={picked}
-                {...(recommended ? { 'aria-description': '推荐' } : {})}
+                {...(recommended ? { 'aria-description': t('tsk.approval.recommended') } : {})}
                 className={OPTION}
                 onClick={() => update({ choice: option, otherOpen: false })}
               >
                 {picked ? <Check className="size-3.5 flex-none" aria-hidden="true" /> : null}
                 <span className="min-w-0">{option}</span>
-                {recommended ? <span aria-hidden="true" className="flex-none rounded-xs bg-hover px-1 text-2xs font-medium text-muted-foreground">推荐</span> : null}
+                {recommended ? <span aria-hidden="true" className="flex-none rounded-xs bg-hover px-1 text-2xs font-medium text-muted-foreground">{t('tsk.approval.recommended')}</span> : null}
               </button>
             );
           })}
@@ -201,7 +205,7 @@ function QuestionView({ card, question, index, onChange }: { card: Approval; que
               requestAnimationFrame(() => other.current?.focus());
             }}
           >
-            其他
+            {t('tsk.approval.otherOption')}
           </button>
         </div>
       ) : null}
@@ -209,8 +213,8 @@ function QuestionView({ card, question, index, onChange }: { card: Approval; que
         ref={other}
         rows={2}
         hidden={!draft.otherOpen}
-        aria-label="其他答复"
-        placeholder="写下你的答复"
+        aria-label={t('tsk.approval.otherAria')}
+        placeholder={t('tsk.approval.otherPlaceholder')}
         className="mt-2 max-h-[40vh] overflow-y-auto"
         value={draft.other}
         onChange={(event) => update({ other: event.target.value })}
@@ -222,6 +226,7 @@ function QuestionView({ card, question, index, onChange }: { card: Approval; que
 type DirectAction = 'accept' | 'abandon' | null;
 
 export function ApprovalCard({ card, className }: { card: Approval; className?: string }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const [failure, setFailure] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -242,12 +247,15 @@ export function ApprovalCard({ card, className }: { card: Approval; className?: 
   async function submit(): Promise<void> {
     const answers = card.questions.map((_, index) => answerOf(drafts.get(`${card.id}:${index}`)));
     if (answers.some((answer) => answer === '')) {
-      setFailure('每个问题都要答复');
+      setFailure(t('tsk.approval.answerAllRequired'));
       return;
     }
     setSending(true);
     try {
       await post(`/api/approvals/${card.id}/answer`, { answers });
+      for (let i = 0; i < card.questions.length; i += 1) {
+        drafts.delete(`${card.id}:${i}`);
+      }
       setFailure(null);
     } catch (error) {
       setFailure(messageOf(error));
@@ -259,7 +267,7 @@ export function ApprovalCard({ card, className }: { card: Approval; className?: 
   async function submitDirect(action: 'accept' | 'abandon'): Promise<void> {
     const note = directNote.trim();
     if (action === 'accept' && !note) {
-      setFailure('不经审阅验收时请填写验收依据');
+      setFailure(t('tsk.approval.basisRequired'));
       return;
     }
     setSending(true);
@@ -278,7 +286,7 @@ export function ApprovalCard({ card, className }: { card: Approval; className?: 
 
   return (
     <section
-      aria-label={`等你决定 · ${card.task_title}`}
+      aria-label={t('tsk.approval.cardAria', { title: card.task_title })}
       data-state={card.state}
       className={cn(
         'overflow-hidden rounded-xl border text-sm wrap-anywhere',
@@ -288,7 +296,7 @@ export function ApprovalCard({ card, className }: { card: Approval; className?: 
     >
       <div className={cn('flex flex-wrap items-center gap-x-1.5 gap-y-1 border-b px-3.5 py-2 text-xs', open ? 'border-waiting-border bg-waiting-soft font-medium text-waiting-foreground' : 'border-border')}>
         <CircleHelp className="size-3.5 flex-none" aria-hidden="true" />
-        <span className="flex-none">等你决定</span>
+        <span className="flex-none">{t('home.waitingYou')}</span>
         <span aria-hidden="true">·</span>
         <Link to={`/task/${encodeURIComponent(card.task_id)}`} className="min-w-0 flex-1 truncate font-normal no-underline hover:underline">{card.task_title}</Link>
         {card.review_task_id ? (
@@ -296,7 +304,7 @@ export function ApprovalCard({ card, className }: { card: Approval; className?: 
             to={`/task/${encodeURIComponent(card.review_task_id)}`}
             className="flex-none rounded px-1.5 py-0.5 text-2xs font-medium no-underline hover:underline"
           >
-            查看复审报告
+            {t('tsk.approval.viewReviewReport')}
           </Link>
         ) : null}
       </div>
@@ -307,7 +315,7 @@ export function ApprovalCard({ card, className }: { card: Approval; className?: 
         {open ? (
           <div className="grid gap-2.5">
             <div className="flex flex-wrap items-center gap-2">
-              <Button variant="primary" disabled={sending} onClick={() => void submit()}>提交答复</Button>
+              <Button variant="primary" disabled={sending} onClick={() => void submit()}>{t('tsk.approval.submitReply')}</Button>
               <div className="ml-auto flex flex-wrap items-center gap-2">
                 {isReviewEscalation ? (
                   <Button
@@ -333,17 +341,17 @@ export function ApprovalCard({ card, className }: { card: Approval; className?: 
                     setDirectAction((current) => (current === 'abandon' ? null : 'abandon'));
                   }}
                 >
-                  放弃任务
+                  {t('tsk.actions.abandonTask')}
                 </Button>
               </div>
             </div>
             {directAction === 'accept' ? (
               <div className="grid gap-2 rounded-lg border border-border bg-muted/50 p-3">
-                <p className="text-xs text-muted-foreground">忽略本轮复审意见，直接按当前产物验收通过（会记在任务时间线上）：</p>
+                <p className="text-xs text-muted-foreground">{t('tsk.approval.directAcceptHint')}</p>
                 <Textarea
                   rows={2}
-                  aria-label="不经审阅验收依据"
-                  placeholder="写一句验收依据，例如：复审意见属于边界场景，当前修复已满足目标"
+                  aria-label={t('tsk.actions.acceptWithoutReviewAria')}
+                  placeholder={t('tsk.approval.directAcceptPlaceholder')}
                   className="max-h-[30vh] overflow-y-auto"
                   value={directNote}
                   readOnly={sending}
@@ -351,19 +359,19 @@ export function ApprovalCard({ card, className }: { card: Approval; className?: 
                 />
                 <div className="flex flex-wrap items-center gap-2">
                   <Button variant="primary" disabled={sending || !directNote.trim()} onClick={() => void submitDirect('accept')}>
-                    {sending ? '发送中' : `确认${ACCEPT_WITHOUT_REVIEW_LABEL}`}
+                    {sending ? t('common.sending') : t('tsk.actions.confirmPrefix', { label: ACCEPT_WITHOUT_REVIEW_LABEL })}
                   </Button>
-                  <Button variant="ghost" disabled={sending} onClick={() => { setDirectAction(null); setFailure(null); }}>取消</Button>
+                  <Button variant="ghost" disabled={sending} onClick={() => { setDirectAction(null); setFailure(null); }}>{t('common.cancel')}</Button>
                 </div>
               </div>
             ) : null}
             {directAction === 'abandon' ? (
               <div className="grid gap-2 rounded-lg border border-border bg-muted/50 p-3">
-                <p className="text-xs text-muted-foreground">放弃以后任务不能再继续，确定？</p>
+                <p className="text-xs text-muted-foreground">{t('tsk.approval.abandonConfirm')}</p>
                 <Textarea
                   rows={2}
-                  aria-label="放弃理由"
-                  placeholder="放弃理由（可选）"
+                  aria-label={t('tsk.actions.abandonReasonAria')}
+                  placeholder={t('tsk.actions.abandonReasonPlaceholder')}
                   className="max-h-[30vh] overflow-y-auto"
                   value={directNote}
                   readOnly={sending}
@@ -371,15 +379,15 @@ export function ApprovalCard({ card, className }: { card: Approval; className?: 
                 />
                 <div className="flex flex-wrap items-center gap-2">
                   <Button variant="danger-solid" disabled={sending} onClick={() => void submitDirect('abandon')}>
-                    {sending ? '发送中' : '确认放弃'}
+                    {sending ? t('common.sending') : t('tsk.actions.confirmAbandon')}
                   </Button>
-                  <Button variant="ghost" disabled={sending} onClick={() => { setDirectAction(null); setFailure(null); }}>取消</Button>
+                  <Button variant="ghost" disabled={sending} onClick={() => { setDirectAction(null); setFailure(null); }}>{t('common.cancel')}</Button>
                 </div>
               </div>
             ) : null}
           </div>
         ) : (
-          <p>{card.state === 'answered' ? `已回答（来自 ${card.answered_via}）` : '问题已关闭'}</p>
+          <p>{card.state === 'answered' ? t('tsk.approval.answeredVia', { via: card.answered_via ?? '' }) : t('tsk.approval.closed')}</p>
         )}
         {failure ? <p role="alert" className="text-destructive">{failure}</p> : null}
       </div>

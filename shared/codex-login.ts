@@ -1,4 +1,5 @@
 import type { ModelInfo } from '../adapters/types.ts';
+import { localeMap, onLocaleChange, t } from './i18n.ts';
 import type { ExecutorIdentity } from './logins.ts';
 
 export const CODEX_LOGIN_STATES = ['starting', 'waiting', 'signed_in', 'failed', 'cancelled'] as const;
@@ -7,24 +8,24 @@ export type CodexLoginState = (typeof CODEX_LOGIN_STATES)[number];
 export const CODEX_LOGIN_REASONS = ['no_cli', 'start_failed', 'unreadable', 'exit', 'invalid_auth', 'timeout', 'not_saved', 'stopped'] as const;
 export type CodexLoginReason = (typeof CODEX_LOGIN_REASONS)[number];
 
-export const CODEX_LOGIN_STATE_TEXT: Record<CodexLoginState, string> = {
-  starting: '正在启动登录',
-  waiting: '等你输入设备码授权',
-  signed_in: '已登录',
-  failed: '没有登录成功',
-  cancelled: '已取消',
-};
+export const CODEX_LOGIN_STATE_TEXT: Readonly<Record<CodexLoginState, string>> = localeMap({
+  starting: 'sh.codexLogin.state.starting',
+  waiting: 'sh.codexLogin.state.waiting',
+  signed_in: 'sh.codexLogin.state.signed_in',
+  failed: 'sh.codexLogin.state.failed',
+  cancelled: 'sh.codexLogin.state.cancelled',
+});
 
-export const CODEX_LOGIN_FAIL_TEXT: Record<CodexLoginReason, string> = {
-  no_cli: '主机上找不到 Codex 命令（codex）',
-  start_failed: '登录程序没能启动',
-  unreadable: '登录程序一直没给出授权网址和设备码，可能这一版的输出格式变了',
-  exit: '登录程序没有成功就退出了，请再试一次',
-  invalid_auth: '登录程序退出了，但没有生成可用的 ChatGPT 授权令牌',
-  timeout: '等太久，这次设备码授权已作废，请再试一次',
-  not_saved: '新令牌没能存下来，原来的登录没动',
-  stopped: '服务停止或升级，这次登录已中断',
-};
+export const CODEX_LOGIN_FAIL_TEXT: Readonly<Record<CodexLoginReason, string>> = localeMap({
+  no_cli: 'sh.codexLogin.fail.no_cli',
+  start_failed: 'sh.codexLogin.fail.start_failed',
+  unreadable: 'sh.codexLogin.fail.unreadable',
+  exit: 'sh.codexLogin.fail.exit',
+  invalid_auth: 'sh.codexLogin.fail.invalid_auth',
+  timeout: 'sh.codexLogin.fail.timeout',
+  not_saved: 'sh.codexLogin.fail.not_saved',
+  stopped: 'sh.codexLogin.fail.stopped',
+});
 
 export const codexLoginLive = (state: CodexLoginState): boolean => state === 'starting' || state === 'waiting';
 
@@ -47,7 +48,12 @@ export interface CodexLoginView {
 }
 
 export const duplicateCodexAccountText = (account: string): string =>
-  `这次授权拿到的 ChatGPT 账号和账号 ${account} 是同一个，不能另建；要更新 ${account} 的登录请对它点“重新登录”`;
+  t('sh.codexLogin.duplicate', { account });
 
-export const NO_DEVICE_LOGIN_TEXT = '这个服务还没有启用主机侧设备码登录';
-export const CODEX_UNCONFIRMED_TEXT = '登录程序尚未确认结束：tycho 已记下它的进程，服务日志里有编号';
+export let NO_DEVICE_LOGIN_TEXT: string = t('sh.codexLogin.noDeviceLogin');
+export let CODEX_UNCONFIRMED_TEXT: string = t('sh.codexLogin.unconfirmed');
+
+onLocaleChange(() => {
+  NO_DEVICE_LOGIN_TEXT = t('sh.codexLogin.noDeviceLogin');
+  CODEX_UNCONFIRMED_TEXT = t('sh.codexLogin.unconfirmed');
+});

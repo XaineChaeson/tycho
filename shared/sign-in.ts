@@ -2,6 +2,7 @@
 // the states such a sign-in goes through and the few reasons it can fail, in the owner's words.
 // The service and the console both read these, so the page never says anything the service
 // would not, and never shows the command's own output.
+import { localeMap, onLocaleChange, t } from './i18n.ts';
 import type { NodeSignInReason, NodeSignInState } from './node-protocol.ts';
 
 export type SignInState = NodeSignInState;
@@ -10,26 +11,30 @@ export type SignInState = NodeSignInState;
 // back in time, or stopped.
 export type SignInReason = NodeSignInReason | 'not_delivered' | 'no_echo' | 'stopped';
 
-export const SIGN_IN_STATE_TEXT: Record<SignInState, string> = {
-  starting: '正在启动登录',
-  waiting: '等你去授权',
-  exchanging: '正在验证授权码',
-  done: '已登录',
-  failed: '没有登录成功',
-  cancelled: '已取消',
-};
+export const SIGN_IN_STATE_TEXT: Readonly<Record<SignInState, string>> = localeMap({
+  starting: 'sh.signIn.state.starting',
+  waiting: 'sh.signIn.state.waiting',
+  exchanging: 'sh.signIn.state.exchanging',
+  done: 'sh.signIn.state.done',
+  failed: 'sh.signIn.state.failed',
+  cancelled: 'sh.signIn.state.cancelled',
+});
 
-export const SIGN_IN_REASON_TEXT: Record<SignInReason, string> = {
-  missing: '那台机器上找不到这个执行器的登录命令',
-  exit: '登录程序没有成功就退出了，再试一次',
-  timeout: '等太久，这次的用户码已作废，再试一次',
-  unreadable: '登录程序一直没给出网址和用户码，可能这一版的画面认不出来',
-  not_delivered: '登录命令没送到那台机器（它可能刚掉线）',
-  no_echo: '那台机器没有回音，这次登录已作废',
-  stopped: '服务停止或升级，这次登录已中断',
-};
+export const SIGN_IN_REASON_TEXT: Readonly<Record<SignInReason, string>> = localeMap({
+  missing: 'sh.signIn.reason.missing',
+  exit: 'sh.signIn.reason.exit',
+  timeout: 'sh.signIn.reason.timeout',
+  unreadable: 'sh.signIn.reason.unreadable',
+  not_delivered: 'sh.signIn.reason.not_delivered',
+  no_echo: 'sh.signIn.reason.no_echo',
+  stopped: 'sh.signIn.reason.stopped',
+});
 
-export const NO_MACHINE_SIGN_IN_TEXT = '这个服务不能在机器上发起登录';
+export let NO_MACHINE_SIGN_IN_TEXT: string = t('sh.signIn.noMachineSignIn');
+
+onLocaleChange(() => {
+  NO_MACHINE_SIGN_IN_TEXT = t('sh.signIn.noMachineSignIn');
+});
 
 export const signInLive = (state: SignInState): boolean => state === 'starting' || state === 'waiting' || state === 'exchanging';
 

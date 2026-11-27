@@ -12,7 +12,7 @@ const MenuTrigger = MenuPrimitive.Trigger;
 function MenuContent({ className, align = 'end', sideOffset = 6, ...props }: React.ComponentProps<typeof MenuPrimitive.Content>) {
   return (
     <MenuPrimitive.Portal>
-      <MenuPrimitive.Content data-slot="menu" align={align} sideOffset={sideOffset} className={cn(FLOAT, 'min-w-44 p-1', className)} {...props} />
+      <MenuPrimitive.Content data-slot="menu" align={align} sideOffset={sideOffset} className={cn(FLOAT, 'max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-44 overflow-y-auto overscroll-contain p-1', className)} {...props} />
     </MenuPrimitive.Portal>
   );
 }

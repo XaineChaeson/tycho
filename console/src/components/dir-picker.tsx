@@ -13,6 +13,7 @@ import { Checkbox, Choice } from '@/components/ui/checkbox';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { api, messageOf, post, put } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 
 interface Crumb {
   label: string;
@@ -53,6 +54,7 @@ function DirPickerBody({ machineUid, machineName, initialPath, onSelect, onClose
   onSelect: (path: string) => void;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [targetPath, setTargetPath] = useState<string>(initialPath?.trim() ?? '');
   const [showHidden, setShowHidden] = useState(false);
   const [filter, setFilter] = useState('');
@@ -125,7 +127,7 @@ function DirPickerBody({ machineUid, machineName, initialPath, onSelect, onClose
     if (!data || mutating) return;
     const trimmed = newName.trim();
     if (trimmed === '') {
-      setActionError('请输入文件夹名称');
+      setActionError(t('mach.dir.enterName'));
       return;
     }
     setMutating(true);
@@ -150,7 +152,7 @@ function DirPickerBody({ machineUid, machineName, initialPath, onSelect, onClose
     if (!renaming || !data || mutating) return;
     const trimmed = renameValue.trim();
     if (trimmed === '') {
-      setActionError('请输入新的文件夹名称');
+      setActionError(t('mach.dir.enterNewName'));
       return;
     }
     setMutating(true);
@@ -192,21 +194,21 @@ function DirPickerBody({ machineUid, machineName, initialPath, onSelect, onClose
   return (
     <DialogContent
       className="max-w-[640px]"
-      title={`选择 ${machineName} 上的目录`}
-      description="点选进入子目录，支持新建与重命名文件夹；下方灰显列出同级文件便于确认目录内容。"
+      title={t('mach.dir.title', { machine: machineName })}
+      description={t('mach.dir.desc')}
       footer={(
         <div className="flex w-full flex-wrap items-center gap-2">
           <Mono className="mr-auto min-w-0 flex-1 truncate text-xs text-muted-foreground" title={data?.path ?? targetPath}>
-            {data?.path ?? (targetPath || '正在读取…')}
+            {data?.path ?? (targetPath || t('mach.dir.reading'))}
           </Mono>
-          <Button type="button" variant="ghost" onClick={onClose}>取消</Button>
+          <Button type="button" variant="ghost" onClick={onClose}>{t('common.cancel')}</Button>
           <Button
             type="button"
             variant="primary"
             disabled={!data || busy}
             onClick={() => { if (data) { onSelect(data.path); onClose(); } }}
           >
-            选择当前目录
+            {t('mach.dir.selectCurrent')}
           </Button>
         </div>
       )}
@@ -221,7 +223,7 @@ function DirPickerBody({ machineUid, machineName, initialPath, onSelect, onClose
             onClick={() => { if (data) navigate(data.home); }}
           >
             <Home className="size-3.5" />
-            主目录
+            {t('mach.dir.home')}
           </Button>
           {data?.roots.map((root) => (
             <Button
@@ -241,18 +243,18 @@ function DirPickerBody({ machineUid, machineName, initialPath, onSelect, onClose
             size="sm"
             variant="ghost"
             disabled={busy || !data?.parent}
-            aria-label="返回上一级"
+            aria-label={t('mach.dir.upLabel')}
             onClick={() => { if (data?.parent) navigate(data.parent); }}
           >
             <CornerLeftUp className="size-3.5" />
-            上一级
+            {t('mach.dir.up')}
           </Button>
           <Button
             type="button"
             size="icon-sm"
             variant="ghost"
             disabled={busy}
-            aria-label="刷新目录"
+            aria-label={t('mach.dir.refreshLabel')}
             onClick={() => void load(data?.path ?? targetPath, showHidden)}
           >
             <RefreshCw className={`size-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -271,12 +273,12 @@ function DirPickerBody({ machineUid, machineName, initialPath, onSelect, onClose
             }}
           >
             <FolderPlus className="size-3.5" />
-            新建文件夹
+            {t('mach.dir.newFolder')}
           </Button>
         </div>
 
         {crumbs.length > 0 ? (
-          <nav aria-label="当前路径" className="flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-xs">
+          <nav aria-label={t('mach.dir.currentPathLabel')} className="flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 font-mono text-xs">
             {crumbs.map((crumb, index) => (
               <span key={crumb.path} className="inline-flex items-center gap-0.5">
                 {index > 0 ? <ChevronRight className="size-3 text-faint" /> : null}
@@ -299,21 +301,21 @@ function DirPickerBody({ machineUid, machineName, initialPath, onSelect, onClose
           <div className="relative min-w-[180px] flex-1">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-faint" />
             <Input
-              aria-label="过滤当前目录"
+              aria-label={t('mach.dir.filterLabel')}
               className="pl-8 text-xs"
-              placeholder="过滤当前目录…"
+              placeholder={t('mach.dir.filterPlaceholder')}
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
             />
           </div>
           <Choice className="text-xs">
             <Checkbox
-              aria-label="显示隐藏项"
+              aria-label={t('mach.dir.showHidden')}
               checked={showHidden}
               disabled={busy}
               onChange={(event) => handleToggleHidden(event.target.checked)}
             />
-            显示隐藏项
+            {t('mach.dir.showHidden')}
           </Choice>
         </div>
 
@@ -321,22 +323,26 @@ function DirPickerBody({ machineUid, machineName, initialPath, onSelect, onClose
           <div className="flex items-center gap-2 rounded-lg border border-border bg-surface p-2">
             <FolderPlus className="size-4 flex-none text-muted-foreground" />
             <Input
-              aria-label="新文件夹名称"
+              aria-label={t('mach.dir.newFolderNameLabel')}
               autoFocus
               className="h-8 text-xs"
-              placeholder="输入新文件夹名称"
+              placeholder={t('mach.dir.newFolderNamePlaceholder')}
               value={newName}
               disabled={mutating}
               onChange={(event) => setNewName(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === 'Enter') { event.preventDefault(); void handleCreate(); }
+                if (event.key === 'Enter') {
+                  if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                  event.preventDefault();
+                  void handleCreate();
+                }
                 if (event.key === 'Escape') { event.preventDefault(); setCreating(false); setActionError(null); }
               }}
             />
             <Button type="button" size="sm" variant="primary" disabled={mutating || newName.trim() === ''} onClick={() => void handleCreate()}>
-              创建
+              {t('mach.dir.create')}
             </Button>
-            <Button type="button" size="icon-sm" variant="ghost" aria-label="取消新建" disabled={mutating} onClick={() => { setCreating(false); setActionError(null); }}>
+            <Button type="button" size="icon-sm" variant="ghost" aria-label={t('mach.dir.cancelCreate')} disabled={mutating} onClick={() => { setCreating(false); setActionError(null); }}>
               <X className="size-3.5" />
             </Button>
           </div>
@@ -348,9 +354,9 @@ function DirPickerBody({ machineUid, machineName, initialPath, onSelect, onClose
           <div className="grid gap-2 rounded-lg border border-border bg-surface p-4">
             <Problem role="alert">{error}</Problem>
             <div className="flex flex-wrap gap-2">
-              <Button type="button" size="sm" variant="secondary" disabled={loading} onClick={() => void load(targetPath, showHidden)}>重试</Button>
+              <Button type="button" size="sm" variant="secondary" disabled={loading} onClick={() => void load(targetPath, showHidden)}>{t('common.retry')}</Button>
               {targetPath !== '' ? (
-                <Button type="button" size="sm" variant="ghost" disabled={loading} onClick={() => navigate('')}>回到主目录</Button>
+                <Button type="button" size="sm" variant="ghost" disabled={loading} onClick={() => navigate('')}>{t('mach.dir.backToHome')}</Button>
               ) : null}
             </div>
           </div>
@@ -358,18 +364,18 @@ function DirPickerBody({ machineUid, machineName, initialPath, onSelect, onClose
           <div className="h-[320px] overflow-y-auto rounded-lg border border-border bg-surface">
             {loading && !data ? (
               <div className="flex h-full items-center justify-center">
-                <Note>正在读取远程目录…</Note>
+                <Note>{t('mach.dir.loadingRemote')}</Note>
               </div>
             ) : visibleEntries.dirs.length === 0 && visibleEntries.files.length === 0 ? (
               <div className="flex h-full items-center justify-center p-4 text-center">
                 <Note>
                   {filter.trim() !== ''
-                    ? '没有匹配的文件夹或文件。'
-                    : '这个文件夹是空的，可直接选择当前目录或新建子文件夹。'}
+                    ? t('mach.dir.noMatches')
+                    : t('mach.dir.empty')}
                 </Note>
               </div>
             ) : (
-              <ul aria-label="目录内容" className="divide-y divide-border/60">
+              <ul aria-label={t('mach.dir.contentsLabel')} className="divide-y divide-border/60">
                 {visibleEntries.dirs.map((entry) => {
                   const isRenaming = renaming?.path === entry.path;
                   return (
@@ -378,21 +384,25 @@ function DirPickerBody({ machineUid, machineName, initialPath, onSelect, onClose
                         <div className="flex w-full items-center gap-1.5">
                           <Folder className="size-4 flex-none text-muted-foreground" />
                           <Input
-                            aria-label="重命名文件夹"
+                            aria-label={t('mach.dir.renameLabel')}
                             autoFocus
                             className="h-7 flex-1 text-xs"
                             value={renameValue}
                             disabled={mutating}
                             onChange={(event) => setRenameValue(event.target.value)}
                             onKeyDown={(event) => {
-                              if (event.key === 'Enter') { event.preventDefault(); void handleRename(); }
+                              if (event.key === 'Enter') {
+                                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                                event.preventDefault();
+                                void handleRename();
+                              }
                               if (event.key === 'Escape') { event.preventDefault(); setRenaming(null); setActionError(null); }
                             }}
                           />
-                          <Button type="button" size="icon-sm" variant="primary" aria-label="确认重命名" disabled={mutating || renameValue.trim() === ''} onClick={() => void handleRename()}>
+                          <Button type="button" size="icon-sm" variant="primary" aria-label={t('mach.dir.confirmRename')} disabled={mutating || renameValue.trim() === ''} onClick={() => void handleRename()}>
                             <Check className="size-3.5" />
                           </Button>
-                          <Button type="button" size="icon-sm" variant="ghost" aria-label="取消重命名" disabled={mutating} onClick={() => { setRenaming(null); setActionError(null); }}>
+                          <Button type="button" size="icon-sm" variant="ghost" aria-label={t('mach.dir.cancelRename')} disabled={mutating} onClick={() => { setRenaming(null); setActionError(null); }}>
                             <X className="size-3.5" />
                           </Button>
                         </div>
@@ -418,7 +428,7 @@ function DirPickerBody({ machineUid, machineName, initialPath, onSelect, onClose
                             size="icon-sm"
                             variant="ghost"
                             className="opacity-70 hover:opacity-100"
-                            aria-label={`重命名 ${entry.name}`}
+                            aria-label={t('mach.dir.renameItem', { name: entry.name })}
                             disabled={busy}
                             onClick={() => {
                               setCreating(false);
@@ -446,7 +456,7 @@ function DirPickerBody({ machineUid, machineName, initialPath, onSelect, onClose
         )}
 
         {data?.truncated ? (
-          <Note className="text-xs">目录项较多，已仅展示前 400 个子目录和 200 个文件。</Note>
+          <Note className="text-xs">{t('mach.dir.truncated')}</Note>
         ) : null}
       </div>
     </DialogContent>

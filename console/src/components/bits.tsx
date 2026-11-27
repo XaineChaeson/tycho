@@ -2,7 +2,7 @@
 // gray text, a value that can be copied, a section that folds, a list of rows, a pair of
 // label and value, and what a place says when it holds nothing.
 import { Check, ChevronRight, Copy, X } from 'lucide-react';
-import { useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { taskDotClasses, taskStateLabel } from '@shared/labels.ts';
 import { formatTime, fullTime } from '@shared/time.ts';
@@ -162,30 +162,49 @@ export function Mono({ className, children, ...props }: ComponentProps<'code'>) 
 // for a moment and then goes back to what it does — and it says "copied" only when the
 // clipboard took the value: a browser that refuses the write (or has no clipboard at all) is
 // told apart, and the value is still there to select by hand.
-const REFUSED = '浏览器不让网页写剪贴板：选中这段文字，自己复制';
-
-export function CopyButton({ value, label = '复制', className }: { value: string; label?: string; className?: string }) {
+export function CopyButton({ value, label, className }: { value: string; label?: string; className?: string }) {
+  const { t } = useI18n();
   const [said, setSaid] = useState<'copied' | 'refused' | null>(null);
   const back = useRef<number | undefined>(undefined);
+  const attemptRef = useRef(0);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      window.clearTimeout(back.current);
+    };
+  }, []);
+
   async function copy(): Promise<void> {
+    const attempt = ++attemptRef.current;
     window.clearTimeout(back.current);
     try {
       await navigator.clipboard.writeText(value);
+      if (!mountedRef.current || attempt !== attemptRef.current) return;
       setSaid('copied');
-      back.current = window.setTimeout(() => setSaid(null), 1500);
+      back.current = window.setTimeout(() => {
+        if (mountedRef.current && attempt === attemptRef.current) setSaid(null);
+      }, 1500);
     } catch {
+      if (!mountedRef.current || attempt !== attemptRef.current) return;
       // Nothing was copied, so nothing may say it was; the reason stays until tried again.
       setSaid('refused');
     }
   }
-  const words = said === 'copied' ? '已复制' : said === 'refused' ? '复制不了' : label;
+  const resolvedLabel = label ?? t('common.copy');
+  const refusedDetail = t('core.copy.refusedDetail');
+  const words = said === 'copied' ? t('common.copied') : said === 'refused' ? t('core.copy.refused') : resolvedLabel;
   const Icon = said === 'copied' ? Check : said === 'refused' ? X : Copy;
   return (
     <button
       type="button"
       data-said={said ?? undefined}
-      aria-label={said === 'refused' ? `${label}不了：${value}（${REFUSED}）` : `${label}：${value}`}
-      title={said === 'refused' ? REFUSED : words}
+      aria-label={said === 'refused'
+        ? t('core.copy.ariaRefused', { label: resolvedLabel, value, detail: refusedDetail })
+        : t('core.copy.ariaLabel', { label: resolvedLabel, value })}
+      title={said === 'refused' ? refusedDetail : words}
       className={cn(
         'inline-flex size-6 flex-none items-center justify-center rounded-sm text-faint transition-colors duration-100 hover:bg-hover hover:text-foreground',
         said === 'copied' && 'text-success-foreground', said === 'refused' && 'text-destructive', className,
@@ -193,7 +212,7 @@ export function CopyButton({ value, label = '复制', className }: { value: stri
       onClick={() => void copy()}
     >
       <Icon className="size-3.5" aria-hidden="true" />
-      <span className="sr-only">{words}</span>
+      <span aria-live="polite" className="sr-only">{words}</span>
     </button>
   );
 }
@@ -224,27 +243,60 @@ export function HashLink({ href, className, children }: { href: string; classNam
   return <a href={href} className={cn('wrap-anywhere', className)}>{children}</a>;
 }
 
-// Which sections the owner has opened, kept while the console is: a page that reads again,
-// or is come back to, does not close them.
-const opened = new Set<string>();
+// Bounded LRU memory of explicit user open/close choices so a page refresh or re-render
+// preserves what the owner opened or collapsed without growing unboundedly over a long session.
+const MAX_REMEMBERED_DISCLOSURES = 500;
+const disclosureState = new Map<string, boolean>();
 
-// `lazy`: what is folded away is not drawn at all until it is asked for, for a section whose
-// rows are information in their own right rather than something the page already shows.
-export function Details({ id, title, open, lazy, className, summaryClassName, children }: { id: string; title: ReactNode; open?: boolean; lazy?: boolean; className?: string; summaryClassName?: string; children: ReactNode }) {
+function rememberDisclosure(id: string, isOpen: boolean): void {
+  disclosureState.delete(id);
+  disclosureState.set(id, isOpen);
+  if (disclosureState.size > MAX_REMEMBERED_DISCLOSURES) {
+    const oldest = disclosureState.keys().next().value;
+    if (oldest !== undefined) disclosureState.delete(oldest);
+  }
+}
+
+export function clearDisclosureMemory(): void {
+  disclosureState.clear();
+}
+
+// `defaultOpen`: opens initially unless the owner explicitly collapsed this `id`.
+// `open`: controlled/forced state (e.g. desktop layout auto-open); does not pollute `disclosureState`.
+// `lazy`: closed content is not mounted until opened.
+export function Details({ id, title, open, defaultOpen = false, lazy, className, summaryClassName, children }: {
+  id: string;
+  title: ReactNode | ((open: boolean) => ReactNode);
+  open?: boolean;
+  defaultOpen?: boolean;
+  lazy?: boolean;
+  className?: string;
+  summaryClassName?: string;
+  children: ReactNode;
+}) {
   const [, redraw] = useState(0);
-  const shown = open ?? opened.has(id);
+  const shown = open ?? (disclosureState.has(id) ? disclosureState.get(id)! : defaultOpen);
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
   return (
     <details
-      className={cn('group/details', className)}
+      className={cn('min-w-0 max-w-full', className)}
       open={shown}
       onToggle={(event) => {
-        if (event.currentTarget.open) opened.add(id); else opened.delete(id);
-        redraw((n) => n + 1);
+        const next = event.currentTarget.open;
+        // Ignore browser mount-time toggle events that merely mirror the initial `open` state
+        // so `defaultOpen` never pollutes remembered explicit user preferences.
+        if (next === shownRef.current) return;
+        shownRef.current = next;
+        if (open === undefined) {
+          rememberDisclosure(id, next);
+          redraw((n) => n + 1);
+        }
       }}
     >
-      <summary className={cn('flex min-h-hit cursor-pointer list-none items-center gap-1.5 text-sm text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden', summaryClassName)}>
-        <ChevronRight className="size-3.5 flex-none text-faint transition-transform duration-100 group-open/details:rotate-90" aria-hidden="true" />
-        {title}
+      <summary className={cn('flex min-h-hit min-w-0 max-w-full cursor-pointer list-none items-center gap-1.5 text-sm text-muted-foreground select-none hover:text-foreground [&::-webkit-details-marker]:hidden', summaryClassName)}>
+        <ChevronRight data-slot="details-chevron" className="size-3.5 flex-none text-faint transition-transform duration-100" aria-hidden="true" />
+        {typeof title === 'function' ? title(shown) : title}
       </summary>
       {lazy && !shown ? null : children}
     </details>
@@ -322,12 +374,15 @@ export function Callout({ tone = 'waiting', title, action, className, children, 
 
 // A caption above a control, and under it what the control wants or why it was refused.
 export function Field({ label, hint, error, htmlFor, className, children }: { label: ReactNode; hint?: ReactNode; error?: ReactNode; htmlFor?: string; className?: string; children: ReactNode }) {
+  const autoId = useId();
+  const hintId = hint ? `${htmlFor ?? autoId}-hint` : undefined;
+  const errorId = error ? `${htmlFor ?? autoId}-error` : undefined;
   return (
     <div className={cn('grid gap-1.5', className)}>
       <label htmlFor={htmlFor} className="text-sm font-medium">{label}</label>
       {children}
-      {hint ? <p className="text-xs text-muted-foreground wrap-anywhere">{hint}</p> : null}
-      {error ? <p role="alert" className="text-xs text-destructive wrap-anywhere">{error}</p> : null}
+      {hint ? <p id={hintId} className="text-xs text-muted-foreground wrap-anywhere">{hint}</p> : null}
+      {error ? <p id={errorId} role="alert" className="text-xs text-destructive wrap-anywhere">{error}</p> : null}
     </div>
   );
 }

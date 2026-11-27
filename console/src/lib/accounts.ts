@@ -1,3 +1,4 @@
+import { t } from '@shared/i18n.ts';
 import { shapeOf, type TierFieldName, type TierFormSpec, type TierShape } from '@shared/tier-form.ts';
 import type { ProviderDraft } from '@shared/provider-form.ts';
 import { modelText, tierText } from '@shared/labels.ts';
@@ -93,10 +94,10 @@ export function tierRefusal(rows: readonly TierRow[], editor: TierEditor | undef
   const seen = new Map<string, number>();
   for (const [index, row] of rows.entries()) {
     const name = row.name.trim();
-    if (name === '') return { at: null, message: `第 ${index + 1} 个档位没有名字：填上名字，或者把这一行删掉` };
-    if (!isTierId(name)) return { at: index, message: `${tierText.stale}：${tierText.staleNote}` };
+    if (name === '') return { at: null, message: t('acct.tier.missingName', { place: index + 1 }) };
+    if (!isTierId(name)) return { at: index, message: t('acct.pairColon', { label: tierText.stale, value: tierText.staleNote }) };
     const first = seen.get(name);
-    if (first !== undefined) return { at: null, message: `第 ${index + 1} 个档位和第 ${first + 1} 个都叫 ${name}：档位名不能重复` };
+    if (first !== undefined) return { at: null, message: t('acct.tier.duplicateName', { second: index + 1, first: first + 1, name }) };
     seen.set(name, index);
     if (blankTier(row) || editor === undefined) continue;
     if (editor.parse(row.value) === undefined) return { at: index, message: tierText.unreadable };
@@ -145,7 +146,7 @@ export const defaultEffortOf = (models: AccountModels | undefined, model: string
 // never shown as a fresh one, and a query on its way says so rather than looking stuck.
 export function modelsLine(models: AccountModels | undefined, now: number = Date.now()): string {
   const asked = models?.refreshing ? `${modelText.refreshing} ` : '';
-  if (!models || models.at === null) return `${asked}${modelText.notRead}：${modelText.ask}`;
+  if (!models || models.at === null) return `${asked}${t('acct.pairColon', { label: modelText.notRead, value: modelText.ask })}`;
   const listed = models.list.filter((model) => model.hidden !== true).length;
   return `${asked}${modelText.count(listed)}${modelText.readAt(formatTime(models.at, new Date(now)))}`;
 }
@@ -207,9 +208,14 @@ export function withField(rows: readonly TierRow[], editor: TierEditor | undefin
 }
 
 export function checkLine({ machine_id: id, host, reachable, error, version, logged_in: login }: MachineCheck): string {
-  const facts = [version, login == null ? null : login ? '已登录' : '没有登录'].filter(Boolean);
-  const name = id && id !== host ? `${id}（${host}）` : host;
-  return `${name}：${reachable ? '连得上' : '连不上'}${error ? `，${error}` : ''}${facts.map((fact) => ` · ${fact}`).join('')}`;
+  const facts = [version, login == null ? null : login ? t('acct.check.signedIn') : t('acct.check.notSignedIn')].filter(Boolean);
+  const name = id && id !== host ? t('acct.check.hostWithId', { id, host }) : host;
+  return t('acct.check.line', {
+    name,
+    status: reachable ? t('acct.check.reachable') : t('acct.check.unreachable'),
+    errorPart: error ? t('acct.check.errorSuffix', { error }) : '',
+    factsPart: facts.map((fact) => ` · ${fact}`).join(''),
+  });
 }
 
 export const checkFine = (answer: MachineCheck): boolean =>

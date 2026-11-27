@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
+import { t as translate } from '@shared/i18n.ts';
 import { NEEDS_LOGIN_TEXT, loginFull, quotaUsedUp, usageReadLine } from '@shared/labels.ts';
 import { loginName } from '@shared/logins.ts';
 import { formatTime } from '@shared/time.ts';
@@ -34,12 +35,6 @@ const quotaQuery = {
   refetchInterval: (query: { state: { data?: QuotaPage } }) => query.state.data?.logins.some((login) => login.read.reading) ? 1500 : false,
 };
 
-const QUOTA_TEXT = {
-  reading: '正在读取…',
-  refreshing: '正在刷新',
-  unread: '还没读过，点“刷新”读一次',
-};
-
 // The range is worked out when it is read, so a page left open over midnight moves with the day.
 const usageQuery = (days: Range) => ({
   queryKey: [PAGE, 'usage', days],
@@ -52,15 +47,10 @@ const usageQuery = (days: Range) => ({
 const SERIES = ['bg-series-1', 'bg-series-2', 'bg-series-3', 'bg-series-4', 'bg-series-5'] as const;
 const OTHER = 'bg-ended';
 
-const METRICS: readonly { value: Metric; label: string; title: string }[] = [
-  { value: 'tokens', label: 'Token', title: '四类 token 相加：输入、输出、缓存读、缓存写' },
-  { value: 'cost', label: '标价折算', title: '执行器按 API 标价折算的金额，只有 Claude 报；订阅账号不按它付钱' },
-];
-
 const showMetric = (value: number, metric: Metric): string => (metric === 'tokens' ? formatTokens(value) : formatUsd(value));
 
 export function UsagePage() {
-  const { t, bi } = useI18n();
+  const { t } = useI18n();
   const client = useQueryClient();
   const quota = useQuery(quotaQuery);
   const [days, setDays] = useState<Range>(7);
@@ -99,26 +89,26 @@ export function UsagePage() {
       loading={quota.isPending && usage.isPending}
       failure={quota.error ? messageOf(quota.error) : undefined}
       actions={(
-        <Button size="sm" disabled={!readable || refresh.isPending || reading} title={readable ? bi('刷新所有可读取的登录，会用掉一点点额度', 'Refresh all readable logins (uses minimal quota)') : bi('没有可以读取额度的登录', 'No logins with readable quota')} onClick={() => refresh.mutate({ all: true })}>
+        <Button size="sm" disabled={!readable || refresh.isPending || reading} title={readable ? t('acct.usage.refreshAllTitle') : t('acct.usage.noReadableQuota')} onClick={() => refresh.mutate({ all: true })}>
           <RefreshCw className={cn(refreshingAll || reading ? 'animate-spin motion-reduce:animate-none' : undefined)} />
-          {refreshingAll || reading ? bi(QUOTA_TEXT.refreshing, 'Refreshing') : bi('刷新额度', 'Refresh quota')}
+          {refreshingAll || reading ? t('acct.usage.quotaRefreshing') : t('acct.quota.refreshBtn')}
         </Button>
       )}
     >
-      <PageLead>{bi('各个登录还剩多少额度，以及每一轮执行、负责人每个回合用掉了多少。', 'Remaining quota per login and token spend across worker rounds and router turns.')}</PageLead>
+      <PageLead>{t('acct.usage.lead')}</PageLead>
       {failure ? <Problem role="alert" className="mb-3">{failure}</Problem> : null}
 
       <section aria-labelledby="quota-title" className="mb-9">
-        <SectionTitle id="quota-title">{bi('剩余额度', 'Remaining quota')}</SectionTitle>
+        <SectionTitle id="quota-title">{t('acct.usage.remainingQuotaHeading')}</SectionTitle>
         {quota.data ? <QuotaList page={quota.data} pending={refresh.isPending ? refresh.variables : undefined} onRefresh={(id) => refresh.mutate({ login_id: id })} /> : null}
       </section>
 
       <section aria-labelledby="spend-title">
         <SectionTitle
           id="spend-title"
-          action={<Segmented label={bi('时间范围', 'Time range')} value={String(days)} options={RANGES.map((value) => ({ value: String(value), label: bi(`${value} 天`, `${value}d`) }))} onChange={(value) => setDays(Number(value) as Range)} />}
+          action={<Segmented label={t('acct.usage.timeRangeLabel')} value={String(days)} options={RANGES.map((value) => ({ value: String(value), label: t('acct.usage.daysOption', { days: value }) }))} onChange={(value) => setDays(Number(value) as Range)} />}
         >
-          {bi('消耗', 'Spend')}
+          {t('acct.usage.spendHeading')}
         </SectionTitle>
         {usage.error ? <Problem role="alert">{messageOf(usage.error)}</Problem> : null}
         {usage.data ? (
@@ -189,7 +179,7 @@ function unifyQuotaLogins(logins: readonly QuotaLogin[]): (QuotaLogin & { logica
     const telemetry = mergeLogicalTelemetry(list);
     result.push({
       login_id: readable.login_id,
-      name: `${formatProviderName(executor)}（${list.length} 台机器）`,
+      name: translate('acct.group.machinesTitle', { provider: formatProviderName(executor), count: list.length }),
       machine: null,
       executor,
       status: {
@@ -207,8 +197,9 @@ function unifyQuotaLogins(logins: readonly QuotaLogin[]): (QuotaLogin & { logica
 }
 
 function QuotaList({ page, pending, onRefresh }: { page: QuotaPage; pending: unknown; onRefresh: (loginId: string) => void }) {
-  if (page.logins.length === 0) return <Empty title="还没有登录">在“账号”页添加集中托管账号后，可在此查看剩余额度与消耗统计。</Empty>;
-  const unified = useMemo(() => unifyQuotaLogins(page.logins), [page.logins]);
+  const { t, locale } = useI18n();
+  const unified = useMemo(() => unifyQuotaLogins(page.logins), [page.logins, locale]);
+  if (page.logins.length === 0) return <Empty title={t('acct.usage.noLoginsTitle')}>{t('acct.usage.noLoginsBody')}</Empty>;
   const isAsking = (login: QuotaLogin): boolean =>
     typeof pending === 'object'
     && pending !== null
@@ -233,7 +224,7 @@ function QuotaList({ page, pending, onRefresh }: { page: QuotaPage; pending: unk
         </Rows>
       ) : null}
       {secondary.length > 0 ? (
-        <Details id="quota-unreported-machine-logins" title={`不提供额度的单机登录（${secondary.length}）`}>
+        <Details id="quota-unreported-machine-logins" title={t('acct.usage.unreportedMachineLogins', { count: secondary.length })}>
           <Rows className="mt-2">
             {secondary.map((login) => (
               <QuotaRow key={login.login_id} login={login} asking={isAsking(login)} onRefresh={() => onRefresh(login.login_id)} />
@@ -249,29 +240,30 @@ function standingOf(login: QuotaLogin): { text: string; tone: 'waiting' | 'succe
   // A refused credential is the owner's to fix, and is said the same way the accounts page
   // says it: never a green "可用".
   if (login.status.rejected) return { text: NEEDS_LOGIN_TEXT, tone: 'waiting' };
-  if (login.status.rest) return { text: `歇到 ${formatTime(login.status.rest.until)}`, tone: 'waiting' };
-  if (quotaUsedUp(login.status.usage)) return { text: '额度已用完', tone: 'waiting' };
-  if (loginFull(login.status)) return { text: '到并发上限', tone: 'waiting' };
-  if (login.status.active_runs > 0) return { text: `在跑 ${login.status.active_runs} 轮`, tone: 'plain' };
-  return { text: '可用', tone: 'success' };
+  if (login.status.rest) return { text: translate('acct.usage.restingUntil', { time: formatTime(login.status.rest.until) }), tone: 'waiting' };
+  if (quotaUsedUp(login.status.usage)) return { text: translate('acct.usage.quotaExhausted'), tone: 'waiting' };
+  if (loginFull(login.status)) return { text: translate('acct.usage.concurrencyFull'), tone: 'waiting' };
+  if (login.status.active_runs > 0) return { text: translate('acct.usage.runningRounds', { count: login.status.active_runs }), tone: 'plain' };
+  return { text: translate('acct.status.available'), tone: 'success' };
 }
 
-function formatTelemetryStrip(t: LoginTelemetry | null | undefined): string | null {
-  if (!hasRecordedTelemetry(t) || !t) return null;
+function formatTelemetryStrip(tel: LoginTelemetry | null | undefined): string | null {
+  if (!hasRecordedTelemetry(tel) || !tel) return null;
   const parts: string[] = [];
-  if (t.five_hour_tokens > 0) parts.push(`近 5h ${formatCompactTokens(t.five_hour_tokens)}`);
-  if (t.day_tokens > 0) parts.push(`24h ${formatCompactTokens(t.day_tokens)}`);
-  const week = t.week_tokens ?? t.day_tokens;
-  if (week > 0 && week !== t.day_tokens) parts.push(`7 天 ${formatCompactTokens(week)}`);
-  const total = t.total_tokens ?? week;
-  if (total > 0 && total !== week) parts.push(`累计 ${formatCompactTokens(total)}`);
-  else if (parts.length === 0 && total > 0) parts.push(`累计 ${formatCompactTokens(total)}`);
-  const runs = t.total_runs ?? t.week_runs ?? t.day_runs;
-  if (runs > 0) parts.push(`${runs} 轮`);
-  return parts.length > 0 ? `账本用量：${parts.join(' · ')}` : null;
+  if (tel.five_hour_tokens > 0) parts.push(translate('acct.usage.tel5h', { tokens: formatCompactTokens(tel.five_hour_tokens) }));
+  if (tel.day_tokens > 0) parts.push(`24h ${formatCompactTokens(tel.day_tokens)}`);
+  const week = tel.week_tokens ?? tel.day_tokens;
+  if (week > 0 && week !== tel.day_tokens) parts.push(translate('acct.usage.tel7d', { tokens: formatCompactTokens(week) }));
+  const total = tel.total_tokens ?? week;
+  if (total > 0 && total !== week) parts.push(translate('acct.usage.telTotal', { tokens: formatCompactTokens(total) }));
+  else if (parts.length === 0 && total > 0) parts.push(translate('acct.usage.telTotal', { tokens: formatCompactTokens(total) }));
+  const runs = tel.total_runs ?? tel.week_runs ?? tel.day_runs;
+  if (runs > 0) parts.push(translate('acct.telemetry.runsCount', { count: runs }));
+  return parts.length > 0 ? translate('acct.usage.ledgerUsageStrip', { parts: parts.join(' · ') }) : null;
 }
 
 function QuotaRow({ login, asking, onRefresh }: { login: QuotaLogin & { logicalMachines?: string[] }; asking: boolean; onRefresh: () => void }) {
+  const { t } = useI18n();
   const name = login.machine === null ? login.name : loginName({ name: login.name, machine: login.machine, executor: login.executor });
   const standing = standingOf(login);
   const read = usageReadLine(login.status.usage);
@@ -292,8 +284,8 @@ function QuotaRow({ login, asking, onRefresh }: { login: QuotaLogin & { logicalM
           </Note>
         ) : null}
         {login.aliases?.length ? (
-          <Note className="mt-1 text-xs wrap-anywhere" title={login.aliases.map((alias) => loginName({ name: alias.name, machine: alias.machine ?? undefined, executor: alias.executor })).join('、')}>
-            {`已合并 ${login.aliases.length} 处同订阅登录`}
+          <Note className="mt-1 text-xs wrap-anywhere" title={login.aliases.map((alias) => loginName({ name: alias.name, machine: alias.machine ?? undefined, executor: alias.executor })).join(t('acct.listSep'))}>
+            {t('acct.usage.mergedAliases', { count: login.aliases.length })}
           </Note>
         ) : null}
       </div>
@@ -307,12 +299,12 @@ function QuotaRow({ login, asking, onRefresh }: { login: QuotaLogin & { logicalM
           <p className="font-mono text-xs text-muted-foreground tabular-nums">{telemetryLine}</p>
         ) : null}
         <p className="text-xs text-faint wrap-anywhere" aria-live="polite">
-          {read ?? (busy ? QUOTA_TEXT.reading : login.read.available ? QUOTA_TEXT.unread : noQuotaText)}
-          {read && busy ? ` · ${QUOTA_TEXT.refreshing}` : null}
-          {read && !login.read.available && noQuotaText ? `。${noQuotaText}` : null}
+          {read ?? (busy ? t('acct.usage.quotaReading') : login.read.available ? t('acct.usage.quotaUnread') : noQuotaText)}
+          {read && busy ? ` · ${t('acct.usage.quotaRefreshing')}` : null}
+          {read && !login.read.available && noQuotaText ? t('acct.sentenceSuffix', { text: noQuotaText }) : null}
         </p>
         {login.read.failure && !busy ? (
-          <p className="text-xs text-destructive wrap-anywhere">{`${login.read.tried_at ? `${formatTime(login.read.tried_at)} ` : ''}没读到：${login.read.failure}`}</p>
+          <p className="text-xs text-destructive wrap-anywhere">{t('acct.usage.readFailed', { prefix: login.read.tried_at ? `${formatTime(login.read.tried_at)} ` : '', reason: login.read.failure })}</p>
         ) : null}
         {/* A 429 with nothing to read is not a broken command: said plainly, with the held
             figures still above it. */}
@@ -322,9 +314,9 @@ function QuotaRow({ login, asking, onRefresh }: { login: QuotaLogin & { logicalM
       </div>
       <div className="flex items-start shell:justify-end">
         {login.read.available && !login.status.rejected ? (
-          <Button size="sm" variant="ghost" disabled={busy} title="刷新这个登录的额度，会用掉一点点额度" onClick={onRefresh}>
+          <Button size="sm" variant="ghost" disabled={busy} title={t('acct.usage.refreshOneTitle')} onClick={onRefresh}>
             <RefreshCw className={cn(busy ? 'animate-spin motion-reduce:animate-none' : undefined)} />
-            {busy ? QUOTA_TEXT.refreshing : '刷新'}
+            {busy ? t('acct.usage.quotaRefreshing') : t('common.refresh')}
           </Button>
         ) : null}
       </div>
@@ -342,7 +334,12 @@ function Spend({ report, days, dimension, metric, onDimension, onMetric }: {
   onDimension: (value: Dimension) => void;
   onMetric: (value: Metric) => void;
 }) {
-  const summary = useMemo(() => summarize(report, dimension, metric), [report, dimension, metric]);
+  const { t, locale } = useI18n();
+  const metrics = useMemo<readonly { value: Metric; label: string; title: string }[]>(() => [
+    { value: 'tokens', label: t('acct.usage.metricTokens'), title: t('acct.usage.metricTokensHint') },
+    { value: 'cost', label: t('acct.usage.metricCost'), title: t('acct.usage.metricCostHint') },
+  ], [t]);
+  const summary = useMemo(() => summarize(report, dimension, metric), [report, dimension, metric, locale]);
   const drawn = summary.groups.filter((group) => metricOf(group, metric) > 0).slice(0, DRAWN).map((group) => group.key);
   const chart = useMemo(() => daysOf(report, days, dimension, metric, drawn), [report, days, dimension, metric, drawn.join('\u0000')]);
   const colorOf = (key: string): string => {
@@ -356,21 +353,21 @@ function Spend({ report, days, dimension, metric, onDimension, onMetric }: {
     <div className="grid grid-cols-[minmax(0,1fr)] gap-5">
       <Tiles summary={summary} />
       {nothing ? (
-        <Empty title="这段时间没有用量记录">用量从这一版开始记：每一轮执行结算时、负责人每个回合结束时、每次问额度时各记一笔。</Empty>
+        <Empty title={t('acct.usage.emptySpendTitle')}>{t('acct.usage.emptySpendBody')}</Empty>
       ) : (
         <>
           <div className="rounded-xl bg-raised p-4 shadow-card">
             <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-              <Segmented label="按什么分" value={dimension} options={DIMENSIONS} onChange={onDimension} />
-              <Segmented label="看什么" value={metric} options={METRICS} onChange={onMetric} />
+              <Segmented label={t('acct.usage.groupByLabel')} value={dimension} options={DIMENSIONS} onChange={onDimension} />
+              <Segmented label={t('acct.usage.metricLabel')} value={metric} options={metrics} onChange={onMetric} />
             </div>
-            <Legend items={[...drawn.map((key) => ({ key, label: summary.groups.find((group) => group.key === key)!.label })), ...(chart.some((day) => day.values.some((value) => value.key === '@other')) ? [{ key: '@other', label: '其他' }] : [])]} colorOf={colorOf} />
-            <Chart days={chart} metric={metric} labelOf={(key) => (key === '@other' ? '其他' : summary.groups.find((group) => group.key === key)?.label ?? key)} colorOf={colorOf} caption={`每天的${METRICS.find((each) => each.value === metric)!.label}，按${dimensionLabel}分`} />
-            {metric === 'cost' && totals.unpriced > 0 ? <Note className="mt-3 text-xs">{`有 ${totals.unpriced} 条记录执行器没有报价（Codex、dsh、Gemini 不报），不在这张图里。`}</Note> : null}
+            <Legend items={[...drawn.map((key) => ({ key, label: summary.groups.find((group) => group.key === key)!.label })), ...(chart.some((day) => day.values.some((value) => value.key === '@other')) ? [{ key: '@other', label: t('acct.usage.other') }] : [])]} colorOf={colorOf} />
+            <Chart days={chart} metric={metric} labelOf={(key) => (key === '@other' ? t('acct.usage.other') : summary.groups.find((group) => group.key === key)?.label ?? key)} colorOf={colorOf} caption={t('acct.usage.chartCaption', { metric: metrics.find((each) => each.value === metric)!.label, dimension: dimensionLabel })} />
+            {metric === 'cost' && totals.unpriced > 0 ? <Note className="mt-3 text-xs">{t('acct.usage.unpricedChartNote', { count: totals.unpriced })}</Note> : null}
           </div>
           <GroupTable groups={summary.groups} dimension={dimension} dimensionLabel={dimensionLabel} colorOf={colorOf} drawn={drawn} />
-          {summary.groups.some((group) => group.unpriced > 0 && group.list_cost_usd > 0) ? <Note className="-mt-2 text-xs">* 这一行有一部分记录执行器没有报价（Codex、dsh、Gemini 不报），金额只算报了的那些。</Note> : null}
-          {totals.without_usage > 0 ? <Note className="-mt-2 text-xs">{`其中 ${totals.without_usage} 轮执行器没有报用量：多是被打断、丢失或在用量记录之前跑的轮次。`}</Note> : null}
+          {summary.groups.some((group) => group.unpriced > 0 && group.list_cost_usd > 0) ? <Note className="-mt-2 text-xs">{t('acct.usage.partialPriceFootnote')}</Note> : null}
+          {totals.without_usage > 0 ? <Note className="-mt-2 text-xs">{t('acct.usage.withoutUsageNote', { count: totals.without_usage })}</Note> : null}
           <TopTasks tasks={report.top_tasks} names={report.names.projects} />
         </>
       )}
@@ -379,12 +376,13 @@ function Spend({ report, days, dimension, metric, onDimension, onMetric }: {
 }
 
 function Tiles({ summary: { totals } }: { summary: ReturnType<typeof summarize> }) {
+  const { t } = useI18n();
   const priced = totals.list_cost_usd > 0;
   const tiles = [
-    { label: 'Token', value: formatTokens(tokensOf(totals)), detail: `输入 ${formatTokens(totals.input)} · 输出 ${formatTokens(totals.output)} · 缓存 ${formatTokens(totals.cache_read + totals.cache_write)}` },
-    { label: '标价折算', value: priced ? formatUsd(totals.list_cost_usd) : '无数据', detail: '执行器按 API 标价算的，只有 Claude 报；不是账单' },
-    { label: '执行', value: `${totals.rounds} 轮`, detail: `负责人 ${totals.turns} 个回合` },
-    { label: '执行时长', value: formatDuration(totals.duration_ms), detail: '各轮从开始到结束相加' },
+    { label: t('acct.usage.metricTokens'), value: formatTokens(tokensOf(totals)), detail: t('acct.usage.tileTokensDetail', { input: formatTokens(totals.input), output: formatTokens(totals.output), cache: formatTokens(totals.cache_read + totals.cache_write) }) },
+    { label: t('acct.usage.metricCost'), value: priced ? formatUsd(totals.list_cost_usd) : t('acct.usage.noData'), detail: t('acct.usage.tileCostDetail') },
+    { label: t('acct.usage.tileExec'), value: t('acct.telemetry.runsCount', { count: totals.rounds }), detail: t('acct.usage.tileRouterTurns', { count: totals.turns }) },
+    { label: t('acct.usage.colDuration'), value: formatDuration(totals.duration_ms), detail: t('acct.usage.tileDurationDetail') },
   ];
   return (
     <dl className="grid grid-cols-2 overflow-hidden rounded-xl bg-raised shadow-card wide:grid-cols-4">
@@ -400,8 +398,9 @@ function Tiles({ summary: { totals } }: { summary: ReturnType<typeof summarize> 
 }
 
 function Legend({ items, colorOf }: { items: { key: string; label: string }[]; colorOf: (key: string) => string }) {
+  const { t } = useI18n();
   return (
-    <ul aria-label="图例" className="mb-3 flex flex-wrap gap-x-4 gap-y-1.5">
+    <ul aria-label={t('acct.usage.legendAria')} className="mb-3 flex flex-wrap gap-x-4 gap-y-1.5">
       {items.map((item) => (
         <li key={item.key} className="flex min-w-0 items-center gap-1.5 text-xs text-foreground">
           <span aria-hidden="true" className={cn('size-2.5 flex-none rounded-[3px]', colorOf(item.key))} />
@@ -422,6 +421,7 @@ function Chart({ days, metric, labelOf, colorOf, caption }: {
   colorOf: (key: string) => string;
   caption: string;
 }) {
+  const { t } = useI18n();
   const [hovered, setHovered] = useState<number | null>(null);
   const top = niceMax(Math.max(0, ...days.map((day) => day.total)));
   const every = days.length <= 7 ? 1 : days.length <= 31 ? 5 : 15;
@@ -476,9 +476,9 @@ function Chart({ days, metric, labelOf, colorOf, caption }: {
                       <span className="ml-auto pl-3 tabular-nums">{showMetric(value.value, metric)}</span>
                     </li>
                   ))}
-                  <li className="mt-0.5 flex border-t border-border pt-0.5 font-medium"><span>合计</span><span className="ml-auto pl-3 tabular-nums">{showMetric(shown.total, metric)}</span></li>
+                  <li className="mt-0.5 flex border-t border-border pt-0.5 font-medium"><span>{t('acct.usage.tooltipTotal')}</span><span className="ml-auto pl-3 tabular-nums">{showMetric(shown.total, metric)}</span></li>
                 </ul>
-              ) : <p className="text-muted-foreground">没有用量</p>}
+              ) : <p className="text-muted-foreground">{t('acct.usage.tooltipEmpty')}</p>}
             </div>
           ) : null}
         </div>
@@ -493,12 +493,13 @@ function Chart({ days, metric, labelOf, colorOf, caption }: {
 }
 
 function GroupTable({ groups, dimension, dimensionLabel, colorOf, drawn }: { groups: Group[]; dimension: Dimension; dimensionLabel: string; colorOf: (key: string) => string; drawn: string[] }) {
+  const { t } = useI18n();
   // A group whose rounds reported nothing has no figure, which is not a figure of zero.
   const none = (group: Group): boolean => tokensOf(group) === 0 && group.unpriced === 0 && group.list_cost_usd === 0;
   const tokens = (group: Group, value: number): string => (none(group) ? '—' : formatTokens(value));
   const cost = (group: Group): string => {
     if (none(group)) return '—';
-    if (group.list_cost_usd === 0 && group.unpriced > 0) return '无数据';
+    if (group.list_cost_usd === 0 && group.unpriced > 0) return t('acct.usage.noData');
     return `${formatUsd(group.list_cost_usd)}${group.unpriced > 0 ? '*' : ''}`;
   };
   const head = 'px-3 py-2 text-right text-xs font-medium text-muted-foreground whitespace-nowrap';
@@ -506,18 +507,18 @@ function GroupTable({ groups, dimension, dimensionLabel, colorOf, drawn }: { gro
   return (
     <div className="overflow-x-auto rounded-xl bg-raised shadow-card">
       <table className="w-full min-w-[720px] border-collapse text-sm">
-        <caption className="sr-only">{`按${dimensionLabel}分的用量`}</caption>
+        <caption className="sr-only">{t('acct.usage.tableCaption', { dimension: dimensionLabel })}</caption>
         <thead>
           <tr className="border-b border-border">
             <th scope="col" className={cn(head, 'text-left')}>{dimensionLabel}</th>
-            <th scope="col" className={head} title="执行的轮次、负责人的回合和问额度的次数">次数</th>
-            <th scope="col" className={head}>输入</th>
-            <th scope="col" className={head}>输出</th>
-            <th scope="col" className={head}>缓存读</th>
-            <th scope="col" className={head}>缓存写</th>
-            <th scope="col" className={head}>Token 合计</th>
-            <th scope="col" className={head} title="执行器按 API 标价折算；* 表示有一部分记录没有报价">标价折算</th>
-            {dimension === 'model' ? null : <th scope="col" className={head}>执行时长</th>}
+            <th scope="col" className={head} title={t('acct.usage.colUnitsHint')}>{t('acct.usage.colUnits')}</th>
+            <th scope="col" className={head}>{t('acct.usage.colInput')}</th>
+            <th scope="col" className={head}>{t('acct.usage.colOutput')}</th>
+            <th scope="col" className={head}>{t('acct.usage.colCacheRead')}</th>
+            <th scope="col" className={head}>{t('acct.usage.colCacheWrite')}</th>
+            <th scope="col" className={head}>{t('acct.usage.colTokensTotal')}</th>
+            <th scope="col" className={head} title={t('acct.usage.colCostHint')}>{t('acct.usage.metricCost')}</th>
+            {dimension === 'model' ? null : <th scope="col" className={head}>{t('acct.usage.colDuration')}</th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -546,21 +547,22 @@ function GroupTable({ groups, dimension, dimensionLabel, colorOf, drawn }: { gro
 }
 
 function TopTasks({ tasks, names }: { tasks: TaskUsage[]; names: Record<string, string> }) {
+  const { t } = useI18n();
   const used = tasks.filter((task) => tokensOf(task) > 0);
   if (used.length === 0) return null;
   return (
     <section aria-labelledby="top-tasks">
-      <SectionTitle id="top-tasks">用量最多的任务</SectionTitle>
+      <SectionTitle id="top-tasks">{t('acct.usage.topTasksHeading')}</SectionTitle>
       <Rows>
         {used.map((task) => (
           <Link key={task.task_id} to={`/task/${task.task_id}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 px-4 py-2.5 no-underline transition-colors duration-100 hover:bg-muted">
             <span className="min-w-0">
               <span className="block truncate text-sm font-medium">{task.title}</span>
-              <span className="block truncate text-xs text-faint">{`${task.project_id ? names[task.project_id] ?? '已删除的项目' : '不属于项目'} · ${task.rounds} 轮`}</span>
+              <span className="block truncate text-xs text-faint">{`${task.project_id ? names[task.project_id] ?? t('acct.usage.deletedProject') : t('acct.usage.noProject')} · ${t('acct.telemetry.runsCount', { count: task.rounds })}`}</span>
             </span>
             <span className="text-right text-sm tabular-nums">
               {formatTokens(tokensOf(task))}
-              <span className="block text-xs text-faint">{task.list_cost_usd > 0 ? formatUsd(task.list_cost_usd) : task.unpriced > 0 ? '无报价' : ''}</span>
+              <span className="block text-xs text-faint">{task.list_cost_usd > 0 ? formatUsd(task.list_cost_usd) : task.unpriced > 0 ? t('acct.usage.unpriced') : ''}</span>
             </span>
           </Link>
         ))}

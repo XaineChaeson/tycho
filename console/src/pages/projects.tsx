@@ -28,6 +28,7 @@ function ProjectRow({ project, label, leading, badges, actions }: {
   badges: ReactNode;
   actions?: ReactNode;
 }) {
+  const { t } = useI18n();
   return (
     <li className="flex flex-wrap items-center gap-2 transition-colors duration-100 hover:bg-muted/60">
       <Link
@@ -39,8 +40,8 @@ function ProjectRow({ project, label, leading, badges, actions }: {
         <span className="min-w-0 flex-1">
           <span className="block font-medium wrap-anywhere">{project.name}</span>
           {project.sources.length
-            ? <span className="block truncate text-muted-foreground">{project.sources[0]!.label}{project.sources.length > 1 ? ` 等 ${project.sources.length} 个来源` : ''}</span>
-            : <span className="block text-xs text-faint">没有代码来源</span>}
+            ? <span className="block truncate text-muted-foreground">{project.sources[0]!.label}{project.sources.length > 1 ? t('proj.list.moreSources', { count: project.sources.length }) : ''}</span>
+            : <span className="block text-xs text-faint">{t('proj.list.noSources')}</span>}
         </span>
         {badges}
         <Chevron />
@@ -51,6 +52,7 @@ function ProjectRow({ project, label, leading, badges, actions }: {
 }
 
 function ActiveProjectRow({ project }: { project: Project }) {
+  const { t } = useI18n();
   const archive = useProjectFlag(project, 'archived');
   const [confirmArchive, setConfirmArchive] = useState(false);
   const notDone = project.unfinished ?? project.moving + project.waiting;
@@ -58,7 +60,7 @@ function ActiveProjectRow({ project }: { project: Project }) {
     <>
       <ProjectRow
         project={project}
-        label={`项目 ${project.name}`}
+        label={t('proj.list.projectAria', { name: project.name })}
         leading={(
           <span className="flex size-4 flex-none items-center justify-center">
             {project.waiting ? <Dot tone="waiting" /> : project.moving ? <Dot tone="running" /> : <span aria-hidden="true" className="size-2 rounded-full border border-border-strong" />}
@@ -66,8 +68,8 @@ function ActiveProjectRow({ project }: { project: Project }) {
         )}
         badges={<>
           {project.paused_at != null ? <Badge tone="ended">{PROJECT_PAUSED_LABEL}</Badge> : null}
-          <Badge tone={project.moving ? 'running' : 'plain'}>{`在进行 ${project.moving}`}</Badge>
-          <Badge tone={project.waiting ? 'waiting' : 'plain'}>{`等你 ${project.waiting}`}</Badge>
+          <Badge tone={project.moving ? 'running' : 'plain'}>{t('proj.list.badgeMoving', { count: project.moving })}</Badge>
+          <Badge tone={project.waiting ? 'waiting' : 'plain'}>{t('proj.list.badgeWaiting', { count: project.waiting })}</Badge>
         </>}
         actions={(
           <Button
@@ -79,7 +81,7 @@ function ActiveProjectRow({ project }: { project: Project }) {
               else void archive.set(true);
             }}
           >
-            归档
+            {t('proj.lifecycle.archive')}
           </Button>
         )}
       />
@@ -87,9 +89,9 @@ function ActiveProjectRow({ project }: { project: Project }) {
       <Confirm
         open={confirmArchive}
         danger={false}
-        title={`归档项目 ${project.name}？`}
-        description={`还有 ${notDone} 项工作没结束：在跑的那一轮会做完，其余停在原地，恢复后接着做。`}
-        confirm="确认归档"
+        title={t('proj.lifecycle.archiveConfirmTitle', { name: project.name })}
+        description={t('proj.list.archiveUnfinishedDesc', { count: notDone })}
+        confirm={t('proj.list.confirmArchive')}
         busy={archive.busy}
         onConfirm={() => { void archive.set(true).then(() => setConfirmArchive(false)); }}
         onCancel={() => setConfirmArchive(false)}
@@ -99,6 +101,7 @@ function ActiveProjectRow({ project }: { project: Project }) {
 }
 
 function ArchivedProjectRow({ project }: { project: Project }) {
+  const { t } = useI18n();
   const archive = useProjectFlag(project, 'archived');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const deletable = project.deletable;
@@ -107,10 +110,10 @@ function ArchivedProjectRow({ project }: { project: Project }) {
     <>
       <ProjectRow
         project={project}
-        label={`已归档的项目 ${project.name}`}
+        label={t('proj.list.archivedProjectAria', { name: project.name })}
         badges={<Badge tone="ended">{PROJECT_ARCHIVED_LABEL}</Badge>}
         actions={<>
-          <Button size="sm" variant="ghost" disabled={archive.busy} onClick={() => void archive.set(false)}>恢复</Button>
+          <Button size="sm" variant="ghost" disabled={archive.busy} onClick={() => void archive.set(false)}>{t('common.resume')}</Button>
           <Button
             size="sm"
             variant="danger"
@@ -118,7 +121,7 @@ function ArchivedProjectRow({ project }: { project: Project }) {
             title={canDelete ? undefined : deletable?.reason ?? undefined}
             onClick={() => setConfirmDelete(true)}
           >
-            删除
+            {t('common.delete')}
           </Button>
         </>}
       />
@@ -129,7 +132,7 @@ function ArchivedProjectRow({ project }: { project: Project }) {
 }
 
 export function ProjectsPage() {
-  const { t, bi } = useI18n();
+  const { t } = useI18n();
   const { data, isPending, error } = useQuery(projectsQuery);
   const [creating, setCreating] = useState(false);
   const open = activeProjects(data ?? []);
@@ -141,7 +144,7 @@ export function ProjectsPage() {
       failure={error?.message}
       actions={<Button variant="primary" onClick={() => setCreating(true)}><Plus />{t('nav.newProject')}</Button>}
     >
-      <PageLead>{bi('任务属于项目，每个项目有自己的负责人，可限定项目允许使用的账号与执行机器。', 'Tasks belong to projects. Each project has its own Router and optional account/machine scope.')}</PageLead>
+      <PageLead>{t('proj.list.lead')}</PageLead>
       {open.length ? (
         <Rows>
           <ul aria-label={t('nav.projects')} className="divide-y divide-border">
@@ -149,16 +152,16 @@ export function ProjectsPage() {
           </ul>
         </Rows>
       ) : data ? (
-        <Empty icon={<FolderPlus />} title={archived.length ? bi('项目都归档了', 'All projects are archived') : bi('还没有项目', 'No projects yet')}>
-          <p>{archived.length ? bi('在下面的“已归档”里直接恢复或删除，或者建一个新的。', 'Restore or delete archived projects below, or create a new one.') : bi('建一个，就能和它的负责人说话：只要名字，代码来源可以不填。', 'Create one to start talking with its Router — only a name is required.')}</p>
+        <Empty icon={<FolderPlus />} title={archived.length ? t('proj.list.allArchivedTitle') : t('proj.list.emptyTitle')}>
+          <p>{archived.length ? t('proj.list.allArchivedDesc') : t('proj.list.emptyDesc')}</p>
           <Button variant="primary" className="mt-4" onClick={() => setCreating(true)}><Plus />{t('nav.newProject')}</Button>
         </Empty>
       ) : null}
       {archived.length ? (
-        <section id="archived" aria-label={bi(`已归档（${archived.length}）`, `Archived (${archived.length})`)} className="mt-6">
-          <SectionTitle count={archived.length}>{bi('已归档', 'Archived')}</SectionTitle>
+        <section id="archived" aria-label={t('proj.list.archivedSectionAria', { count: archived.length })} className="mt-6">
+          <SectionTitle count={archived.length}>{t('proj.list.archivedHeading')}</SectionTitle>
           <Rows>
-            <ul aria-label="已归档的项目" className="divide-y divide-border">
+            <ul aria-label={t('proj.list.archivedListAria')} className="divide-y divide-border">
               {archived.map((project) => <ArchivedProjectRow key={project.id} project={project} />)}
             </ul>
           </Rows>

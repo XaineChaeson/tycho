@@ -1,5 +1,6 @@
 // Unified IM channel vocabulary, group binding contracts, validation helpers, and pure Fast-Path evaluation.
 // Shared between the service and console so channel names, trigger rules, and bounds never drift.
+import { localeMap, t } from './i18n.ts';
 
 export const IM_CHANNELS = ['wecom', 'weixin'] as const;
 export type ImChannel = (typeof IM_CHANNELS)[number];
@@ -7,10 +8,10 @@ export type ImChannel = (typeof IM_CHANNELS)[number];
 export const IM_GROUP_CAPABLE_CHANNELS = ['wecom'] as const;
 export type ImGroupCapableChannel = (typeof IM_GROUP_CAPABLE_CHANNELS)[number];
 
-export const IM_CHANNEL_LABELS: Record<ImChannel, string> = {
-  wecom: '企业微信',
-  weixin: '微信',
-};
+export const IM_CHANNEL_LABELS: Readonly<Record<ImChannel, string>> = localeMap({
+  wecom: 'sh.im.channel.wecom',
+  weixin: 'sh.im.channel.weixin',
+});
 
 export const isImChannel = (value: unknown): value is ImChannel =>
   typeof value === 'string' && (IM_CHANNELS as readonly string[]).includes(value);
@@ -21,10 +22,10 @@ export const isGroupCapableChannel = (channel: ImChannel): boolean =>
 export const IM_GROUP_TRIGGER_MODES = ['mention_only', 'mention_or_rules'] as const;
 export type ImGroupTriggerMode = (typeof IM_GROUP_TRIGGER_MODES)[number];
 
-export const IM_GROUP_TRIGGER_MODE_LABELS: Record<ImGroupTriggerMode, string> = {
-  mention_only: '仅 @ 机器人触发',
-  mention_or_rules: '@ 机器人或关键词触发',
-};
+export const IM_GROUP_TRIGGER_MODE_LABELS: Readonly<Record<ImGroupTriggerMode, string>> = localeMap({
+  mention_only: 'sh.im.triggerMode.mention_only',
+  mention_or_rules: 'sh.im.triggerMode.mention_or_rules',
+});
 
 export const isImGroupTriggerMode = (value: unknown): value is ImGroupTriggerMode =>
   typeof value === 'string' && (IM_GROUP_TRIGGER_MODES as readonly string[]).includes(value);
@@ -167,10 +168,10 @@ function unsafeRegexReason(pattern: string): string | null {
       if (!inCharClass && i + 1 < pattern.length) {
         const next = pattern[i + 1]!;
         if (next >= '1' && next <= '9') {
-          return '正则规则不允许使用反向引用，请简化表达式';
+          return t('sh.im.err.regexBackref');
         }
         if (next === 'k' && pattern[i + 2] === '<') {
-          return '正则规则不允许使用反向引用，请简化表达式';
+          return t('sh.im.err.regexBackref');
         }
       }
       i += 2;
@@ -224,19 +225,19 @@ function unsafeRegexReason(pattern: string): string | null {
       const quant = readQuantifier(pattern, i + 1);
       if (quant.isQuantifier) {
         if (quant.exceedsCap) {
-          return `正则规则量词上限不能超过 ${IM_RULE_MAX_QUANTIFIER_BOUND}`;
+          return t('sh.im.err.regexQuantifierCap', { max: IM_RULE_MAX_QUANTIFIER_BOUND });
         }
         if (quant.unbounded) {
           unboundedCount += 1;
           if (unboundedCount > IM_RULE_MAX_UNBOUNDED_QUANTIFIERS) {
-            return '正则规则包含过多无界量词，请简化表达式';
+            return t('sh.im.err.regexTooManyUnbounded');
           }
         }
         if (quant.isBraceUnbounded && groupStack.length > 0) {
-          return '正则规则分组内不允许使用无上限量词，请简化表达式';
+          return t('sh.im.err.regexUnboundedInGroup');
         }
         if (frame?.hasQuantifierOrAlt && quant.repeatsMoreThanOnce) {
-          return '正则规则包含可能导致性能回溯的嵌套量词或重复分支，请简化表达式';
+          return t('sh.im.err.regexNestedQuantifier');
         }
         if (groupStack.length > 0) {
           groupStack[groupStack.length - 1]!.hasQuantifierOrAlt = true;
@@ -254,16 +255,16 @@ function unsafeRegexReason(pattern: string): string | null {
       const quant = readQuantifier(pattern, i);
       if (quant.isQuantifier) {
         if (quant.exceedsCap) {
-          return `正则规则量词上限不能超过 ${IM_RULE_MAX_QUANTIFIER_BOUND}`;
+          return t('sh.im.err.regexQuantifierCap', { max: IM_RULE_MAX_QUANTIFIER_BOUND });
         }
         if (quant.unbounded) {
           unboundedCount += 1;
           if (unboundedCount > IM_RULE_MAX_UNBOUNDED_QUANTIFIERS) {
-            return '正则规则包含过多无界量词，请简化表达式';
+            return t('sh.im.err.regexTooManyUnbounded');
           }
         }
         if (quant.isBraceUnbounded && groupStack.length > 0) {
-          return '正则规则分组内不允许使用无上限量词，请简化表达式';
+          return t('sh.im.err.regexUnboundedInGroup');
         }
         if (groupStack.length > 0) {
           groupStack[groupStack.length - 1]!.hasQuantifierOrAlt = true;
@@ -350,18 +351,18 @@ export function parseRuleRegex(rule: string): ParsedRuleRegex {
   const pattern = match[1]!;
   const flags = match[2]!;
   if (pattern.length === 0) {
-    return { isRegex: true, ok: false, error: '正则规则不能为空' };
+    return { isRegex: true, ok: false, error: t('sh.im.err.regexEmpty') };
   }
   if (pattern.length > IM_RULE_REGEX_MAX_CHARS) {
-    return { isRegex: true, ok: false, error: `正则规则长度不能超过 ${IM_RULE_REGEX_MAX_CHARS} 个字符` };
+    return { isRegex: true, ok: false, error: t('sh.im.err.regexMaxLen', { max: IM_RULE_REGEX_MAX_CHARS }) };
   }
   const seenFlags = new Set<string>();
   for (const flag of flags) {
     if (!ALLOWED_REGEX_FLAGS.has(flag)) {
-      return { isRegex: true, ok: false, error: `正则标志只支持 i、m、u，不支持 ${flag}` };
+      return { isRegex: true, ok: false, error: t('sh.im.err.regexBadFlag', { flag }) };
     }
     if (seenFlags.has(flag)) {
-      return { isRegex: true, ok: false, error: `正则标志不能重复：${flag}` };
+      return { isRegex: true, ok: false, error: t('sh.im.err.regexDupFlag', { flag }) };
     }
     seenFlags.add(flag);
   }
@@ -373,26 +374,26 @@ export function parseRuleRegex(rule: string): ParsedRuleRegex {
     const regex = new RegExp(pattern, flags);
     return { isRegex: true, ok: true, regex, pattern, flags };
   } catch {
-    return { isRegex: true, ok: false, error: `正则规则语法无效：${trimmed}` };
+    return { isRegex: true, ok: false, error: t('sh.im.err.regexSyntax', { rule: trimmed }) };
   }
 }
 
 export function validateRuleKeywords(raw: unknown): ValidationResult<string[]> {
   if (!Array.isArray(raw)) {
-    return { ok: false, error: '关键词规则必须是字符串数组' };
+    return { ok: false, error: t('sh.im.err.keywordsArray') };
   }
   const result: string[] = [];
   const seen = new Set<string>();
   for (const item of raw) {
     if (typeof item !== 'string') {
-      return { ok: false, error: '关键词规则的每一项都必须是文字' };
+      return { ok: false, error: t('sh.im.err.keywordString') };
     }
     const trimmed = item.trim();
     if (trimmed === '') {
-      return { ok: false, error: '关键词规则不能为空' };
+      return { ok: false, error: t('sh.im.err.keywordEmpty') };
     }
     if (trimmed.length > IM_RULE_KEYWORD_MAX_CHARS) {
-      return { ok: false, error: `单条关键词规则最多 ${IM_RULE_KEYWORD_MAX_CHARS} 个字符` };
+      return { ok: false, error: t('sh.im.err.keywordMaxLen', { max: IM_RULE_KEYWORD_MAX_CHARS }) };
     }
     const parsed = parseRuleRegex(trimmed);
     if (parsed.isRegex && !parsed.ok) {
@@ -404,27 +405,27 @@ export function validateRuleKeywords(raw: unknown): ValidationResult<string[]> {
     }
   }
   if (result.length > IM_RULE_KEYWORDS_MAX) {
-    return { ok: false, error: `关键词规则最多设置 ${IM_RULE_KEYWORDS_MAX} 条` };
+    return { ok: false, error: t('sh.im.err.keywordsMaxCount', { max: IM_RULE_KEYWORDS_MAX }) };
   }
   return { ok: true, value: result };
 }
 
 export function validateAllowedSenders(raw: unknown): ValidationResult<string[]> {
   if (!Array.isArray(raw)) {
-    return { ok: false, error: '允许发言人列表必须是字符串数组' };
+    return { ok: false, error: t('sh.im.err.sendersArray') };
   }
   const result: string[] = [];
   const seen = new Set<string>();
   for (const item of raw) {
     if (typeof item !== 'string') {
-      return { ok: false, error: '允许发言人的每一项都必须是账号文字' };
+      return { ok: false, error: t('sh.im.err.senderString') };
     }
     const trimmed = item.trim();
     if (trimmed === '') {
-      return { ok: false, error: '允许发言人不能为空' };
+      return { ok: false, error: t('sh.im.err.senderEmpty') };
     }
     if (trimmed.length > IM_SENDER_MAX_CHARS) {
-      return { ok: false, error: `发言人账号最多 ${IM_SENDER_MAX_CHARS} 个字符` };
+      return { ok: false, error: t('sh.im.err.senderMaxLen', { max: IM_SENDER_MAX_CHARS }) };
     }
     if (!seen.has(trimmed)) {
       seen.add(trimmed);
@@ -432,21 +433,21 @@ export function validateAllowedSenders(raw: unknown): ValidationResult<string[]>
     }
   }
   if (result.length > IM_ALLOWED_SENDERS_MAX) {
-    return { ok: false, error: `允许发言人最多设置 ${IM_ALLOWED_SENDERS_MAX} 个` };
+    return { ok: false, error: t('sh.im.err.sendersMaxCount', { max: IM_ALLOWED_SENDERS_MAX }) };
   }
   return { ok: true, value: result };
 }
 
 export function validateCooldownSeconds(raw: unknown): ValidationResult<number> {
   if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < IM_COOLDOWN_MIN || raw > IM_COOLDOWN_MAX) {
-    return { ok: false, error: `触发冷却时间必须是 ${IM_COOLDOWN_MIN} 到 ${IM_COOLDOWN_MAX} 之间的整数（秒）` };
+    return { ok: false, error: t('sh.im.err.cooldownRange', { min: IM_COOLDOWN_MIN, max: IM_COOLDOWN_MAX }) };
   }
   return { ok: true, value: raw };
 }
 
 export function validateInlineContextCount(raw: unknown): ValidationResult<number> {
   if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < IM_INLINE_CONTEXT_MIN || raw > IM_INLINE_CONTEXT_MAX) {
-    return { ok: false, error: `附带群上下文条数必须是 ${IM_INLINE_CONTEXT_MIN} 到 ${IM_INLINE_CONTEXT_MAX} 之间的整数` };
+    return { ok: false, error: t('sh.im.err.inlineContextRange', { min: IM_INLINE_CONTEXT_MIN, max: IM_INLINE_CONTEXT_MAX }) };
   }
   return { ok: true, value: raw };
 }

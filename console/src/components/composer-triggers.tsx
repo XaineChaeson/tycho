@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
 import { ChevronDown, ChevronRight, FileText, ListTodo, Sparkles, Terminal, X } from 'lucide-react';
-import { useEffect, useMemo, useState, type KeyboardEvent, type MutableRefObject } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState, type KeyboardEvent, type MutableRefObject } from 'react';
+import { t as translate } from '@shared/i18n.ts';
 import { quotaUsedUp, usageLine } from '@shared/labels.ts';
 import { formatFileSize } from '@/components/project-files';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useI18n } from '@/lib/i18n';
 import { accountsQuery, knowledgeQuery, projectFilesQuery, tasksQuery } from '@/lib/queries';
 import type { Account, AccountsAndMachines } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -41,8 +43,15 @@ export function formatTextWithSnippets(text: string, snippets: readonly PastedSn
   const trimmed = text.trim();
   if (snippets.length === 0) return text;
   const blocks = snippets.map((snippet, index) => {
-    const label = snippets.length > 1 ? `粘贴内容 #${index + 1}` : '粘贴内容';
-    return `[${label}（${snippet.lines} 行 · ${formatFileSize(snippet.bytes)}）]\n\`\`\`\n${snippet.text}\n\`\`\``;
+    const label = snippets.length > 1
+      ? translate('proj.composer.pastedLabelIndexed', { index: index + 1 })
+      : translate('proj.composer.pastedLabelSingle');
+    const header = translate('proj.composer.pastedBlockHeader', {
+      label,
+      lines: snippet.lines,
+      size: formatFileSize(snippet.bytes),
+    });
+    return `${header}\n\`\`\`\n${snippet.text}\n\`\`\``;
   });
   return trimmed ? `${trimmed}\n\n${blocks.join('\n\n')}` : blocks.join('\n\n');
 }
@@ -56,6 +65,7 @@ export function PastedSnippetChips({
   disabled?: boolean;
   onRemove: (id: string) => void;
 }) {
+  const { t } = useI18n();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   if (snippets.length === 0) return null;
   return (
@@ -76,16 +86,20 @@ export function PastedSnippetChips({
               >
                 {open ? <ChevronDown className="size-3.5 text-muted-foreground" /> : <ChevronRight className="size-3.5 text-muted-foreground" />}
                 <FileText className="size-3.5 text-muted-foreground" aria-hidden="true" />
-                <span className="font-medium">{`长文本片段${snippets.length > 1 ? ` #${index + 1}` : ''}`}</span>
+                <span className="font-medium">
+                  {snippets.length > 1
+                    ? t('proj.composer.snippetTitleIndexed', { index: index + 1 })
+                    : t('proj.composer.snippetTitle')}
+                </span>
                 <span className="text-2xs text-muted-foreground tabular-nums">
-                  {`${snippet.lines} 行 · ${formatFileSize(snippet.bytes)}`}
+                  {t('proj.composer.snippetMeta', { lines: snippet.lines, size: formatFileSize(snippet.bytes) })}
                 </span>
               </button>
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                aria-label={`移除长文本片段 ${index + 1}`}
+                aria-label={t('proj.composer.removeSnippetAria', { index: index + 1 })}
                 className="size-5 rounded-md"
                 disabled={disabled}
                 onClick={() => onRemove(snippet.id)}
@@ -102,7 +116,7 @@ export function PastedSnippetChips({
         return (
           <pre className="max-h-36 overflow-auto rounded-md border border-border bg-code p-2 font-mono text-2xs leading-4 whitespace-pre-wrap text-muted-foreground">
             {snippet.text.slice(0, 2000)}
-            {snippet.text.length > 2000 ? '\n…（发送时将包含完整内容）' : ''}
+            {snippet.text.length > 2000 ? `\n${t('proj.composer.snippetTruncated')}` : ''}
           </pre>
         );
       })() : null}
@@ -151,26 +165,33 @@ export function replaceTriggerText(
 
 function accountQuotaStatus(account: Account): string {
   const status = account.status;
-  if (!status) return '可用';
-  if (status.rejected) return '需重新认证';
-  if (status.rest) return '额度歇息中';
+  if (!status) return translate('proj.composer.quotaAvailable');
+  if (status.rejected) return translate('proj.composer.quotaRelogin');
+  if (status.rest) return translate('proj.composer.quotaResting');
   if (status.usage.length > 0) {
     const summary = status.usage.map((item) => usageLine(item)).join(' / ');
-    return quotaUsedUp(status.usage) ? `额度已用完（${summary}）` : summary;
+    return quotaUsedUp(status.usage) ? translate('proj.composer.quotaExhausted', { summary }) : summary;
   }
-  return status.active_runs > 0 ? `在跑 ${status.active_runs}` : '可用';
+  return status.active_runs > 0
+    ? translate('proj.composer.quotaRunning', { count: status.active_runs })
+    : translate('proj.composer.quotaAvailable');
 }
 
 export function formatAccountUsageSummary(data: AccountsAndMachines | undefined): string {
   if (!data || data.accounts.length === 0) {
-    return '请查看当前账号额度与可用状态。';
+    return translate('proj.composer.usageEmpty');
   }
   const parts = data.accounts.map((account) => {
     const state = accountQuotaStatus(account);
-    const queued = account.queued_tasks > 0 ? `，排队 ${account.queued_tasks}` : '';
-    return `${account.name}（${account.executor}：${state}${queued}）`;
+    const queued = account.queued_tasks > 0 ? translate('proj.composer.usageQueuedPart', { count: account.queued_tasks }) : '';
+    return translate('proj.composer.usageAccountPart', {
+      name: account.name,
+      executor: account.executor,
+      state,
+      queued,
+    });
   });
-  return `当前账号额度状态：${parts.join('；')}`;
+  return translate('proj.composer.usageHeader', { summary: parts.join(translate('proj.composer.usageSep')) });
 }
 
 export interface ComposerTriggerItem {
@@ -198,10 +219,10 @@ export interface ComposerTriggerMenuProps {
   className?: string;
 }
 
-const TRIGGER_HEADER: Record<ComposerTriggerKind, string> = {
-  '$': '引用项目技能',
-  '@': '引用文件或任务',
-  '/': '快捷命令',
+const TRIGGER_HEADER_KEYS: Record<ComposerTriggerKind, string> = {
+  '$': 'proj.composer.triggerSkills',
+  '@': 'proj.composer.triggerFilesTasks',
+  '/': 'proj.composer.triggerCommands',
 };
 
 export function ComposerTriggerMenu({
@@ -214,6 +235,7 @@ export function ComposerTriggerMenu({
   onUsageAction,
   className,
 }: ComposerTriggerMenuProps) {
+  const { t } = useI18n();
   const detected = useMemo(
     () => (disabled ? null : detectComposerTrigger(value, caret)),
     [disabled, value, caret],
@@ -270,7 +292,7 @@ export function ComposerTriggerMenu({
           id: `skill:${entry.id}`,
           kind: 'skill',
           label: entry.title,
-          detail: entry.when_to_use || '项目技能',
+          detail: entry.when_to_use || t('proj.composer.detailProjectSkill'),
           insertText: `$${entry.title} `,
         });
       }
@@ -283,7 +305,7 @@ export function ComposerTriggerMenu({
           id: `dirskill:${dirSkill.id}`,
           kind: 'skill',
           label,
-          detail: dirSkill.description || '目录技能',
+          detail: dirSkill.description || t('proj.composer.detailDirSkill'),
           insertText: `$${label} `,
         });
       }
@@ -326,8 +348,8 @@ export function ComposerTriggerMenu({
         kind: 'command',
         label: '/usage',
         detail: accounts.data
-          ? `${accounts.data.accounts.length} 个账号 · 插入实时额度概览`
-          : '插入当前账号额度概览',
+          ? t('proj.composer.cmdUsageDetailCount', { count: accounts.data.accounts.length })
+          : t('proj.composer.cmdUsageDetailDefault'),
         insertText: `${usageSummary} `,
         action: 'usage',
       },
@@ -335,12 +357,12 @@ export function ComposerTriggerMenu({
         id: 'cmd:status',
         kind: 'command',
         label: '/status',
-        detail: '请汇总当前项目进行中与待处理的工作状态',
-        insertText: '请汇总当前项目进行中与待处理的工作状态。',
+        detail: t('proj.composer.cmdStatusDetail'),
+        insertText: t('proj.composer.cmdStatusInsert'),
       },
     ];
     return commands.filter((cmd) => !q || cmd.label.slice(1).toLowerCase().includes(q) || (cmd.detail ?? '').toLowerCase().includes(q));
-  }, [activeTrigger, knowledge.data, projectFiles.data, tasks.data, accounts.data, projectId]);
+  }, [activeTrigger, knowledge.data, projectFiles.data, tasks.data, accounts.data, projectId, t]);
 
   const safeIndex = items.length > 0 ? activeIndex % items.length : 0;
   const isOpen = activeTrigger !== null && items.length > 0;
@@ -358,8 +380,10 @@ export function ComposerTriggerMenu({
     onApply(replaced.text, replaced.caret);
   }
 
-  // Expose keyboard controller synchronously during render so parent textarea onKeyDown always sees fresh state.
-  if (controllerRef) {
+  // Publish keyboard controller at commit time (not during render) and preserve modified
+  // editing shortcuts like Shift+Enter and Shift+Tab.
+  useLayoutEffect(() => {
+    if (!controllerRef) return;
     controllerRef.current = {
       open: isOpen,
       handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): boolean {
@@ -374,7 +398,7 @@ export function ComposerTriggerMenu({
           setActiveIndex((prev) => (prev - 1 + items.length) % items.length);
           return true;
         }
-        if (event.key === 'Enter' || event.key === 'Tab') {
+        if ((event.key === 'Enter' || event.key === 'Tab') && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
           const picked = items[safeIndex];
           if (!picked) return false;
           event.preventDefault();
@@ -389,22 +413,22 @@ export function ComposerTriggerMenu({
         return false;
       },
     };
-  }
+  });
 
   if (!isOpen || !activeTrigger) return null;
 
   return (
     <div
       role="listbox"
-      aria-label={TRIGGER_HEADER[activeTrigger.kind]}
+      aria-label={t(TRIGGER_HEADER_KEYS[activeTrigger.kind])}
       className={cn(
         'absolute right-0 bottom-full left-0 z-30 mb-1.5 overflow-hidden rounded-xl border border-border-strong bg-raised shadow-dialog',
         className,
       )}
     >
       <div className="flex items-center justify-between border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
-        <span>{TRIGGER_HEADER[activeTrigger.kind]}</span>
-        <span>↑↓ 选择 · Enter 插入 · Esc 关闭</span>
+        <span>{t(TRIGGER_HEADER_KEYS[activeTrigger.kind])}</span>
+        <span>{t('proj.composer.triggerNavHint')}</span>
       </div>
       <div className="max-h-56 overflow-y-auto py-1">
         {items.map((item, index) => {
@@ -433,7 +457,13 @@ export function ComposerTriggerMenu({
                 <span className="ml-auto max-w-[55%] truncate text-2xs text-faint">{item.detail}</span>
               ) : null}
               <Badge tone="plain" className="flex-none text-2xs">
-                {item.kind === 'skill' ? '技能' : item.kind === 'file' ? '文件' : item.kind === 'task' ? '任务' : '命令'}
+                {item.kind === 'skill'
+                  ? t('proj.composer.kindSkill')
+                  : item.kind === 'file'
+                    ? t('proj.composer.kindFile')
+                    : item.kind === 'task'
+                      ? t('proj.composer.kindTask')
+                      : t('proj.composer.kindCommand')}
               </Badge>
             </button>
           );

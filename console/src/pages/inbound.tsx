@@ -48,16 +48,16 @@ function matchesSource(fire: TriggerFire, source: InboundSource): boolean {
   return fire.trigger_name === source.name;
 }
 
-function replyModeText(source: InboundSource): string {
+function replyModeText(source: InboundSource, t: ReturnType<typeof useI18n>['t']): string {
   const parts: string[] = [];
-  if (source.push_final) parts.push('推送本回合终稿');
+  if (source.push_final) parts.push(t('set.inbound.replyPushFinal'));
   if (source.broadcast_groups) {
     parts.push(source.broadcast_group_ids?.length
-      ? `同步播报到指定的 ${source.broadcast_group_ids.length} 个绑定群`
-      : '同步播报到目标项目绑定群');
+      ? t('set.inbound.replyBroadcastSelected', { count: source.broadcast_group_ids.length })
+      : t('set.inbound.replyBroadcastAll'));
   }
-  if (source.result_reply) parts.push('允许来源回读答复');
-  return parts.length > 0 ? parts.join('；') : '仅受理并交给负责人';
+  if (source.result_reply) parts.push(t('set.inbound.replyResultReply'));
+  return parts.length > 0 ? parts.join(t('set.semiSep')) : t('set.inbound.replyAcceptOnly');
 }
 
 function SourceForm({ id, draft, kind, made, projects, groups = [], busy, error, onChange, onSave }: {
@@ -73,6 +73,7 @@ function SourceForm({ id, draft, kind, made, projects, groups = [], busy, error,
   onChange: (draft: InboundDraft) => void;
   onSave: () => void;
 }) {
+  const { t } = useI18n();
   const set = (patch: Partial<InboundDraft>) => onChange({ ...draft, ...patch });
   const about = kind.find((each) => each.kind === draft.kind)?.about ?? '';
   const matchingGroups = groups.filter((group) => !group.project_id || draft.projectIds.includes(group.project_id));
@@ -106,21 +107,21 @@ function SourceForm({ id, draft, kind, made, projects, groups = [], busy, error,
       : [...draft.broadcastGroupIds, groupId],
   });
   const projectHint = draft.kind === 'standard-webhooks'
-    ? 'Standard Webhooks 协议签名不含项目头，每个来源只放行 1 个项目（切换为该种类时会自动保留首个已选项目）。'
-    : '至少一个。tycho-v1 在只选 1 个项目时自动路由（多项目时按签名中的项目编号头指定）；GitHub 按项目配的仓库对上。只有这里勾了的项目收得到。';
+    ? t('set.inbound.projectHintStandardWebhooks')
+    : t('set.inbound.projectHintMulti');
   return (
     <form id={id} className="grid gap-4" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
-      <Field label="名字" hint="给谁投的、投的是什么，写给主人和负责人看。">
-        <Input aria-label="入站来源的名字" placeholder="例如：构建服务器的部署通知" value={draft.name} disabled={busy} onChange={(event) => set({ name: event.target.value })} />
+      <Field label={t('set.inbound.fieldName')} hint={t('set.inbound.fieldNameHint')}>
+        <Input aria-label={t('set.inbound.fieldNameAria')} placeholder={t('set.inbound.fieldNamePlaceholder')} value={draft.name} disabled={busy} onChange={(event) => set({ name: event.target.value })} />
       </Field>
-      <Field label="翻译器种类" hint={about}>
-        <Select aria-label="翻译器种类" value={draft.kind} disabled={busy} onChange={(event) => changeKind(event.target.value as InboundKind)}>
+      <Field label={t('set.inbound.fieldKind')} hint={about}>
+        <Select aria-label={t('set.inbound.fieldKind')} value={draft.kind} disabled={busy} onChange={(event) => changeKind(event.target.value as InboundKind)}>
           {kind.map((each) => <Option key={each.kind} value={each.kind}>{each.label}</Option>)}
         </Select>
       </Field>
-      <Field label="放行的项目" hint={projectHint}>
+      <Field label={t('set.inbound.fieldProjects')} hint={projectHint}>
         <div className="grid gap-1">
-          {projects.length === 0 ? <Note className="text-xs">还没有项目：先在项目列表里建一个。</Note> : null}
+          {projects.length === 0 ? <Note className="text-xs">{t('set.inbound.noProjectsYet')}</Note> : null}
           {projects.map((project) => (
             <Choice key={project.id} className="min-h-9">
               <Checkbox aria-label={project.name} checked={draft.projectIds.includes(project.id)} disabled={busy} onChange={() => toggle(project.id)} />
@@ -128,32 +129,32 @@ function SourceForm({ id, draft, kind, made, projects, groups = [], busy, error,
               {draft.kind !== 'github'
                 ? <Mono className="ml-auto text-xs text-muted-foreground">{project.id}</Mono>
                 : project.repos.length > 0
-                  ? <Mono className="ml-auto text-xs text-muted-foreground">{project.repos.join('、')}</Mono>
-                  : <span className="ml-auto text-xs text-waiting-foreground">没配仓库</span>}
+                  ? <Mono className="ml-auto text-xs text-muted-foreground">{project.repos.join(t('set.listSep'))}</Mono>
+                  : <span className="ml-auto text-xs text-waiting-foreground">{t('set.inbound.noRepoConfigured')}</span>}
             </Choice>
           ))}
         </div>
       </Field>
-      <Field label="说明（可选）" hint="写给负责人看的：这是谁、它的请求一般怎么处理。会随每条消息一起交给负责人，是资料，不是指令。">
-        <Textarea aria-label="来源说明" rows={3} className="max-h-[40vh] overflow-y-auto" value={draft.note} disabled={busy} onChange={(event) => set({ note: event.target.value })} />
+      <Field label={t('set.inbound.fieldNote')} hint={t('set.inbound.fieldNoteHint')}>
+        <Textarea aria-label={t('set.inbound.fieldNoteAria')} rows={3} className="max-h-[40vh] overflow-y-auto" value={draft.note} disabled={busy} onChange={(event) => set({ note: event.target.value })} />
       </Field>
       <Choice className="items-start">
-        <Switch aria-label="推送本回合终稿" className="mt-1.5" checked={draft.pushFinal} disabled={busy} onCheckedChange={(on) => set({ pushFinal: on })} />
-        <span className="py-1.5">推送本回合终稿：负责人处理完这条消息后，把它这一回合的最终回复推给你</span>
+        <Switch aria-label={t('set.inbound.replyPushFinal')} className="mt-1.5" checked={draft.pushFinal} disabled={busy} onCheckedChange={(on) => set({ pushFinal: on })} />
+        <span className="py-1.5">{t('set.inbound.fieldPushFinalLabel')}</span>
       </Choice>
       <div className="grid gap-2">
         <Choice className="items-start">
-          <Switch aria-label="同步播报到绑定群" className="mt-1.5" checked={draft.broadcastGroups} disabled={busy} onCheckedChange={(on) => set({ broadcastGroups: on })} />
+          <Switch aria-label={t('set.inbound.fieldBroadcastLabel')} className="mt-1.5" checked={draft.broadcastGroups} disabled={busy} onCheckedChange={(on) => set({ broadcastGroups: on })} />
           <span className="py-1.5">
-            同步播报到绑定群
+            {t('set.inbound.fieldBroadcastLabel')}
             <span className="mt-0.5 block text-xs text-muted-foreground">
-              开启后，负责人处理完告警/事件会把结论同步播报到目标项目已开启播报的绑定群（默认广播到全部符合条件的群，也可在下方限定特定群）
+              {t('set.inbound.fieldBroadcastHint')}
             </span>
           </span>
         </Choice>
         {draft.broadcastGroups && matchingGroups.length > 0 ? (
           <div className="ml-11 grid gap-1 rounded-lg border border-border bg-muted/60 p-3">
-            <span className="mb-0.5 text-xs font-medium text-muted-foreground">限定播报群（全不选则广播到全部符合条件的绑定群）</span>
+            <span className="mb-0.5 text-xs font-medium text-muted-foreground">{t('set.inbound.fieldBroadcastGroupsHint')}</span>
             {matchingGroups.map((group) => (
               <Choice key={group.id} className="min-h-8">
                 <Checkbox
@@ -163,9 +164,9 @@ function SourceForm({ id, draft, kind, made, projects, groups = [], busy, error,
                   onChange={() => toggleGroup(group.id)}
                 />
                 <span className="min-w-0 truncate text-sm">{group.chat_name || group.chat_id}</span>
-                <Badge tone="plain" className="text-2xs">{group.channel === 'wecom' ? '企业微信' : '微信'}</Badge>
+                <Badge tone="plain" className="text-2xs">{group.channel === 'wecom' ? t('set.im.channel.wecom') : t('set.im.channel.weixin')}</Badge>
                 {(!group.enabled || !group.notify_events) ? (
-                  <Badge tone="waiting" className="ml-auto text-2xs">{!group.enabled ? '已停用' : '未开播报'}</Badge>
+                  <Badge tone="waiting" className="ml-auto text-2xs">{!group.enabled ? t('common.disabled') : t('set.inbound.groupBroadcastOff')}</Badge>
                 ) : null}
               </Choice>
             ))}
@@ -174,11 +175,11 @@ function SourceForm({ id, draft, kind, made, projects, groups = [], busy, error,
       </div>
       {draft.kind === 'tycho-v1' ? (
         <Choice className="items-start">
-          <Switch aria-label="允许来源回读答复" className="mt-1.5" checked={draft.resultReply} disabled={busy} onCheckedChange={(on) => set({ resultReply: on })} />
-          <span className="py-1.5">允许来源回读答复。新事件可以凭原回执读取负责人专门提供的答复。</span>
+          <Switch aria-label={t('set.inbound.replyResultReply')} className="mt-1.5" checked={draft.resultReply} disabled={busy} onCheckedChange={(on) => set({ resultReply: on })} />
+          <span className="py-1.5">{t('set.inbound.fieldResultReplyLabel')}</span>
         </Choice>
       ) : null}
-      {!made ? null : <Note className="text-xs">名字、种类、放行的项目和说明改了之后，已经在排队或处理过的消息不改，新的请求开始用新的。</Note>}
+      {!made ? null : <Note className="text-xs">{t('set.inbound.editAppliesToNewNote')}</Note>}
       {error ? <Problem role="alert">{error}</Problem> : null}
     </form>
   );
@@ -190,22 +191,23 @@ function SourceRailItem({ source, active, buttonRef, onSelect }: {
   buttonRef?: (node: HTMLButtonElement | null) => void;
   onSelect: () => void;
 }) {
+  const { t } = useI18n();
   const tone = sourceDotTone(source);
   const statusNote = !source.enabled
-    ? '已停用'
+    ? t('common.disabled')
     : source.problem
-      ? '异常'
+      ? t('set.inbound.statusProblem')
       : source.rejected
-        ? `拒收 ${source.rejected.count}`
+        ? t('set.inbound.statusRejected', { count: source.rejected.count })
         : !source.ready
-          ? '未领密钥'
+          ? t('set.inbound.statusNoKey')
           : null;
   return (
     <li>
       <button
         ref={buttonRef}
         type="button"
-        aria-label={`选择入站来源 ${source.name}`}
+        aria-label={t('set.inbound.selectSourceAria', { name: source.name })}
         aria-current={active ? 'true' : undefined}
         onClick={onSelect}
         className={cn(
@@ -219,8 +221,8 @@ function SourceRailItem({ source, active, buttonRef, onSelect }: {
           <Badge tone="plain" className="text-2xs">{shortKindLabel(source)}</Badge>
         </div>
         <div className="flex items-center gap-1.5 pl-4 text-xs text-muted-foreground">
-          <span className="tabular-nums">{`${source.project_ids.length} 个项目`}</span>
-          {source.broadcast_groups ? <Badge tone="plain" className="text-2xs">同步播报群</Badge> : null}
+          <span className="tabular-nums">{t('set.inbound.projectCount', { count: source.project_ids.length })}</span>
+          {source.broadcast_groups ? <Badge tone="plain" className="text-2xs">{t('set.inbound.badgeBroadcastGroups')}</Badge> : null}
           {statusNote ? (
             <>
               <span aria-hidden="true" className="text-faint">·</span>
@@ -250,96 +252,97 @@ function SourceDetail({ source, page, issued, busy, onEdit, onToggle, onDelete, 
   onIssue: () => void;
   onDismiss: () => void;
 }) {
+  const { t } = useI18n();
   const projects = source.project_ids.flatMap((id) => page.projects.filter((project) => project.id === id));
   const missing = projects.length !== source.project_ids.length;
   const address = inboundAddress(source.path, page.reach.public_url);
   return (
-    <Card aria-label={`入站来源 ${source.name}`} className="p-5">
+    <Card aria-label={t('set.inbound.sourceCardAria', { name: source.name })} className="p-5">
       <header className="flex flex-wrap items-start gap-x-3 gap-y-2 border-b border-border/80 pb-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Dot tone={sourceDotTone(source)} pulse={false} />
             <h2 className="min-w-0 text-base font-semibold wrap-anywhere">{source.name}</h2>
             <Badge tone="plain">{source.kind_label}</Badge>
-            <Badge tone={source.enabled ? 'success' : 'ended'}>{source.enabled ? '启用' : '已停用'}</Badge>
-            {source.result_reply ? <Badge tone="plain">可回读答复</Badge> : null}
-            {source.push_final ? <Badge tone="plain">推送终稿</Badge> : null}
-            {source.broadcast_groups ? <Badge tone="plain">同步播报群</Badge> : null}
+            <Badge tone={source.enabled ? 'success' : 'ended'}>{source.enabled ? t('set.inbound.badgeEnabled') : t('common.disabled')}</Badge>
+            {source.result_reply ? <Badge tone="plain">{t('set.inbound.badgeResultReply')}</Badge> : null}
+            {source.push_final ? <Badge tone="plain">{t('set.inbound.badgePushFinal')}</Badge> : null}
+            {source.broadcast_groups ? <Badge tone="plain">{t('set.inbound.badgeBroadcastGroups')}</Badge> : null}
           </div>
           {source.note ? (
             <p className="mt-2 border-l-2 border-border pl-2.5 text-sm text-muted-foreground wrap-anywhere">{source.note}</p>
           ) : null}
         </div>
         <div className="flex flex-none items-center gap-0.5">
-          <Button size="sm" variant="ghost" disabled={busy} onClick={onEdit}>修改</Button>
-          <Button size="sm" variant="ghost" disabled={busy} onClick={onToggle}>{source.enabled ? '停用' : '启用'}</Button>
-          <Button size="sm" variant="danger" disabled={busy} onClick={onDelete}>删除</Button>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={onEdit}>{t('common.edit')}</Button>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={onToggle}>{source.enabled ? t('set.inbound.disableBtn') : t('set.inbound.enableBtn')}</Button>
+          <Button size="sm" variant="danger" disabled={busy} onClick={onDelete}>{t('common.delete')}</Button>
         </div>
       </header>
 
       {source.problem ? (
         <Callout tone="failed" role="alert" className="mt-4 text-xs">
-          {`出了问题，已推给你：${source.problem.text}`}（<Time at={source.problem.since} prefix="从 " />）
+          {t('set.inbound.problemBanner', { text: source.problem.text })}{t('set.parenOpen')}<Time at={source.problem.since} prefix={t('set.inbound.sincePrefix')} />{t('set.parenClose')}
         </Callout>
       ) : null}
       {source.rejected ? (
         <Callout tone="waiting" className="mt-3 text-xs">
-          <span className="text-destructive">{`拒收 ${source.rejected.count} 次，最近一次：${source.rejected.text}`}（<Time at={source.rejected.at} />）</span>
+          <span className="text-destructive">{t('set.inbound.rejectedBanner', { count: source.rejected.count, text: source.rejected.text })}{t('set.parenOpen')}<Time at={source.rejected.at} />{t('set.parenClose')}</span>
         </Callout>
       ) : null}
 
       <div className="mt-4">
         <Facts className="gap-y-2.5">
-          <Fact label="投递地址">
+          <Fact label={t('set.inbound.factAddress')}>
             <span className="inline-flex flex-wrap items-center gap-1">
               <Copyable value={address} />
-              <span className="text-xs text-muted-foreground">（POST）</span>
+              <span className="text-xs text-muted-foreground">{t('set.inbound.postMethod')}</span>
             </span>
           </Fact>
-          <Fact label="放行的项目">
+          <Fact label={t('set.inbound.fieldProjects')}>
             <span className="text-sm wrap-anywhere">
               {projects.length === 0 && !missing
-                ? '还没有放行项目'
-                : `${projects.map((project) => projectLine(project, source.kind)).join('、')}${missing ? `${projects.length ? '、' : ''}（有的项目已经不在了）` : ''}`}
+                ? t('set.inbound.noAllowedProjects')
+                : `${projects.map((project) => projectLine(project, source.kind)).join(t('set.listSep'))}${missing ? `${projects.length ? t('set.listSep') : ''}${t('set.inbound.missingProjectsNote')}` : ''}`}
             </span>
           </Fact>
-          <Fact label="路由规则">
+          <Fact label={t('set.inbound.factRouting')}>
             <span className="text-xs text-muted-foreground">
               {source.kind === 'github'
-                ? '按项目配置的仓库地址匹配'
+                ? t('set.inbound.routingGithub')
                 : source.kind === 'standard-webhooks'
-                  ? '单项目直达（Standard Webhooks v1 签名不含项目头）'
-                  : '由调用方在签名头中指定项目编号'}
+                  ? t('set.inbound.routingStandardWebhooks')
+                  : t('set.inbound.routingTycho')}
             </span>
           </Fact>
-          <Fact label="结果回传">
-            <span className="text-xs text-muted-foreground">{replyModeText(source)}</span>
+          <Fact label={t('set.inbound.factReply')}>
+            <span className="text-xs text-muted-foreground">{replyModeText(source, t)}</span>
           </Fact>
         </Facts>
       </div>
 
-      <section aria-label="签名密钥" className="mt-5 grid gap-2 border-t border-border/80 pt-4 text-xs">
-        <h3 className="text-xs font-semibold text-muted-foreground">签名密钥</h3>
+      <section aria-label={t('set.inbound.keysTitle')} className="mt-5 grid gap-2 border-t border-border/80 pt-4 text-xs">
+        <h3 className="text-xs font-semibold text-muted-foreground">{t('set.inbound.keysTitle')}</h3>
         {source.keys.map((key) => (
           <p key={key.id} className="font-mono text-muted-foreground wrap-anywhere">
             {keyLine(key)}{key.retires_at ? <> <Time at={key.retires_at} /></> : null}
           </p>
         ))}
-        {!source.ready ? <p className="text-destructive">还没领取密钥：领取之后外面才投得进来</p> : null}
+        {!source.ready ? <p className="text-destructive">{t('set.inbound.noKeyHint')}</p> : null}
         {issued ? (
-          <Callout tone="waiting" role="status" aria-label="新密钥" className="mt-1 grid gap-1.5 text-xs">
-            <p>新密钥只显示这一次，关掉之后再也看不到，请现在交给调用方：</p>
+          <Callout tone="waiting" role="status" aria-label={t('set.inbound.newKeyAria')} className="mt-1 grid gap-1.5 text-xs">
+            <p>{t('set.inbound.newKeyNotice')}</p>
             <div className="flex items-center gap-1.5 rounded-sm bg-background px-2 py-1">
               <code className="min-w-0 flex-1 font-mono break-all select-all">{issued.secret}</code>
-              <CopyButton value={issued.secret} label="复制密钥" />
+              <CopyButton value={issued.secret} label={t('set.inbound.copyKeyLabel')} />
             </div>
             <p className="text-muted-foreground">{source.kind === 'github' ? githubSigningText() : source.kind === 'standard-webhooks' ? standardWebhooksSigningText() : tychoSigningText()}</p>
-            <div><Button size="sm" onClick={onDismiss}>我已保存，关掉</Button></div>
+            <div><Button size="sm" onClick={onDismiss}>{t('set.inbound.dismissKeyBtn')}</Button></div>
           </Callout>
         ) : null}
         <div className="flex flex-wrap items-center gap-2 pt-0.5">
-          <Button size="sm" disabled={busy} onClick={onIssue}>{source.ready ? '换密钥' : '领取密钥'}</Button>
-          {source.ready ? <span className="text-muted-foreground">换了之后，旧密钥在过渡期内还能用</span> : null}
+          <Button size="sm" disabled={busy} onClick={onIssue}>{source.ready ? t('set.inbound.rotateKeyBtn') : t('set.inbound.issueKeyBtn')}</Button>
+          {source.ready ? <span className="text-muted-foreground">{t('set.inbound.rotateKeyHint')}</span> : null}
         </div>
       </section>
     </Card>
@@ -351,12 +354,13 @@ function RecentDeliveries({ fires, projects, emptyText }: {
   projects: InboundPage['projects'];
   emptyText: string;
 }) {
+  const { t } = useI18n();
   if (fires.length === 0) {
     return <Note className="py-3 text-xs">{emptyText}</Note>;
   }
   return (
     <Rows>
-      <ul aria-label="最近的受理记录" className="divide-y divide-border">
+      <ul aria-label={t('set.inbound.recentTitle')} className="divide-y divide-border">
         {fires.slice(0, RECENT_SHOWN).map((fire) => (
           <li key={fire.id} className="flex flex-wrap items-baseline gap-x-3 px-3.5 py-2.5 text-sm">
             <Time at={fire.created_at} className="w-24 flex-none text-xs text-faint" />
@@ -365,7 +369,7 @@ function RecentDeliveries({ fires, projects, emptyText }: {
             <span className="ml-auto text-xs text-muted-foreground">{fireLine(fire)}</span>
             {fire.public_reply ? (
               <details className="mt-1 w-full text-xs text-muted-foreground">
-                <summary className="cursor-pointer">已向来源发布的答复</summary>
+                <summary className="cursor-pointer">{t('set.inbound.publishedReply')}</summary>
                 <p className="mt-1 whitespace-pre-wrap wrap-anywhere">{fire.public_reply}</p>
               </details>
             ) : null}
@@ -377,7 +381,7 @@ function RecentDeliveries({ fires, projects, emptyText }: {
 }
 
 export function InboundPage() {
-  const { t, bi } = useI18n();
+  const { t } = useI18n();
   const query = useQuery(inboundQuery);
   const { data, error: unread, isPending } = query;
   const client = useQueryClient();
@@ -456,17 +460,17 @@ export function InboundPage() {
       title={t('inbound.title')}
       width="wide"
       loading={isPending}
-      failure={unread ? bi(`读不到入站来源：${unread.message}`, `Failed to load inbound sources: ${unread.message}`) : null}
-      actions={<Button variant="primary" disabled={busy || !data} onClick={begin}><Plus />{bi('新建来源', 'New source')}</Button>}
+      failure={unread ? t('set.inbound.loadFailed', { reason: unread.message }) : null}
+      actions={<Button variant="primary" disabled={busy || !data} onClick={begin}><Plus />{t('set.inbound.newSourceBtn')}</Button>}
     >
-      <PageLead>{bi('外部系统按它们自己的规则，把一次次的请求投到这里；每个来源一个地址、一把可换的密钥和一组放行的项目。收到的事件会作为资料交给对应项目的负责人，做什么由负责人定。', 'External systems deliver webhook events here. Each source has a dedicated URL, rotating key, and allowed projects.')}</PageLead>
+      <PageLead>{t('set.inbound.pageLead')}</PageLead>
       {data ? (
         <>
           <Callout tone={data.reach.reach === 'ready' ? 'plain' : 'failed'} className="mb-5">
             <p>{data.reach.reach_text}</p>
             {data.reach.public_url ? (
               <p className="mt-1 text-muted-foreground wrap-anywhere">
-                对外地址：<Copyable value={data.reach.public_url} />
+                {t('set.inbound.publicUrlLabel')}<Copyable value={data.reach.public_url} />
               </p>
             ) : null}
           </Callout>
@@ -474,14 +478,14 @@ export function InboundPage() {
           {sources.length > 0 && selectedSource ? (
             <div className="grid grid-cols-1 items-start gap-5 shell:grid-cols-[260px_minmax(0,1fr)] wide:grid-cols-[296px_minmax(0,1fr)]">
               <aside
-                aria-label="入站来源列表"
+                aria-label={t('set.inbound.railAria')}
                 className="flex flex-col overflow-hidden rounded-xl border border-border bg-raised shadow-card shell:sticky shell:top-4 shell:max-h-[calc(100dvh-9rem)]"
               >
                 <div className="flex items-center justify-between gap-2 border-b border-border px-3.5 py-2.5">
-                  <span className="text-xs font-semibold text-muted-foreground">全部来源</span>
+                  <span className="text-xs font-semibold text-muted-foreground">{t('set.inbound.allSources')}</span>
                   <span className="rounded-full bg-hover px-1.5 text-xs leading-[18px] font-medium text-muted-foreground tabular-nums">{sources.length}</span>
                 </div>
-                <ul aria-label="入站来源" className="min-h-0 flex-1 divide-y divide-border/70 overflow-y-auto" onKeyDown={handleRailKeyDown}>
+                <ul aria-label={t('inbound.title')} className="min-h-0 flex-1 divide-y divide-border/70 overflow-y-auto" onKeyDown={handleRailKeyDown}>
                   {sources.map((source) => (
                     <SourceRailItem
                       key={source.id}
@@ -516,14 +520,14 @@ export function InboundPage() {
                   <SectionTitle
                     count={shownRecent.length}
                     action={data.recent.length > 0 ? (
-                      <div role="group" aria-label="受理记录范围" className="flex items-center gap-1">
+                      <div role="group" aria-label={t('set.inbound.recentScopeAria')} className="flex items-center gap-1">
                         <Button
                           size="sm"
                           variant={recentScope === 'selected' ? 'primary' : 'ghost'}
                           className="h-7 px-2 text-xs"
                           onClick={() => setRecentScope('selected')}
                         >
-                          {`当前来源 ${selectedRecent.length}`}
+                          {t('set.inbound.scopeSelected', { count: selectedRecent.length })}
                         </Button>
                         <Button
                           size="sm"
@@ -531,31 +535,31 @@ export function InboundPage() {
                           className="h-7 px-2 text-xs"
                           onClick={() => setRecentScope('all')}
                         >
-                          {`全部来源 ${data.recent.length}`}
+                          {t('set.inbound.scopeAll', { count: data.recent.length })}
                         </Button>
                       </div>
                     ) : undefined}
                   >
-                    最近的受理记录
+                    {t('set.inbound.recentTitle')}
                   </SectionTitle>
                   <RecentDeliveries
                     fires={shownRecent}
                     projects={data.projects}
                     emptyText={recentScope === 'selected' && data.recent.length > 0
-                      ? '这个来源还没有最近的受理记录；可以切到“全部来源”查看其他记录。'
-                      : '还没有受理记录。外部系统把请求投进来之后，受理和投递结果会列在这里。'}
+                      ? t('set.inbound.recentEmptySelected')
+                      : t('set.inbound.recentEmptyAll')}
                   />
                 </Card>
               </div>
             </div>
           ) : (
             <>
-              <Empty icon={<Radio />} title="还没有入站来源">GitHub 的仓库通知、别的项目的调度器、n8n 之类，各建一个来源：一个地址、一把密钥，放行要投的项目。</Empty>
+              <Empty icon={<Radio />} title={t('set.inbound.emptyTitle')}>{t('set.inbound.emptyDesc')}</Empty>
               {!editing && !confirming && error ? <Problem role="alert" className="mt-3">{error}</Problem> : null}
               {data.recent.length ? (
                 <Card className="mt-6 p-5">
-                  <SectionTitle count={data.recent.length}>最近的受理记录</SectionTitle>
-                  <RecentDeliveries fires={data.recent} projects={data.projects} emptyText="还没有受理记录。" />
+                  <SectionTitle count={data.recent.length}>{t('set.inbound.recentTitle')}</SectionTitle>
+                  <RecentDeliveries fires={data.recent} projects={data.projects} emptyText={t('set.inbound.recentEmptyShort')} />
                 </Card>
               ) : null}
             </>
@@ -564,11 +568,11 @@ export function InboundPage() {
           <Sheet open={editing !== null} onOpenChange={(open) => { if (!open && !busy) { setEditing(null); setError(null); } }}>
             {editing && data ? (
               <SheetContent
-                title={editing.id === null ? '新建入站来源' : '修改入站来源'}
+                title={editing.id === null ? t('set.inbound.sheetTitleCreate') : t('set.inbound.sheetTitleEdit')}
                 footer={(
                   <>
-                    <Button type="submit" form="inbound-form" variant="primary" disabled={busy}>{busy ? '保存中' : '保存来源'}</Button>
-                    <Button variant="ghost" disabled={busy} onClick={() => { setEditing(null); setError(null); }}>取消</Button>
+                    <Button type="submit" form="inbound-form" variant="primary" disabled={busy}>{busy ? t('set.saving') : t('set.inbound.saveSourceBtn')}</Button>
+                    <Button variant="ghost" disabled={busy} onClick={() => { setEditing(null); setError(null); }}>{t('common.cancel')}</Button>
                   </>
                 )}
               >
@@ -589,9 +593,9 @@ export function InboundPage() {
           </Sheet>
           <Confirm
             open={confirming !== null}
-            title={`删除入站来源 ${confirming?.name ?? ''}？`}
-            description="删掉以后它的地址和密钥都不再接收，已经受理的记录留着。"
-            confirm={`确认删除 ${confirming?.name ?? ''}`}
+            title={t('set.inbound.deleteConfirmTitle', { name: confirming?.name ?? '' })}
+            description={t('set.inbound.deleteConfirmDesc')}
+            confirm={t('set.inbound.deleteConfirmBtn', { name: confirming?.name ?? '' })}
             busy={busy}
             error={confirming ? error : null}
             onConfirm={() => { if (confirming) void act(() => del(`/api/inbound/${encodeURIComponent(confirming.id)}`)).then((res) => { if (res.ok) setConfirming(null); }); }}

@@ -15,11 +15,9 @@ import { Input, Textarea } from '@/components/ui/input';
 import { Segmented } from '@/components/ui/segmented';
 import { useMounted } from '@/hooks/use-mounted';
 import { api, messageOf, post } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { createRequestId } from '@/lib/ids';
 import { KNOWLEDGE, PAGE } from '@/lib/queries';
-
-const KIND_OPTIONS = KNOWLEDGE_KINDS.map((value) => ({ value, label: KIND_LABELS[value] }));
-const LOADING_OPTIONS = LOADINGS.map((value) => ({ value, label: LOADING_LABELS[value] }));
 
 interface EditableProposal {
   kind: KnowledgeKind;
@@ -60,16 +58,19 @@ function editableFromDraft(draft: KnowledgeProposalDraft, projectId: string | nu
   };
 }
 
-function submittedMessage(state: ProposalState): string {
-  if (state === 'published') return '已提交至知识库并生效，';
-  if (state === 'gating' || state === 'awaiting_owner') return '已提交至知识库审批队列，';
-  return '已提交至知识库，';
+function submittedMessageKey(state: ProposalState): string {
+  if (state === 'published') return 'tsk.facts.submittedPublished';
+  if (state === 'gating' || state === 'awaiting_owner') return 'tsk.facts.submittedQueue';
+  return 'tsk.facts.submittedGeneric';
 }
 
 export function RunFactsCard({ taskId, projectId }: { taskId: string; projectId: string | null }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const mounted = useMounted();
   const sending = useRef(false);
+  const kindOptions = KNOWLEDGE_KINDS.map((value) => ({ value, label: KIND_LABELS[value] }));
+  const loadingOptions = LOADINGS.map((value) => ({ value, label: LOADING_LABELS[value] }));
 
   const query = useQuery({
     queryKey: [PAGE, 'task-facts', taskId],
@@ -98,7 +99,9 @@ export function RunFactsCard({ taskId, projectId }: { taskId: string; projectId:
   if (!facts.noteworthy) {
     return (
       <Note className="text-xs">
-        {`执行病历：有 ${incompleteRuns} 轮执行事件未完整读取${facts.coverage?.reasons.length ? `（${facts.coverage.reasons.join('；')}）` : ''}，当前仅基于已读到的记录未发现异常。`}
+        {facts.coverage?.reasons.length
+          ? t('tsk.facts.incompleteNoteWithReasons', { count: incompleteRuns, reasons: facts.coverage.reasons.join(t('tsk.facts.reasonSep')) })
+          : t('tsk.facts.incompleteNote', { count: incompleteRuns })}
       </Note>
     );
   }
@@ -161,17 +164,17 @@ export function RunFactsCard({ taskId, projectId }: { taskId: string; projectId:
   }
 
   return (
-    <Card aria-label="执行病历" className="grid gap-3">
+    <Card aria-label={t('tsk.facts.title')} className="grid gap-3">
       <SectionTitle
         count={facts.analyzed_runs}
         className="mb-0"
-        action={<Badge tone="waiting">值得复盘</Badge>}
+        action={<Badge tone="waiting">{t('tsk.facts.noteworthyBadge')}</Badge>}
       >
-        执行病历
+        {t('tsk.facts.title')}
       </SectionTitle>
 
       {facts.noteworthy_reasons.length > 0 ? (
-        <ul aria-label="触发原因" className="flex flex-wrap gap-1.5">
+        <ul aria-label={t('tsk.facts.reasonsLabel')} className="flex flex-wrap gap-1.5">
           {facts.noteworthy_reasons.map((reason, index) => (
             <li key={index}>
               <Badge tone="plain" className="whitespace-normal">{reason}</Badge>
@@ -181,30 +184,30 @@ export function RunFactsCard({ taskId, projectId }: { taskId: string; projectId:
       ) : null}
 
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground tabular-nums">
-        <span>{`已分析 ${facts.analyzed_runs} 轮`}</span>
-        {incompleteRuns > 0 ? <span>{`不完整 ${incompleteRuns} 轮`}</span> : null}
-        {facts.failed_rounds > 0 ? <span>{`失败 ${facts.failed_rounds} 轮`}</span> : null}
-        {reworkRejectCount > 0 ? <span>{`打回/返工 ${reworkRejectCount} 次`}</span> : null}
-        {facts.escalations > 0 ? <span>{`升档 ${facts.escalations} 次`}</span> : null}
-        {facts.tool_repeats.length > 0 ? <span>{`工具异常 ${facts.tool_repeats.length} 项`}</span> : null}
+        <span>{t('tsk.facts.analyzedRounds', { count: facts.analyzed_runs })}</span>
+        {incompleteRuns > 0 ? <span>{t('tsk.facts.incompleteRounds', { count: incompleteRuns })}</span> : null}
+        {facts.failed_rounds > 0 ? <span>{t('tsk.facts.failedRounds', { count: facts.failed_rounds })}</span> : null}
+        {reworkRejectCount > 0 ? <span>{t('tsk.facts.reworkRejects', { count: reworkRejectCount })}</span> : null}
+        {facts.escalations > 0 ? <span>{t('tsk.facts.escalations', { count: facts.escalations })}</span> : null}
+        {facts.tool_repeats.length > 0 ? <span>{t('tsk.facts.toolAnomalies', { count: facts.tool_repeats.length })}</span> : null}
       </div>
 
       {incompleteRuns > 0 && facts.coverage?.reasons.length ? (
-        <Note className="text-xs">{`覆盖说明：${facts.coverage.reasons.join('；')}`}</Note>
+        <Note className="text-xs">{t('tsk.facts.coverageNote', { reasons: facts.coverage.reasons.join(t('tsk.facts.reasonSep')) })}</Note>
       ) : null}
 
       {facts.tool_repeats.length > 0 ? (
         <div className="grid gap-1 border-t border-border pt-2.5">
-          <p className="text-xs font-medium text-muted-foreground">工具重复与连续失败</p>
+          <p className="text-xs font-medium text-muted-foreground">{t('tsk.facts.toolRepeatsHeading')}</p>
           <ul className="grid gap-1 text-xs">
             {facts.tool_repeats.slice(0, 5).map((item, index) => (
               <li key={`${item.run_id}:${item.name}:${index}`} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 wrap-anywhere">
                 <Mono>{item.name}</Mono>
                 <span className="min-w-0 flex-1 text-foreground">{item.normalized_title}</span>
                 <span className="text-muted-foreground tabular-nums">
-                  {`执行 ${item.count} 次`}
-                  {item.error_count > 0 ? ` · 失败 ${item.error_count} 次` : ''}
-                  {item.consecutive_errors >= 2 ? ` · 连败 ${item.consecutive_errors} 次` : ''}
+                  {t('tsk.facts.execCount', { count: item.count })}
+                  {item.error_count > 0 ? t('tsk.facts.failCountSuffix', { count: item.error_count }) : ''}
+                  {item.consecutive_errors >= 2 ? t('tsk.facts.consecutiveFailSuffix', { count: item.consecutive_errors }) : ''}
                 </span>
               </li>
             ))}
@@ -214,7 +217,7 @@ export function RunFactsCard({ taskId, projectId }: { taskId: string; projectId:
 
       {facts.error_facts.length > 0 ? (
         <div className="grid gap-1 border-t border-border pt-2.5">
-          <p className="text-xs font-medium text-muted-foreground">去重后的报错特征</p>
+          <p className="text-xs font-medium text-muted-foreground">{t('tsk.facts.errorFactsHeading')}</p>
           <ul className="grid gap-1.5 text-xs">
             {facts.error_facts.slice(0, 5).map((item) => (
               <li key={item.signature} className="grid gap-0.5 wrap-anywhere">
@@ -223,7 +226,7 @@ export function RunFactsCard({ taskId, projectId }: { taskId: string; projectId:
                   <span className="min-w-0 flex-1 text-foreground">{item.sample}</span>
                 </div>
                 <span className="text-muted-foreground">
-                  {'首次见于轮次 '}
+                  {t('tsk.facts.firstSeenRound')}
                   <Mono>{item.first_run_id}</Mono>
                 </span>
               </li>
@@ -235,24 +238,24 @@ export function RunFactsCard({ taskId, projectId }: { taskId: string; projectId:
       <div className="border-t border-border pt-2.5">
         {submitted ? (
           <p role="status" className="text-sm text-foreground">
-            {submittedMessage(submitted.state)}
+            {t(submittedMessageKey(submitted.state))}
             <Link to="/knowledge" className="font-medium underline underline-offset-2">
-              前往查看
+              {t('tsk.facts.viewKnowledge')}
             </Link>
           </p>
         ) : !editing && facts.proposal_draft ? (
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" onClick={openForm}>基于病历发起改进提议</Button>
-            <Note className="text-xs">从执行事实预填草稿，可编辑后提交至知识库流程。</Note>
+            <Button size="sm" onClick={openForm}>{t('tsk.facts.proposeBtn')}</Button>
+            <Note className="text-xs">{t('tsk.facts.proposeHint')}</Note>
           </div>
         ) : editing && form ? (
           <form onSubmit={(event) => void submitProposal(event)} className="grid gap-3">
-            <Field label="类型">
+            <Field label={t('tsk.facts.kindLabel')}>
               <div>
                 <Segmented
-                  label="类型"
+                  label={t('tsk.facts.kindLabel')}
                   value={form.kind}
-                  options={KIND_OPTIONS}
+                  options={kindOptions}
                   disabled={submitting}
                   onChange={(kind) => setForm({
                     ...form,
@@ -264,33 +267,35 @@ export function RunFactsCard({ taskId, projectId }: { taskId: string; projectId:
             </Field>
 
             {form.kind === 'knowledge' ? (
-              <Field label="加载方式">
+              <Field label={t('tsk.facts.loadingLabel')}>
                 <div>
                   <Segmented
-                    label="加载方式"
+                    label={t('tsk.facts.loadingLabel')}
                     value={form.loading}
-                    options={LOADING_OPTIONS}
+                    options={loadingOptions}
                     disabled={submitting}
                     onChange={(loading) => setForm({ ...form, loading })}
                   />
                 </div>
               </Field>
             ) : (
-              <Note className="text-xs">技能一律按需加载。</Note>
+              <Note className="text-xs">{t('tsk.facts.skillOnDemandNote')}</Note>
             )}
 
-            <Field label="标题">
+            <Field label={t('tsk.facts.titleLabel')} htmlFor="run-facts-title">
               <Input
-                aria-label="提议标题"
+                id="run-facts-title"
+                aria-label={t('tsk.facts.titleAria')}
                 value={form.title}
                 disabled={submitting}
                 onChange={(event) => setForm({ ...form, title: event.target.value })}
               />
             </Field>
 
-            <Field label="什么时候用">
+            <Field label={t('tsk.facts.whenToUseLabel')} htmlFor="run-facts-when-to-use">
               <Textarea
-                aria-label="什么时候用"
+                id="run-facts-when-to-use"
+                aria-label={t('tsk.facts.whenToUseLabel')}
                 rows={2}
                 value={form.when_to_use}
                 disabled={submitting}
@@ -298,9 +303,10 @@ export function RunFactsCard({ taskId, projectId }: { taskId: string; projectId:
               />
             </Field>
 
-            <Field label="正文">
+            <Field label={t('tsk.facts.bodyLabel')} htmlFor="run-facts-body">
               <Textarea
-                aria-label="提议正文"
+                id="run-facts-body"
+                aria-label={t('tsk.facts.bodyAria')}
                 rows={5}
                 value={form.body}
                 disabled={submitting}
@@ -308,8 +314,9 @@ export function RunFactsCard({ taskId, projectId }: { taskId: string; projectId:
               />
             </Field>
 
-            <Field label={WHY_QUESTIONS.when}>
+            <Field label={WHY_QUESTIONS.when} htmlFor="run-facts-why-when">
               <Textarea
+                id="run-facts-why-when"
                 aria-label={WHY_QUESTIONS.when}
                 rows={2}
                 value={form.why.when}
@@ -340,13 +347,21 @@ export function RunFactsCard({ taskId, projectId }: { taskId: string; projectId:
 
             <div className="grid gap-1.5 rounded-lg border border-border bg-muted/40 p-2.5 text-xs">
               <p className="text-muted-foreground">
-                {`作用域：${form.project_ids === null ? GLOBAL_LABEL : `项目 ${form.project_ids.join('、')}`} · 从控制台发布将直接作为主人审定条目生效`}
+                {t('tsk.facts.scopeBanner', {
+                  scope: form.project_ids === null
+                    ? GLOBAL_LABEL
+                    : t('tsk.facts.scopeProject', { projects: form.project_ids.join(t('tsk.facts.projectSep')) }),
+                })}
               </p>
-              <p className="font-medium text-muted-foreground">{`将随条目附带的脱敏证据（${form.evidence.length} 条）`}</p>
+              <p className="font-medium text-muted-foreground">{t('tsk.facts.evidenceHeading', { count: form.evidence.length })}</p>
               <ul className="grid gap-1">
                 {form.evidence.map((ev, index) => (
                   <li key={index} className="wrap-anywhere text-foreground">
-                    <span className="text-muted-foreground">{`${ev.location}${ev.ref ? `（${ev.ref}）` : ''}：`}</span>
+                    <span className="text-muted-foreground">
+                      {ev.ref
+                        ? t('tsk.facts.evidenceRefPrefix', { location: ev.location, ref: ev.ref })
+                        : t('tsk.facts.evidencePrefix', { location: ev.location })}
+                    </span>
                     {ev.excerpt}
                   </li>
                 ))}
@@ -357,7 +372,7 @@ export function RunFactsCard({ taskId, projectId }: { taskId: string; projectId:
 
             <div className="flex flex-wrap items-center gap-2">
               <Button type="submit" variant="primary" size="sm" disabled={submitting || !canSubmit}>
-                {submitting ? '发布中…' : '发布到知识库'}
+                {submitting ? t('tsk.facts.publishing') : t('tsk.facts.publishBtn')}
               </Button>
               <Button
                 size="sm"
@@ -365,7 +380,7 @@ export function RunFactsCard({ taskId, projectId }: { taskId: string; projectId:
                 disabled={submitting}
                 onClick={() => { setEditing(false); setSubmitError(null); }}
               >
-                取消
+                {t('common.cancel')}
               </Button>
             </div>
           </form>

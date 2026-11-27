@@ -1,5 +1,6 @@
 // Shared schema & security validator for Tycho pluggable theme packs.
 // Used identically by the host directory store (`service/themes.ts`) and browser Console (`console/src/lib/theme.ts`).
+import { t } from './i18n.ts';
 
 export const BUILTIN_THEME_IDS = [
   'hud',
@@ -61,7 +62,7 @@ export function validateThemePack(
   options?: { fallbackId?: string },
 ): { ok: true; pack: DirectoryThemePack } | { ok: false; error: string } {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    return { ok: false, error: '主题包必须是一个 JSON 对象。' };
+    return { ok: false, error: t('sh.themes.err.notObject') };
   }
   const rec = raw as Record<string, unknown>;
   const rawId = typeof rec.id === 'string' && rec.id.trim()
@@ -69,20 +70,20 @@ export function validateThemePack(
     : (options?.fallbackId?.trim().toLowerCase() ?? '');
 
   if (!THEME_SLUG_RE.test(rawId)) {
-    return { ok: false, error: '主题 id 必须是小写字母/数字开头，仅含字母、数字、-、_（最多 48 字符）。' };
+    return { ok: false, error: t('sh.themes.err.invalidId') };
   }
   if ((BUILTIN_THEME_IDS as readonly string[]).includes(rawId)) {
-    return { ok: false, error: `id "${rawId}" 与内置主题重名，请换一个标识。` };
+    return { ok: false, error: t('sh.themes.err.builtinCollision', { id: rawId }) };
   }
 
   const name = typeof rec.name === 'string' ? rec.name.trim() : '';
   if (!name) {
-    return { ok: false, error: '缺少主题名称 name 字段。' };
+    return { ok: false, error: t('sh.themes.err.missingName') };
   }
 
   const tokens = sanitizeThemeTokens(rec.tokens);
   if (Object.keys(tokens).length === 0) {
-    return { ok: false, error: 'tokens 里没有可识别的安全 CSS 变量（例如 --primary、--background）。' };
+    return { ok: false, error: t('sh.themes.err.noValidTokens') };
   }
 
   const rawSwatches = Array.isArray(rec.swatches)
@@ -101,7 +102,7 @@ export function validateThemePack(
 
   const description = typeof rec.description === 'string' && rec.description.trim()
     ? rec.description.trim().slice(0, 120)
-    : '主机目录主题插件';
+    : t('sh.themes.defaultDescription');
 
   return {
     ok: true,

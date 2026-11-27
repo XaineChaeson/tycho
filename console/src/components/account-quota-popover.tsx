@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronUp, RefreshCw } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
+import { t as translate } from '@shared/i18n.ts';
 import { quotaUsedUp, type LoginStatus } from '@shared/labels.ts';
 import { loginName } from '@shared/logins.ts';
 import { formatTime } from '@shared/time.ts';
@@ -13,6 +14,7 @@ import { coveredMachineLoginsByAccount } from '@/components/dispatch-slots-panel
 import { Badge, type BadgeTone } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/menu';
 import { messageOf, post } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { accountsQuery } from '@/lib/queries';
 import type { Account, AccountsAndMachines, LoginTelemetry, MachineLogin } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -27,34 +29,42 @@ export function formatCompactTokens(tokens: number): string {
 }
 
 export function formatSpecialQuotaLabel(windowName: string): { label: string; value: string; isUnlimited?: boolean } | null {
-  for (const [prefix, label] of [
-    ['balance:', '官网余额'],
-    ['bonus_balance:', '官网赠金'],
-    ['api_balance:', 'API 余额'],
+  for (const [prefix, labelKey] of [
+    ['balance:', 'acct.quota.officialBalance'],
+    ['bonus_balance:', 'acct.quota.officialBonus'],
+    ['api_balance:', 'acct.quota.apiBalance'],
   ] as const) {
     if (windowName.startsWith(prefix)) {
       const parts = windowName.split(':');
       const currency = parts[1] ?? 'CNY';
       const amount = parts.slice(2).join(':');
       const symbol = currency === 'CNY' ? '¥' : currency === 'USD' ? '$' : `${currency} `;
-      return { label, value: amount ? `${symbol}${amount}` : '可用', isUnlimited: true };
+      return { label: translate(labelKey), value: amount ? `${symbol}${amount}` : translate('acct.status.available'), isUnlimited: true };
     }
   }
   if (windowName.startsWith('gateway_budget:')) {
     const rest = windowName.slice('gateway_budget:'.length);
     const sep = rest.indexOf(':');
     if (sep > 0 && !rest.startsWith('$')) {
-      return { label: `网关 ${rest.slice(0, sep)}`, value: rest.slice(sep + 1) };
+      return { label: translate('acct.quota.gatewayNamed', { name: rest.slice(0, sep) }), value: rest.slice(sep + 1) };
     }
-    return { label: '网关额度', value: rest };
+    return { label: translate('acct.quota.gatewayBudget'), value: rest };
   }
   if (windowName.startsWith('gateway_unlimited:')) {
     const rest = windowName.slice('gateway_unlimited:'.length);
     const sep = rest.indexOf(':');
     if (sep > 0) {
-      return { label: `网关 ${rest.slice(0, sep)}`, value: `30天 ${rest.slice(sep + 1)} · 不限额`, isUnlimited: true };
+      return {
+        label: translate('acct.quota.gatewayNamed', { name: rest.slice(0, sep) }),
+        value: translate('acct.quota.gatewayUnlimited30d', { spent: rest.slice(sep + 1) }),
+        isUnlimited: true,
+      };
     }
-    return { label: '网关已用', value: `${rest} · 不限额`, isUnlimited: true };
+    return {
+      label: translate('acct.quota.gatewayUsed'),
+      value: translate('acct.quota.gatewayUnlimitedValue', { spent: rest }),
+      isUnlimited: true,
+    };
   }
   return null;
 }
@@ -103,15 +113,21 @@ export function formatResetCountdown(iso: string | null | undefined, now: number
   const target = Date.parse(iso);
   if (Number.isNaN(target)) return null;
   const diff = target - now;
-  if (diff <= 0) return '即将重置';
+  if (diff <= 0) return translate('acct.quota.resettingSoon');
   const totalMinutes = Math.max(1, Math.ceil(diff / 60_000));
-  if (totalMinutes < 60) return `${totalMinutes}m 后`;
+  if (totalMinutes < 60) return translate('acct.quota.inMinutes', { minutes: totalMinutes });
   const totalHours = Math.floor(totalMinutes / 60);
   const remMinutes = totalMinutes % 60;
-  if (totalHours < 24) return remMinutes > 0 ? `${totalHours}h ${remMinutes}m 后` : `${totalHours}h 后`;
+  if (totalHours < 24) {
+    return remMinutes > 0
+      ? translate('acct.quota.inHoursMinutes', { hours: totalHours, minutes: remMinutes })
+      : translate('acct.quota.inHours', { hours: totalHours });
+  }
   const days = Math.floor(totalHours / 24);
   const remHours = totalHours % 24;
-  return remHours > 0 ? `${days}d ${remHours}h 后` : `${days}d 后`;
+  return remHours > 0
+    ? translate('acct.quota.inDaysHours', { days, hours: remHours })
+    : translate('acct.quota.inDays', { days });
 }
 
 function resolveGroupedUsage(data: AccountsAndMachines): Map<string, readonly UsageFigure[]> {
@@ -341,7 +357,7 @@ export function collectQuotaLogins(data: AccountsAndMachines | undefined): Quota
       id: list[0]!.id,
       key: `group:${executor}`,
       kind: 'group',
-      name: `${formatProviderName(executor)}（${list.length} 台机器）`,
+      name: translate('acct.group.machinesTitle', { provider: formatProviderName(executor), count: list.length }),
       executor,
       providerLabel: formatProviderName(executor),
       machine: null,
@@ -361,10 +377,10 @@ export function collectQuotaLogins(data: AccountsAndMachines | undefined): Quota
   return items;
 }
 
-export function standingBadgeOf(item: QuotaLoginItem): { label: '可用' | '限额休眠' | '需重登'; tone: BadgeTone } {
-  if (item.needsRelogin) return { label: '需重登', tone: 'failed' };
-  if (item.resting) return { label: '限额休眠', tone: 'waiting' };
-  return { label: '可用', tone: 'success' };
+export function standingBadgeOf(item: QuotaLoginItem): { label: string; tone: BadgeTone } {
+  if (item.needsRelogin) return { label: translate('acct.quota.badgeRelogin'), tone: 'failed' };
+  if (item.resting) return { label: translate('acct.quota.badgeResting'), tone: 'waiting' };
+  return { label: translate('acct.status.available'), tone: 'success' };
 }
 
 function barColorClass(remaining: number): string {
@@ -374,16 +390,17 @@ function barColorClass(remaining: number): string {
 }
 
 function WindowBar({ label, figure }: { label: string; figure: UsageFigure }) {
+  const { t } = useI18n();
   const rem = remainingPct(figure.used);
   const countdown = formatResetCountdown(figure.resets_at);
-  const exactReset = figure.resets_at ? `${formatTime(figure.resets_at)} 重置` : undefined;
+  const exactReset = figure.resets_at ? t('acct.quota.resetsAt', { time: formatTime(figure.resets_at) }) : undefined;
   return (
     <div className="grid gap-0.5">
       <div className="flex items-center justify-between gap-2 text-2xs leading-4">
         <span className="font-mono text-muted-foreground">{label}</span>
         <span className="flex items-center gap-1.5 tabular-nums">
           <span className={cn('font-medium', rem <= 10 ? 'text-destructive' : rem <= 20 ? 'text-waiting-foreground' : 'text-foreground')}>
-            剩 {rem}%
+            {t('acct.quota.remainingPct', { pct: rem })}
           </span>
           {countdown ? (
             <span className="text-faint" title={exactReset}>
@@ -403,6 +420,7 @@ function WindowBar({ label, figure }: { label: string; figure: UsageFigure }) {
 }
 
 export function QuotaMiniBars({ item, compact = false }: { item: QuotaLoginItem; compact?: boolean }) {
+  const { t } = useI18n();
   const windows: { label: string; figure: UsageFigure }[] = [];
   const special = item.usage
     .map((figure) => ({ figure, parsed: formatSpecialQuotaLabel(figure.window) }))
@@ -415,25 +433,31 @@ export function QuotaMiniBars({ item, compact = false }: { item: QuotaLoginItem;
   }
 
   const telemetryLine = (() => {
-    const t = item.telemetry;
-    if (!t) return null;
-    const week = t.week_tokens ?? t.day_tokens;
-    const total = t.total_tokens ?? week;
-    if (t.day_tokens > 0 || t.day_runs > 0) {
-      const base = `近 5h ${formatCompactTokens(t.five_hour_tokens)} (${t.five_hour_runs} 轮) · 24h ${formatCompactTokens(t.day_tokens)}`;
-      return week > t.day_tokens ? `${base} · 7d ${formatCompactTokens(week)}` : base;
+    const tel = item.telemetry;
+    if (!tel) return null;
+    const week = tel.week_tokens ?? tel.day_tokens;
+    const total = tel.total_tokens ?? week;
+    if (tel.day_tokens > 0 || tel.day_runs > 0) {
+      const base = t('acct.quota.tel5h24h', {
+        tokens5h: formatCompactTokens(tel.five_hour_tokens),
+        runs5h: tel.five_hour_runs,
+        tokens24h: formatCompactTokens(tel.day_tokens),
+      });
+      return week > tel.day_tokens ? t('acct.quota.telWith7d', { base, tokens7d: formatCompactTokens(week) }) : base;
     }
-    if (week > 0) return `近 7 天 ${formatCompactTokens(week)} (${t.week_runs ?? 0} 轮)`;
-    if (total > 0) return `累计 ${formatCompactTokens(total)} (${t.total_runs ?? 0} 轮)`;
+    if (week > 0) return t('acct.quota.tel7d', { tokens: formatCompactTokens(week), runs: tel.week_runs ?? 0 });
+    if (total > 0) return t('acct.quota.telTotal', { tokens: formatCompactTokens(total), runs: tel.total_runs ?? 0 });
     return null;
   })();
 
   if (windows.length === 0 && special.length === 0) {
+    const restCountdown = item.restUntil ? formatResetCountdown(item.restUntil) : null;
     return (
       <div className="grid gap-0.5">
         {item.restUntil ? (
           <p className="text-2xs text-waiting-foreground tabular-nums">
-            休眠至 {formatTime(item.restUntil)}{formatResetCountdown(item.restUntil) ? `（${formatResetCountdown(item.restUntil)}）` : ''}
+            {t('acct.quota.restingUntil', { time: formatTime(item.restUntil) })}
+            {restCountdown ? t('acct.paren', { text: restCountdown }) : ''}
           </p>
         ) : null}
         {item.machines && item.machines.length > 0 ? (
@@ -444,7 +468,7 @@ export function QuotaMiniBars({ item, compact = false }: { item: QuotaLoginItem;
         {telemetryLine ? (
           <p className="font-mono text-2xs text-muted-foreground tabular-nums">{telemetryLine}</p>
         ) : (
-          <p className="text-2xs text-faint">账本遥测 · 暂无消耗记录</p>
+          <p className="text-2xs text-faint">{t('acct.quota.noTelemetry')}</p>
         )}
       </div>
     );
@@ -483,6 +507,7 @@ export function QuotaMiniBars({ item, compact = false }: { item: QuotaLoginItem;
 }
 
 export function AccountQuotaPopover({ className }: { className?: string }) {
+  const { t, locale } = useI18n();
   const client = useQueryClient();
   const [open, setOpen] = useState(false);
   const hasCached = client.getQueryData<AccountsAndMachines>(accountsQuery.queryKey) !== undefined;
@@ -496,7 +521,7 @@ export function AccountQuotaPopover({ className }: { className?: string }) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const inflightRef = useRef(new Set<string>());
 
-  const logins = useMemo(() => collectQuotaLogins(data), [data]);
+  const logins = useMemo(() => collectQuotaLogins(data), [data, locale]);
 
   const summary = useMemo(() => {
     const byProvider = new Map<string, { label: string; remaining: number }>();
@@ -523,10 +548,10 @@ export function AccountQuotaPopover({ className }: { className?: string }) {
     const text = providers.length > 0
       ? providers.slice(0, 2).map((p) => `${p.label} ${p.remaining}%`).join(' · ')
         + (providers.length > 2 ? ` +${providers.length - 2}` : '')
-      : `账号 ${logins.length}`;
+      : t('acct.quota.accountsCount', { count: logins.length });
 
     return { text, hasCritical, hasLow };
-  }, [logins]);
+  }, [logins, t]);
 
   if (isError || !data || logins.length === 0) return null;
 
@@ -558,7 +583,7 @@ export function AccountQuotaPopover({ className }: { className?: string }) {
         <button
           type="button"
           data-slot="account-quota-trigger"
-          aria-label={`账号额度：${summary.text}`}
+          aria-label={t('acct.quota.triggerAria', { summary: summary.text })}
           className={cn(
             'flex min-h-7 w-full items-center gap-2 rounded-md border px-2 py-1 text-left text-xs transition-colors duration-100 focus-visible:-outline-offset-2',
             summary.hasCritical
@@ -581,11 +606,11 @@ export function AccountQuotaPopover({ className }: { className?: string }) {
         side="top"
         align="start"
         sideOffset={8}
-        aria-label="账号与额度"
+        aria-label={t('acct.quota.popoverTitle')}
         className="w-[310px] overflow-hidden p-0"
       >
         <div className="flex items-center justify-between border-b border-border px-3 py-2">
-          <span className="text-xs font-semibold text-foreground">账号与额度</span>
+          <span className="text-xs font-semibold text-foreground">{t('acct.quota.popoverTitle')}</span>
           <span className="rounded-full bg-hover px-1.5 text-2xs leading-4 text-muted-foreground tabular-nums">
             {logins.length}
           </span>
@@ -611,8 +636,8 @@ export function AccountQuotaPopover({ className }: { className?: string }) {
                   </Badge>
                   <button
                     type="button"
-                    aria-label={`刷新 ${item.name} 额度`}
-                    title="检查账号并刷新额度"
+                    aria-label={t('acct.quota.refreshAria', { name: item.name })}
+                    title={t('acct.quota.refreshTitle')}
                     disabled={busy}
                     onClick={() => void refreshAccount(item)}
                     className="inline-flex size-6 flex-none items-center justify-center rounded-sm text-faint transition-colors hover:bg-hover hover:text-foreground disabled:opacity-50"
@@ -626,7 +651,8 @@ export function AccountQuotaPopover({ className }: { className?: string }) {
 
                 {item.resting && item.restUntil && (item.fiveHour || item.sevenDay) ? (
                   <p className="text-2xs text-waiting-foreground tabular-nums">
-                    休眠至 {formatTime(item.restUntil)}{restCountdown ? `（${restCountdown}）` : ''}
+                    {t('acct.quota.restingUntil', { time: formatTime(item.restUntil) })}
+                    {restCountdown ? t('acct.paren', { text: restCountdown }) : ''}
                   </p>
                 ) : null}
 
@@ -648,7 +674,7 @@ export function AccountQuotaPopover({ className }: { className?: string }) {
             onClick={() => setOpen(false)}
             className="text-xs font-medium text-link no-underline hover:underline"
           >
-            管理全部账号 →
+            {t('acct.quota.manageAll')}
           </Link>
         </div>
       </PopoverContent>

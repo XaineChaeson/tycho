@@ -6,6 +6,7 @@
 // console's cache, so the page opened again draws it at once, in its first draw.
 import { useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { t } from '@shared/i18n.ts';
 import { api } from '@/lib/api';
 import { createRunEvents, createTimelineReader } from '@/lib/timeline';
 import type { NormalizedEvent, Run, RunEvents, RunSnapshot } from '@/lib/types';
@@ -88,6 +89,16 @@ export function useRunStreams(runs: readonly Run[] | undefined, selected: string
     say(null);
 
     const logStatus = new Map<string, string>();
+    const readerStatus = new Map<string, string>();
+    let streamError = '';
+    function publishStatus(): void {
+      const next = streamError
+        || [...readerStatus.values()].find(Boolean)
+        || [...logStatus.values()].find(Boolean)
+        || null;
+      say(next);
+    }
+
     function logOf(id: string) {
       let log = current.logs.get(id);
       if (!log) {
@@ -96,7 +107,7 @@ export function useRunStreams(runs: readonly Run[] | undefined, selected: string
           onChange: draw,
           onStatus(message) {
             logStatus.set(id, message);
-            say([...logStatus.values()].find(Boolean) ?? null);
+            publishStatus();
           },
         });
         current.logs.set(id, log);
@@ -107,44 +118,84 @@ export function useRunStreams(runs: readonly Run[] | undefined, selected: string
     function take({ id, events, snapshot }: RunRecord & { id: string }): void {
       logOf(id).reset(events);
       current.snapshots.set(id, snapshot);
-      current.history.set(id, events.loaded === false ? '历史现场未加载：' + (events.reason ?? '原因未知') : events.reason ?? null);
+      current.history.set(
+        id,
+        events.loaded === false
+          ? t('core.runStreams.historyNotLoaded', { reason: events.reason ?? t('core.runStreams.unknownReason') })
+          : events.reason ?? null,
+      );
     }
     for (const id of ids) {
       const kept = client.getQueryData<RunRecord>(recordKey(id));
       if (kept && lasting(all.find((run) => run.id === id))) take({ id, ...kept });
     }
 
-    const reader = createTimelineReader<(RunRecord & { id: string })[], Pushed>({
-      load: () => Promise.all(ids.map(async (id) => ({ id, ...(await recordOf(client, all.find((run) => run.id === id), id)) }))),
-      onLoad(results) {
-        if (!open) return;
-        for (const result of results) take(result);
-      },
-      onEvent(payload) {
-        if (!open) return;
-        logOf(payload.run_id).push(payload);
-        draw();
-      },
-      onStatus: (message) => say(message || null),
-    });
+    // Isolate hydration per run so one failing old round never blocks or discards events
+    // for a healthy live round.
+    const readers = new Map<string, ReturnType<typeof createTimelineReader<RunRecord & { id: string }, Pushed>>>();
+    for (const id of ids) {
+      const reader = createTimelineReader<RunRecord & { id: string }, Pushed>({
+        load: async () => ({ id, ...(await recordOf(client, (latest.current ?? all).find((run) => run.id === id), id)) }),
+        onLoad(result) {
+          if (!open) return;
+          take(result);
+          draw();
+        },
+        onEvent(payload) {
+          if (!open) return;
+          logOf(payload.run_id).push(payload);
+          draw();
+        },
+        onStatus(message) {
+          readerStatus.set(id, message);
+          publishStatus();
+        },
+      });
+      readers.set(id, reader);
+    }
 
     // A Run that has ended has nothing more to push: its record is read once.
     const liveIds = ids.filter((id) => all.find((run) => run.id === id)?.state !== 'ended');
+    const liveIdSet = new Set(liveIds);
     const source = liveIds.length ? new EventSource(`/api/stream?runs=${encodeURIComponent(liveIds.join(','))}`) : null;
+    // Start REST hydration immediately for every run without waiting for EventSource onopen.
+    for (const reader of readers.values()) void reader.read();
+
     if (source) {
+      let openedOnce = false;
       source.addEventListener('run_event', (message) => {
         const payload = JSON.parse((message as MessageEvent<string>).data) as Pushed;
-        if (open && liveIds.includes(payload.run_id)) reader.push(payload);
+        if (open && liveIdSet.has(payload.run_id)) readers.get(payload.run_id)?.push(payload);
       });
-      // Also after every reconnect: the snapshot is what makes up for the break.
-      source.onopen = () => { void reader.read(); };
-      source.onerror = () => say('现场连接已断开，重连后重新读取记录');
-    } else void reader.read();
+      // On reconnect (or if initial read failed), re-read live runs to cover any gap.
+      source.onopen = () => {
+        streamError = '';
+        publishStatus();
+        if (openedOnce) {
+          for (const id of liveIds) void readers.get(id)?.read();
+        } else {
+          openedOnce = true;
+          for (const id of liveIds) {
+            const reader = readers.get(id);
+            if (reader?.isRetrying()) void reader.read();
+          }
+        }
+      };
+      source.onerror = () => {
+        streamError = t('core.runStreams.disconnected');
+        publishStatus();
+      };
+    }
     const mine = source ? {
       ids: liveIds,
-      // What the Runs last pushed may have been on its way still: the record is read
-      // once more, as it is for a Run that had ended when the page was opened.
-      end: () => { source.close(); void reader.read(); },
+      // What the Runs last pushed may have been on its way still: queue a trailing read on
+      // every live run's reader, even if an earlier snapshot read is currently in flight.
+      end: () => {
+        source.close();
+        streamError = '';
+        publishStatus();
+        for (const id of liveIds) void readers.get(id)?.read();
+      },
     } : null;
     stream.current = mine;
 
@@ -152,7 +203,7 @@ export function useRunStreams(runs: readonly Run[] | undefined, selected: string
       open = false;
       if (stream.current === mine) stream.current = null;
       for (const log of current.logs.values()) log.close();
-      reader.close();
+      for (const reader of readers.values()) reader.close();
       source?.close();
     };
     // `selected` is in the key, and `runs` is read as it was when the key changed.

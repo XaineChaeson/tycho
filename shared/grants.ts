@@ -5,6 +5,8 @@
 // never opens a gate, it only removes the question. What is done under a grant reaches the owner as
 // the service's own result push, not in the Router's words.
 
+import { t } from './i18n.ts';
+
 export const GRANT_IDS = ['accept', 'integrate', 'release'] as const;
 export type GrantId = (typeof GRANT_IDS)[number];
 
@@ -19,18 +21,18 @@ export interface GrantSpec {
 
 export const GRANTS: Record<GrantId, GrantSpec> = {
   accept: {
-    label: '验收',
-    hint: '审阅通过（职能要审阅的）后由负责人直接验收，取回产物。',
+    get label(): string { return t('sh.grants.accept.label'); },
+    get hint(): string { return t('sh.grants.accept.hint'); },
     on: true,
   },
   integrate: {
-    label: '并入主线',
-    hint: '已验收任务的代码由负责人合入：派执行器在代码托管平台上合那一轮开的 PR，只合审过的那个提交，平台的分支保护照旧。',
+    get label(): string { return t('sh.grants.integrate.label'); },
+    get hint(): string { return t('sh.grants.integrate.hint'); },
     on: false,
   },
   release: {
-    label: '上线',
-    hint: '已验收任务的发布包由负责人上线，和控制台的上线走同一道关：当前产物要有审阅通过。',
+    get label(): string { return t('sh.grants.release.label'); },
+    get hint(): string { return t('sh.grants.release.hint'); },
     on: false,
   },
 };
@@ -47,4 +49,4 @@ export const grantsOf = (stored: string): GrantId[] => {
 
 // The Router's refusal when a step is not granted: the owner takes it from the console.
 export const notGrantedText = (id: GrantId): string =>
-  `这个项目没有授权负责人自己${GRANTS[id].label}：告诉主人这一步等他在任务页做，或者请他在项目设置里打开“${GRANTS[id].label}”。`;
+  t('sh.grants.notGranted', { label: GRANTS[id].label });

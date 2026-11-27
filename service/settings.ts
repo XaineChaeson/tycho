@@ -83,8 +83,8 @@ export const DISPATCH_ORDER_KEYS: readonly DispatchOrderKey[] = TIERS.map((tier)
 
 export const SETTINGS = {
   'ui.locale': {
-    group: SERVICE, title: '系统语言', type: 'choice', choices: ['zh-CN', 'en'] as const,
-    help: '控制台界面、登录页、负责人默认回复与任务说明语言（zh-CN 简体中文 / en English）。切换后立即生效。',
+    group: SERVICE, title: '系统语言', type: 'text',
+    help: '控制台界面、登录页、负责人默认回复与任务说明语言（支持内置 zh-CN / en 及任意热插拔语言包 ID）。切换后立即生效。',
     default: 'zh-CN',
   },
   'router.cli': {

@@ -9,6 +9,7 @@ import { RunFactsCard } from '@/components/run-facts-card';
 import { ArrowDownToLine, Check, Code2, CornerDownLeft, Download, ExternalLink, FileText, GitMerge, Image as ImageIcon, Maximize2, MessageSquare, Minimize2, Minus, Pencil, Quote, RefreshCw, Rocket, Send, Square, Trash2, X, Zap } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
+import { t as translate } from '@shared/i18n.ts';
 import { ANY_LOGIN_TEXT, artifactsDroppedText, RECEIPT_STATUS_LABELS, exitKindLabels as EXIT_TEXT, taskLine, taskStateLabels, placedByLabels, quotaEndLine, runStateLabels, loginLine, incompleteReleaseLine } from '@shared/labels.ts';
 import { loginName } from '@shared/logins.ts';
 import { type ReviewedCommit, type SnapshotSource, type SourceView, type TaskSource, type TaskSourceState } from '@shared/sources.ts';
@@ -27,7 +28,7 @@ import { ComposerTargetChip } from '@/components/composer-target-chip';
 import { LARGE_PASTE_THRESHOLD, PastedSnippetChips, createPastedSnippet, formatTextWithSnippets, type PastedSnippet } from '@/components/composer-triggers';
 import { formatFileSize } from '@/components/project-files';
 import { FileChanges, SiteRows, processTitle } from '@/components/run-site';
-import { QuoteTray } from '@/components/quote-tray';
+import { QuoteTray, QuotedMessageBody } from '@/components/quote-tray';
 import { SelectionQuotePopover } from '@/components/selection-quote-popover';
 import { TaskDiffPanel, type CheckpointCommit } from '@/components/task-diff-panel';
 import { PageBar, PageTitle, type Crumb } from '@/components/page';
@@ -44,8 +45,8 @@ import { useMounted } from '@/hooks/use-mounted';
 import { useRunStreams, type RunStreams } from '@/hooks/use-run-streams';
 import { api, del, messageOf, post, projectFileRawUrl, put } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
-import { composeWithQuotes, MAX_COMPOSER_QUOTES, trimQuoteExcerpt, type ComposerQuote } from '@/lib/quotes';
-import { useLive } from '@/lib/live-context';
+import { composeWithQuotes, parseQuotedSegments, type QuoteSourceKey } from '@/lib/quotes';
+import { useLive, useLiveState } from '@/lib/live-context';
 import { Markdown } from '@/components/markdown';
 import { ReportArtifact } from '@/components/report-artifact';
 import { TrajectoryReplay } from '@/components/trajectory-replay';
@@ -85,7 +86,8 @@ interface ShownArtifact {
 }
 
 function Artifacts({ items, projectId }: { items: readonly ShownArtifact[]; projectId?: string }) {
-  if (!items.length) return <Note>暂无产物</Note>;
+  const { t } = useI18n();
+  if (!items.length) return <Note>{t('tsk.artifacts.empty')}</Note>;
   // The same reading can cover both an address and artifacts that are not it; a problem is
   // its reason once, wherever it was named.
   const problems = [...new Set(items.map(({ reading }) => (reading !== null && 'problem' in reading ? reading.problem : null)).filter((each): each is string => each !== null))];
@@ -139,7 +141,7 @@ function RunSite({ data, run, streams, reportsOnly, sameAsFirst = false }: {
   reportsOnly: boolean;
   sameAsFirst?: boolean;
 }) {
-  const { t, bi } = useI18n();
+  const { t } = useI18n();
   const snapshot = streams.snapshot(run.id);
   const summary = dispatchSummary(data.task, run, snapshot);
   const projectId = data.task.project_id ?? data.work.project_id ?? undefined;
@@ -162,20 +164,20 @@ function RunSite({ data, run, streams, reportsOnly, sameAsFirst = false }: {
       ? goalPreview(summary.goal)
       : t('task.readingSnapshot');
   return (
-    <section className="flex flex-col gap-3">
+    <section className="flex min-w-0 max-w-full flex-col gap-3">
       <Details
         id={`dispatch:${run.id}`}
-        className="rounded-xl bg-muted px-3.5 py-1.5"
+        className="min-w-0 max-w-full overflow-hidden rounded-xl bg-muted px-3.5 py-1.5"
         summaryClassName="min-h-8 gap-2 text-foreground"
         title={(
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
-            <h2 className={cn(H, 'flex-none')}>{t('task.dispatchRound', { n: roundIndex })}</h2>
-            <Note className="flex-none text-xs"><Time at={run.created_at} suffix={` · ${runStateLabels[run.state]}`} /></Note>
+          <div className="flex min-w-0 flex-1 items-center gap-x-2 overflow-hidden">
+            <h2 className={cn(H, 'flex-none whitespace-nowrap')}>{t('task.dispatchRound', { n: roundIndex })}</h2>
+            <Note className="flex-none whitespace-nowrap text-xs"><Time at={run.created_at} suffix={` · ${runStateLabels[run.state]}`} /></Note>
             {preview ? <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{preview}</span> : null}
           </div>
         )}
       >
-        <div className="mt-2 border-t border-border/60 pt-2.5 pb-1.5 pl-5">
+        <div className="mt-2 min-w-0 max-w-full overflow-x-auto border-t border-border/60 pt-2.5 pb-1.5 pl-5">
           {snapshot ? (
             sameAsFirst ? (
               <Details id={`brief:${run.id}`} title={t('task.viewFullBrief')} summaryClassName="text-xs"><pre className={cn(PRE, 'bg-background')}>{summary.brief}</pre></Details>
@@ -190,13 +192,13 @@ function RunSite({ data, run, streams, reportsOnly, sameAsFirst = false }: {
           ) : (
             <>
               {/* About the height of what comes: the page does not move when it arrives. */}
-              <div role="status" aria-label={bi('正在读取快照', 'Loading snapshot')} className="flex flex-col gap-2 py-0.5">
+              <div role="status" aria-label={t('tsk.runSite.loadingSnapshotAria')} className="flex flex-col gap-2 py-0.5">
                 <Skeleton className="h-4 w-3/4" />
                 <Skeleton className="h-4 w-1/2" />
                 <Skeleton className="mt-3 h-3 w-16" />
                 <Skeleton className="h-4 w-2/3" />
               </div>
-              <Details id={`brief:${run.id}`} title={t('task.viewFullBrief')} className="mt-1" summaryClassName="text-xs"><p className="text-sm">{bi('快照尚未加载', 'Snapshot not loaded yet')}</p></Details>
+              <Details id={`brief:${run.id}`} title={t('task.viewFullBrief')} className="mt-1" summaryClassName="text-xs"><p className="text-sm">{t('tsk.runSite.snapshotNotLoaded')}</p></Details>
             </>
           )}
         </div>
@@ -205,31 +207,31 @@ function RunSite({ data, run, streams, reportsOnly, sameAsFirst = false }: {
       {history ? <Problem>{history}</Problem> : null}
       {reportsOnly
         ? (steps ? <Note>{t('task.processHidden', { steps })}</Note> : null)
-        : !showLayered && steps
-          ? <Details id={`process:${run.id}`} title={processTitle(site)}><div className="pt-1 pl-[22px]">{process}</div></Details>
+        : ended && steps
+          ? <Details id={`process:${run.id}`} defaultOpen={showLayered} title={processTitle(site)}><div className="pt-1 pl-[22px]">{process}</div></Details>
           : process}
       <FileChanges changes={site.changes} id={run.id} />
     </section>
   );
 }
 
-function Report({ run, fallback, projectId, onQuote }: { run: Run; fallback: string | null | undefined; projectId?: string; onQuote?: (quote: { source: string; excerpt: string }) => void }) {
+function Report({ run, fallback, projectId, onQuote }: { run: Run; fallback: string | null | undefined; projectId?: string; onQuote?: (quote: { source: string; sourceKey?: QuoteSourceKey; excerpt: string }) => void }) {
   const { t } = useI18n();
   const { receipt, error } = run;
   const artifacts = shownArtifacts(run);
   const quotableSummary = receipt?.summary?.trim() || error?.reason || error?.message || '';
   return (
-    <section className="group overflow-hidden rounded-xl bg-raised shadow-card">
+    <section className="group min-w-0 max-w-full overflow-hidden rounded-xl bg-raised shadow-card">
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3.5 py-2">
         <h2 className={H}>{t('task.report')}</h2>
-        <Badge tone={exitTone(run)}>{EXIT_TEXT[run.exit_kind ?? ''] ?? run.exit_kind ?? '已结束'}</Badge>
+        <Badge tone={exitTone(run)}>{EXIT_TEXT[run.exit_kind ?? ''] ?? run.exit_kind ?? t('tsk.common.ended')}</Badge>
         <div className="ml-auto flex items-center gap-2">
           {onQuote && quotableSummary ? (
             <button
               type="button"
               aria-label={t('quote.quoteMessage')}
               title={t('quote.action')}
-              onClick={() => onQuote({ source: t('task.report'), excerpt: quotableSummary })}
+              onClick={() => onQuote({ source: t('task.report'), sourceKey: 'report', excerpt: quotableSummary })}
               className="inline-flex cursor-pointer items-center gap-1 rounded-xs border-0 bg-transparent px-1.5 py-0.5 text-2xs text-faint opacity-0 transition-opacity duration-100 group-hover:opacity-100 hover:bg-hover hover:text-foreground focus-visible:opacity-100"
             >
               <Quote className="size-3" aria-hidden="true" />
@@ -239,18 +241,18 @@ function Report({ run, fallback, projectId, onQuote }: { run: Run; fallback: str
           <Time at={run.ended_at} className="text-xs text-faint" />
         </div>
       </div>
-      <div data-quotable data-quote-source={t('task.report')} className="grid gap-2.5 px-3.5 py-3">
+      <div data-quotable data-quote-source={t('task.report')} data-quote-source-key="report" className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2.5 px-3.5 py-3">
         {receipt ? (
           <>
             <p className="text-xs text-muted-foreground">{STATUS_TEXT[receipt.status] ?? receipt.status}</p>
             <Markdown text={receipt.summary} projectId={projectId} />
-            {Array.isArray(receipt.ask) ? receipt.ask.map((question, index) => <p key={index} className="text-sm">{`待决定：${question.question}`}</p>) : null}
-            {receipt.later ? <p className="text-sm"><Time at={receipt.later.at} prefix="后续预约：" suffix={` · ${receipt.later.about ?? ''}`} /></p> : null}
+            {Array.isArray(receipt.ask) ? receipt.ask.map((question, index) => <p key={index} className="text-sm">{t('tsk.report.askPrefix', { question: question.question })}</p>) : null}
+            {receipt.later ? <p className="text-sm"><Time at={receipt.later.at} prefix={t('tsk.report.laterPrefix')} suffix={` · ${receipt.later.about ?? ''}`} /></p> : null}
           </>
         ) : run.exit_kind === 'quota' ? (
           // Nothing failed and nothing is asked: the line says where the Task goes from here.
           <p className="wrap-anywhere">{quotaEndLine(error?.quota)}</p>
-        ) : <p className="wrap-anywhere">{error?.reason ?? error?.message ?? fallback ?? '本轮没有可用回执，保留现场供核对。'}</p>}
+        ) : <p className="wrap-anywhere">{error?.reason ?? error?.message ?? fallback ?? t('tsk.report.noReceiptFallback')}</p>}
         {receipt || artifacts.length ? <Artifacts items={artifacts} projectId={projectId} /> : null}
       </div>
     </section>
@@ -273,30 +275,30 @@ function isLongInput(text: string): boolean {
 }
 
 function InputEntry({ input, runs, projectId }: { input: TaskInput; runs: readonly Run[]; projectId?: string }) {
-  const { t, bi } = useI18n();
+  const { t } = useI18n();
   const run = runs.find((item) => item.id === input.run_id);
   // A round that was lost, or that the quota ended halfway, may or may not have acted on it.
   const unknown = run?.state === 'unknown' || run?.exit_kind === 'lost' || run?.exit_kind === 'quota';
   const roundNum = runs.findIndex((item) => item.id === input.run_id) + 1;
   const label = input.state === 'void'
-    ? bi('插话已作废', 'Discarded')
+    ? t('tsk.input.void')
     : input.state === 'queued'
-      ? bi('等待下一次 Run', 'Queued for next round')
+      ? t('tsk.input.queued')
       : unknown
-        ? bi('是否执行未确认，不会自动重发', 'Delivery unconfirmed, not auto-retried')
-        : bi(`已绑定到第 ${roundNum} 轮`, `Bound to round ${roundNum}`);
+        ? t('tsk.input.unconfirmed')
+        : t('tsk.input.boundToRound', { round: roundNum });
   const long = isLongInput(input.text);
   if (long) {
     const preview = goalPreview(input.text, 100);
     return (
-      <div className="flex flex-col items-stretch gap-1 self-stretch">
+      <div className="flex min-w-0 max-w-full flex-col items-stretch gap-1 self-stretch">
         <Details
           id={`input:${input.id}`}
-          className="rounded-xl border border-border/70 bg-bubble/70 px-3.5 py-1.5"
+          className="min-w-0 max-w-full overflow-hidden rounded-xl border border-border/70 bg-bubble/70 px-3.5 py-1.5"
           summaryClassName="min-h-8 gap-2 text-foreground"
           title={(
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span className="flex-none rounded bg-background/80 px-1.5 py-0.5 text-2xs font-medium text-muted-foreground tabular-nums">
+            <div className="flex min-w-0 flex-1 items-center gap-x-2 overflow-hidden">
+              <span className="flex-none whitespace-nowrap rounded bg-background/80 px-1.5 py-0.5 text-2xs font-medium text-muted-foreground tabular-nums">
                 {t('task.longInputSummary', { chars: input.text.length })}
               </span>
               {preview ? <span className="min-w-0 flex-1 truncate text-xs text-foreground/90">{preview}</span> : null}
@@ -305,8 +307,9 @@ function InputEntry({ input, runs, projectId }: { input: TaskInput; runs: readon
         >
           <div
             data-quotable
-            data-quote-source={bi(`续派指令（第 ${roundNum > 0 ? roundNum : '?'} 轮）`, `Follow-up (Round ${roundNum > 0 ? roundNum : '?'})`)}
-            className="mt-2 border-t border-border/60 pt-2.5 pb-1 pl-5 text-sm"
+            data-quote-source={t('quote.source.followup')}
+            data-quote-source-key="followup"
+            className="mt-2 min-w-0 max-w-full overflow-x-auto border-t border-border/60 pt-2.5 pb-1 pl-5 text-sm"
           >
             <Markdown text={input.text} projectId={projectId} />
           </div>
@@ -315,14 +318,16 @@ function InputEntry({ input, runs, projectId }: { input: TaskInput; runs: readon
       </div>
     );
   }
+  const hasQuote = parseQuotedSegments(input.text).some((seg) => seg.kind === 'quote');
   return (
     <div className="flex flex-col items-end gap-1 self-stretch">
       <div
         data-quotable
-        data-quote-source={bi('后续指令', 'Follow-up')}
+        data-quote-source={t('quote.source.followup')}
+        data-quote-source-key="followup"
         className="max-w-[82%] rounded-2xl rounded-br-md bg-bubble px-3.5 py-2 wrap-anywhere whitespace-pre-wrap"
       >
-        {input.text}
+        {hasQuote ? <QuotedMessageBody text={input.text} /> : input.text}
       </div>
       <Note className="max-w-[90%] text-right text-2xs"><Time at={input.created_at} suffix={` · ${label}`} /></Note>
     </div>
@@ -342,6 +347,7 @@ function QueuedInputCard({
   active: boolean;
   control: TaskAct;
 }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const mounted = useMounted();
   const [editing, setEditing] = useState(false);
@@ -393,7 +399,7 @@ function QueuedInputCard({
         <div className="grid gap-2">
           <Textarea
             rows={2}
-            aria-label="编辑排队指令"
+            aria-label={t('tsk.queued.editAria')}
             value={draft}
             disabled={busy !== null}
             onChange={(event) => setDraft(event.target.value)}
@@ -409,7 +415,7 @@ function QueuedInputCard({
                 setError(null);
               }}
             >
-              取消
+              {t('common.cancel')}
             </Button>
             <Button
               size="sm"
@@ -417,7 +423,7 @@ function QueuedInputCard({
               disabled={busy !== null || !draft.trim()}
               onClick={() => void saveEdit()}
             >
-              {busy === 'save' ? '保存中…' : '保存'}
+              {busy === 'save' ? t('common.saving') : t('common.save')}
             </Button>
           </div>
         </div>
@@ -426,16 +432,16 @@ function QueuedInputCard({
       )}
       {error ? <Problem role="alert" className="text-xs">{error}</Problem> : null}
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-        <Note className="text-2xs"><Time at={input.created_at} suffix=" · 等待下一次 Run" /></Note>
+        <Note className="text-2xs"><Time at={input.created_at} suffix={` · ${t('tsk.input.queued')}`} /></Note>
         {!editing ? (
           <div className="flex flex-wrap items-center gap-1">
             <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={busy !== null} onClick={() => setEditing(true)}>
               <Pencil className="size-3" aria-hidden="true" />
-              编辑
+              {t('tsk.queued.editBtn')}
             </Button>
             <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" disabled={busy !== null} onClick={() => void withdraw()}>
               <Trash2 className="size-3" aria-hidden="true" />
-              {busy === 'delete' ? '撤回中…' : '撤回'}
+              {busy === 'delete' ? t('tsk.queued.withdrawing') : t('tsk.queued.withdrawBtn')}
             </Button>
             {active ? (
               <Button
@@ -446,7 +452,7 @@ function QueuedInputCard({
                 onClick={() => void control.act('interrupt')}
               >
                 <Zap className="size-3" aria-hidden="true" />
-                立刻中断插话
+                {t('tsk.queued.interruptNowBtn')}
               </Button>
             ) : null}
           </div>
@@ -462,6 +468,7 @@ function QueuedInputCard({
 // `followed` is a review's tier from the round it reviews (§11.5): with no override that,
 // not the role's default, is what the next round would run on.
 function RoleForm({ task, role, followed }: { task: TaskPageData['task']; role: TaskPageData['role']; followed: string | null }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const mounted = useMounted();
   const { data: roles } = useQuery(rolesQuery);
@@ -494,31 +501,31 @@ function RoleForm({ task, role, followed }: { task: TaskPageData['task']; role: 
   const edit = (patch: Partial<typeof shown>): void => setDraft({ ...shown, ...patch });
   const moved = roleMoved || tierMoved;
   return (
-    <section aria-label="职能与档位" className="grid gap-2 pt-1 pb-2">
-      <Select aria-label="职能" wrapperClassName="flex" value={shown.role} disabled={saving} onChange={(event) => edit({ role: event.target.value })}>
-        {shown.role === '' ? <Option value="">选一个职能</Option> : null}
+    <section aria-label={t('tsk.roleForm.sectionAria')} className="grid gap-2 pt-1 pb-2">
+      <Select aria-label={t('tsk.roleForm.roleAria')} wrapperClassName="flex" value={shown.role} disabled={saving} onChange={(event) => edit({ role: event.target.value })}>
+        {shown.role === '' ? <Option value="">{t('tsk.roleForm.pickRole')}</Option> : null}
         {/* A role the list no longer has is still the one this Task names. */}
         {shown.role !== '' && !roles?.some((each) => each.id === shown.role) ? <Option value={shown.role}>{picked?.name ?? shown.role}</Option> : null}
         {(roles ?? []).map((each) => <Option key={each.id} value={each.id}>{each.name}</Option>)}
       </Select>
-      <Select aria-label="档位" wrapperClassName="flex" value={shown.tier} disabled={saving} onChange={(event) => edit({ tier: event.target.value })}>
+      <Select aria-label={t('tsk.roleForm.tierAria')} wrapperClassName="flex" value={shown.tier} disabled={saving} onChange={(event) => edit({ tier: event.target.value })}>
         <Option value="">
           {followed !== null
-            ? `跟被审那一轮（${tierLabel(followed)}）`
-            : picked ? `跟职能默认（${tierLabel(picked.default_tier)}）` : '跟职能默认'}
+            ? t('tsk.roleForm.followReviewedTier', { tier: tierLabel(followed) })
+            : picked ? t('tsk.roleForm.followRoleDefaultWithTier', { tier: tierLabel(picked.default_tier) }) : t('tsk.roleForm.followRoleDefault')}
         </Option>
         {TIERS.map((tier) => <Option key={tier.id} value={tier.id}>{tier.label}</Option>)}
       </Select>
       {shown.tier === '' ? null : (
-        <Input aria-label="理由" placeholder={followed !== null ? '为什么不用被审那一轮的档位（可以不写）' : '为什么不用职能默认的档位（可以不写）'} value={shown.reason} disabled={saving} onChange={(event) => edit({ reason: event.target.value })} />
+        <Input aria-label={t('tsk.roleForm.reasonAria')} placeholder={followed !== null ? t('tsk.roleForm.reasonPlaceholderReviewed') : t('tsk.roleForm.reasonPlaceholderDefault')} value={shown.reason} disabled={saving} onChange={(event) => edit({ reason: event.target.value })} />
       )}
       {(
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant={moved ? 'primary' : 'secondary'} disabled={saving || shown.role === '' || !moved} onClick={() => void save()}>{saving ? '保存中' : '保存'}</Button>
-          {draft ? <Button size="sm" variant="ghost" disabled={saving} onClick={() => { setDraft(null); setError(null); }}>取消</Button> : null}
+          <Button size="sm" variant={moved ? 'primary' : 'secondary'} disabled={saving || shown.role === '' || !moved} onClick={() => void save()}>{saving ? t('tsk.roleForm.saving') : t('common.save')}</Button>
+          {draft ? <Button size="sm" variant="ghost" disabled={saving} onClick={() => { setDraft(null); setError(null); }}>{t('common.cancel')}</Button> : null}
         </div>
       )}
-      <Note className="text-xs">改了只影响以后的轮次。</Note>
+      <Note className="text-xs">{t('tsk.roleForm.futureRoundsNote')}</Note>
       {error ? <Problem role="alert">{error}</Problem> : null}
     </section>
   );
@@ -537,7 +544,6 @@ function TaskComposer({
   currentLogin = null,
   currentMachine = null,
   dimmed = false,
-  incomingQuote = null,
   control,
   className,
 }: {
@@ -549,41 +555,37 @@ function TaskComposer({
   currentLogin?: string | null;
   currentMachine?: string | null;
   dimmed?: boolean;
-  incomingQuote?: { seq: number; source: string; excerpt: string } | null;
   control: TaskAct;
   className?: string;
 }) {
   const { t } = useI18n();
   const client = useQueryClient();
   const live = useLive();
+  const { taskDraftVersion } = useLiveState();
   const mounted = useMounted();
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState(() => live.getTaskDraft(taskId));
   const [snippets, setSnippets] = useState<PastedSnippet[]>([]);
-  const [quotes, setQuotes] = useState<ComposerQuote[]>([]);
   const [sending, setSending] = useState(false);
   const lock = useRef(false);
-  const lastQuoteSeq = useRef(0);
+  const quotes = live.getTaskQuotes(taskId);
+  const prevQuoteCountRef = useRef(quotes.length);
   const isContinue = state === 'done' || state === 'ready' || state === 'held' || state === 'draft';
 
   useEffect(() => {
     setDraft(live.getTaskDraft(taskId));
     setSnippets([]);
-    setQuotes([]);
+    prevQuoteCountRef.current = live.getTaskQuotes(taskId).length;
   }, [live, taskId]);
 
   useEffect(() => {
-    if (!incomingQuote || incomingQuote.seq === lastQuoteSeq.current) return;
-    lastQuoteSeq.current = incomingQuote.seq;
-    const excerpt = trimQuoteExcerpt(incomingQuote.excerpt);
-    if (!excerpt) return;
-    setQuotes((prev) => (
-      prev.length >= MAX_COMPOSER_QUOTES
-        ? prev
-        : [...prev, { id: `tq-${incomingQuote.seq}`, source: incomingQuote.source, excerpt }]
-    ));
-    inputRef.current?.focus();
-  }, [incomingQuote]);
+    const stored = live.getTaskDraft(taskId);
+    setDraft((prev) => (prev === stored ? prev : stored));
+    if (quotes.length > prevQuoteCountRef.current) {
+      inputRef.current?.focus();
+    }
+    prevQuoteCountRef.current = quotes.length;
+  }, [live, taskId, taskDraftVersion, quotes.length]);
 
   function updateDraft(next: string): void {
     setDraft(next);
@@ -600,8 +602,9 @@ function TaskComposer({
 
   async function submit(): Promise<void> {
     const withSnippets = formatTextWithSnippets(draft, snippets);
-    const payload = composeWithQuotes(withSnippets, quotes);
+    const payload = composeWithQuotes(withSnippets, quotes, t);
     if (!payload.trim() || lock.current) return;
+    const sentRevision = live.getTaskDraftRevision(taskId);
     lock.current = true;
     setSending(true);
     try {
@@ -616,11 +619,11 @@ function TaskComposer({
         await post(`/api/tasks/${encodeURIComponent(taskId)}/inputs`, { text: payload });
         await client.invalidateQueries({ queryKey: taskQuery(taskId).queryKey });
       }
-      live.clearTaskDraft(taskId);
-      if (mounted()) {
+      // Only clear if no newer draft edits were made while this request was in flight.
+      const cleared = live.clearTaskDraft(taskId, sentRevision);
+      if (mounted() && cleared) {
         setDraft('');
         setSnippets([]);
-        setQuotes([]);
       }
     } catch (error) {
       if (mounted()) live.showError(messageOf(error));
@@ -662,8 +665,11 @@ function TaskComposer({
           <QuoteTray
             quotes={quotes}
             disabled={sending}
-            onRemove={(qid) => setQuotes((prev) => prev.filter((item) => item.id !== qid))}
-            onClear={() => setQuotes([])}
+            submitDisabled={sending}
+            onRemove={(qid) => live.removeTaskQuote(taskId, qid)}
+            onClear={() => live.clearTaskQuotes(taskId)}
+            onUpdateReply={(qid, reply) => live.updateTaskQuoteReply(taskId, qid, reply)}
+            onSubmit={() => { void submit(); }}
           />
           <PastedSnippetChips
             snippets={snippets}
@@ -676,7 +682,7 @@ function TaskComposer({
               rows={1}
               className="max-h-[40vh] min-h-8 flex-1 overflow-y-auto border-0 bg-transparent px-0 py-1.5 shadow-none focus:outline-0 read-only:bg-transparent"
               placeholder={placeholder}
-              aria-label={isContinue ? '继续发送指令' : '插话'}
+              aria-label={isContinue ? t('tsk.composer.continueAria') : t('task.btnInterject')}
               value={draft}
               readOnly={sending}
               onChange={(event) => { if (!lock.current) updateDraft(event.target.value); }}
@@ -687,7 +693,7 @@ function TaskComposer({
               variant="primary"
               type="submit"
               disabled={sending}
-              aria-label={isContinue ? (sending ? t('common.sending') : '继续发送指令') : undefined}
+              aria-label={isContinue ? (sending ? t('common.sending') : t('tsk.composer.continueAria')) : undefined}
               className="rounded-lg"
             >
               <CornerDownLeft />
@@ -705,7 +711,7 @@ function TaskComposer({
             />
           </div>
         </div>
-        {active ? <Button disabled={control.pending} className="mb-1.5" onClick={() => void control.act('interrupt')}><Square className="size-3 fill-current" />中断</Button> : null}
+        {active ? <Button disabled={control.pending} className="mb-1.5" onClick={() => void control.act('interrupt')}><Square className="size-3 fill-current" />{t('tsk.actions.interruptBtn')}</Button> : null}
       </div>
     </form>
   );
@@ -718,17 +724,17 @@ function TaskComposer({
 // start, and says so.
 function outcomeLine(last: ReleaseResult, running: string): string {
   const from = last.from ?? running;
-  if (last.ok && !last.rolled_back) return `已升到 tycho ${last.to}`;
-  if (last.rolled_back) return `从 tycho ${last.to} 退回了 tycho ${from}`;
-  if (last.in_use === null) return `读不出 current，不确定现在在跑的是 tycho ${from} 还是 tycho ${last.to}`;
-  if (last.in_use === last.from) return `没有换成 tycho ${last.to}，还在 tycho ${from}（这次没有切换）`;
+  if (last.ok && !last.rolled_back) return translate('tsk.release.upgradedTo', { to: last.to });
+  if (last.rolled_back) return translate('tsk.release.rolledBack', { to: last.to, from });
+  if (last.in_use === null) return translate('tsk.release.currentUnreadable', { from, to: last.to });
+  if (last.in_use === last.from) return translate('tsk.release.notSwitched', { to: last.to, from });
   if (last.in_use === last.to) {
     if (!last.verified && last.pending?.length) return incompleteReleaseLine(last.to, last.pending);
     return last.verified
-      ? `装上了 tycho ${last.to}，但没通过检查、也没有退回`
-      : `装上了 tycho ${last.to}，但这一版还没有验证：下次启动才生效`;
+      ? translate('tsk.release.installedFailedCheck', { to: last.to })
+      : translate('tsk.release.installedUnverified', { to: last.to });
   }
-  return `现在在跑的是 tycho ${last.in_use}，不是这次要升的 tycho ${last.to}，也不是原来的 tycho ${from}`;
+  return translate('tsk.release.runningUnexpected', { inUse: last.in_use, to: last.to, from });
 }
 
 // When the card has anything to say: a package to put in place, what the last attempt
@@ -741,8 +747,9 @@ function hasRelease({ packages, last, intent, attempting, fetch: fetched }: Task
 // cleaned, with nothing to press — their packages are gone from what the service offers, so
 // the release card does not come up for them.
 function DroppedCopies({ dropped }: { dropped: DroppedRelease[] }) {
+  const { t } = useI18n();
   return (
-    <section className="grid gap-1 rounded-xl bg-raised px-3.5 py-2.5 text-sm shadow-card" aria-label="已清理的产物">
+    <section className="grid gap-1 rounded-xl bg-raised px-3.5 py-2.5 text-sm shadow-card" aria-label={t('tsk.release.droppedAria')}>
       {dropped.map((each) => <Note key={each.run_id}>{artifactsDroppedText(each)}</Note>)}
     </section>
   );
@@ -771,6 +778,7 @@ function DeliverablesSection({
   deliverables: readonly ProjectFileSummary[];
   autoSync?: boolean;
 }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const live = useLive();
   const mounted = useMounted();
@@ -824,12 +832,12 @@ function DeliverablesSection({
 
   return (
     <section
-      aria-label="交付产物预览"
+      aria-label={t('tsk.deliverables.title')}
       className="overflow-hidden rounded-xl bg-raised shadow-card"
     >
       <div className="flex flex-wrap items-center gap-2 border-b border-border px-3.5 py-2">
         <ImageIcon className="size-4 flex-none text-muted-foreground" aria-hidden="true" />
-        <h2 className={H}>交付产物预览</h2>
+        <h2 className={H}>{t('tsk.deliverables.title')}</h2>
         <Badge tone="plain">{deliverables.length}</Badge>
         <Button
           size="sm"
@@ -839,7 +847,7 @@ function DeliverablesSection({
           onClick={() => void sync(false)}
         >
           <RefreshCw className={cn('size-3.5', syncing && 'animate-spin')} aria-hidden="true" />
-          {syncing ? '同步中…' : '从执行机器同步产物'}
+          {syncing ? t('tsk.deliverables.syncing') : t('tsk.deliverables.syncBtn')}
         </Button>
       </div>
       <div className="grid gap-4 px-3.5 py-3">
@@ -847,8 +855,8 @@ function DeliverablesSection({
         {deliverables.length === 0 ? (
           <Note>
             {autoSyncing
-              ? '正在自动同步产物…'
-              : '尚未从执行机器同步到可预览产物，可点击右上角“从执行机器同步产物”拉取。'}
+              ? t('tsk.deliverables.autoSyncing')
+              : t('tsk.deliverables.emptyHint')}
           </Note>
         ) : null}
         {images.length > 0 ? (
@@ -863,7 +871,7 @@ function DeliverablesSection({
                 >
                   <button
                     type="button"
-                    aria-label={`放大预览：${file.name}`}
+                    aria-label={t('tsk.deliverables.zoomAria', { name: file.name })}
                     onClick={() => setLightboxFile(file)}
                     className="block aspect-4/3 w-full cursor-zoom-in overflow-hidden bg-muted/60 p-2 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                   >
@@ -882,9 +890,9 @@ function DeliverablesSection({
                       <p className="text-faint">{formatFileSize(file.size)}</p>
                     </div>
                     <Button variant="ghost" size="sm" className="h-7 min-h-0 flex-none px-2 text-xs" asChild>
-                      <a href={downloadUrl} download aria-label={`下载 ${file.name}`}>
+                      <a href={downloadUrl} download aria-label={t('tsk.deliverables.downloadAria', { name: file.name })}>
                         <Download className="size-3.5" aria-hidden="true" />
-                        下载
+                        {t('tsk.deliverables.downloadBtn')}
                       </a>
                     </Button>
                   </div>
@@ -919,7 +927,7 @@ function DeliverablesSection({
                 <Button variant="ghost" size="sm" className="flex-none" asChild>
                   <a href={projectFileRawUrl(projectId, file.id, true)} download>
                     <Download className="size-3.5" aria-hidden="true" />
-                    下载
+                    {t('tsk.deliverables.downloadBtn')}
                   </a>
                 </Button>
               </li>
@@ -959,10 +967,14 @@ function ActionCard({ label, icon, title, aside, children }: { label: string; ic
 // hand over. What came of it shows from the service's own record once the page has
 // reconnected — told apart by the version that record says is running now.
 function ReleaseCard({ taskId, releases }: { taskId: string; releases: TaskReleases }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const live = useLive();
   const mounted = useMounted();
-  const [confirming, setConfirming] = useState(false);
+  // Capture exact package identity on first click so a newer package registered underneath
+  // invalidates the confirmation instead of silently launching a different artifact.
+  const [confirmingPkg, setConfirmingPkg] = useState<TaskReleases['packages'][number] | null>(null);
+  const [pkgChanged, setPkgChanged] = useState(false);
   // A click is only a request; the service's record is what says a release is under way.
   // This covers the moment before the page has read that record again.
   const [asked, setAsked] = useState(false);
@@ -978,21 +990,44 @@ function ReleaseCard({ taskId, releases }: { taskId: string; releases: TaskRelea
   const next = intent?.version ?? latest?.version ?? null;
   const answeredAt = intent?.at ?? releases.last?.at ?? null;
 
+  const samePackage = (
+    a: TaskReleases['packages'][number] | null | undefined,
+    b: TaskReleases['packages'][number] | null | undefined,
+  ): boolean => Boolean(a && b && a.run_id === b.run_id && a.file === b.file && a.sha256 === b.sha256 && a.bytes === b.bytes);
+
+  const confirmingMatchesLatest = confirmingPkg !== null && samePackage(confirmingPkg, latest);
+
   // The service went away and came back, or its own record changed: that record is the
   // answer to the click, and the card is its own to offer again.
   useEffect(() => {
     setAsked(false);
-    setConfirming(false);
+    setConfirmingPkg(null);
+    setPkgChanged(false);
   }, [answeredAt]);
 
-  async function launch(): Promise<void> {
-    if (!latest || lock.current) return;
+  useEffect(() => {
+    if (confirmingPkg && !samePackage(confirmingPkg, latest)) {
+      setConfirmingPkg(null);
+      setPkgChanged(true);
+    }
+  }, [confirmingPkg, latest?.run_id, latest?.file, latest?.sha256, latest?.bytes]);
+
+  async function launch(pkg: TaskReleases['packages'][number]): Promise<void> {
+    if (!samePackage(pkg, latest) || lock.current) {
+      setConfirmingPkg(null);
+      setPkgChanged(true);
+      return;
+    }
     lock.current = true;
     try {
       // The name, digest and size the owner confirmed: the service checks them against
       // the package it received, so this click can put nothing else in place.
-      await post(`/api/releases/${encodeURIComponent(latest.run_id)}/launch?confirm=1`, { name: latest.file, sha256: latest.sha256, bytes: latest.bytes });
-      if (mounted()) setAsked(true);
+      await post(`/api/releases/${encodeURIComponent(pkg.run_id)}/launch?confirm=1`, { name: pkg.file, sha256: pkg.sha256, bytes: pkg.bytes });
+      if (mounted()) {
+        setAsked(true);
+        setConfirmingPkg(null);
+        setPkgChanged(false);
+      }
       await client.invalidateQueries({ queryKey: [PAGE] });
     } catch (error) {
       if (mounted()) live.showError(messageOf(error));
@@ -1018,42 +1053,43 @@ function ReleaseCard({ taskId, releases }: { taskId: string; releases: TaskRelea
 
   const last = releases.last;
   return (
-    <ActionCard label="上线" icon={<Rocket />} title="上线" aside={`现在在跑的是 tycho ${releases.version}`}>
+    <ActionCard label={t('tsk.release.title')} icon={<Rocket />} title={t('tsk.release.title')} aside={t('tsk.release.runningAside', { version: releases.version })}>
       {busy ? (
         <Note>{next === null
-          ? '正在上线一个新版本的 tycho：服务会按这个版本的流程停、换、再起来，这一页会自己连回来'
-          : `正在上线 tycho ${next}：服务会按这个版本的流程停、换、再起来，这一页会自己连回来`}</Note>
+          ? t('tsk.release.launchingUnknown')
+          : t('tsk.release.launchingVersion', { version: next })}</Note>
       ) : null}
       {stalled !== null ? (
-        <Note>{`上一次要求上线 tycho ${stalled.version} 没有下文（升级命令已经不在了），上线的记录里没有它的结果。`}</Note>
+        <Note>{t('tsk.release.stalled', { version: stalled.version })}</Note>
       ) : null}
       {fetched !== null && fetched.failed !== null ? (
         <div className="flex flex-wrap items-center gap-2">
           <Problem className="min-w-0 flex-1">{fetched.registered === null
-            ? `这一轮的产物没取回来：${fetched.failed.problem}`
-            : `最近一次重新取产物没成功：${fetched.failed.problem}。现在用的还是之前取回的那一份。`}</Problem>
-          <Button size="sm" disabled={fetching} onClick={() => void refetch()}>重新取产物</Button>
+            ? t('tsk.release.fetchFailedNoPrev', { problem: fetched.failed.problem })
+            : t('tsk.release.fetchFailedHasPrev', { problem: fetched.failed.problem })}</Problem>
+          <Button size="sm" disabled={fetching} onClick={() => void refetch()}>{t('tsk.release.refetchBtn')}</Button>
         </div>
       ) : null}
-      {fetching ? <Note>正在重新取这一轮的产物…</Note> : null}
+      {fetching ? <Note>{t('tsk.release.refetching')}</Note> : null}
+      {pkgChanged ? <Note role="status" className="text-waiting-foreground">{t('tsk.release.packageChanged')}</Note> : null}
       {latest ? (
-        confirming && !busy ? (
+        confirmingMatchesLatest && confirmingPkg && !busy ? (
           <div className="flex flex-wrap items-center gap-2">
-            <span className="min-w-0 flex-1 text-muted-foreground">{`要上线 tycho ${latest.version} 吗？（sha256 ${latest.sha256.slice(0, 12)}…）服务会先让负责人把手头这一回合做完再停；起不来会自己退回上一版。`}</span>
-            <Button variant="primary" onClick={() => void launch()}>确认上线</Button>
-            <Button variant="ghost" onClick={() => setConfirming(false)}>先不上</Button>
+            <span className="min-w-0 flex-1 text-muted-foreground">{t('tsk.release.confirmPrompt', { version: confirmingPkg.version, sha: confirmingPkg.sha256.slice(0, 12) })}</span>
+            <Button variant="primary" onClick={() => void launch(confirmingPkg)}>{t('tsk.release.confirmBtn')}</Button>
+            <Button variant="ghost" onClick={() => setConfirmingPkg(null)}>{t('tsk.release.cancelBtn')}</Button>
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
-            <Note className="min-w-0 flex-1 text-foreground">{`这一轮带回了 tycho ${latest.version} 的发布包（${latest.file}）`}</Note>
-            <Button variant="primary" disabled={busy} onClick={() => setConfirming(true)}>{busy ? '已经在做' : stalled !== null ? '再上线一次' : '上线'}</Button>
+            <Note className="min-w-0 flex-1 text-foreground">{t('tsk.release.packageSummary', { version: latest.version, file: latest.file })}</Note>
+            <Button variant="primary" disabled={busy} onClick={() => { setPkgChanged(false); setConfirmingPkg(latest); }}>{busy ? t('tsk.release.busyBtn') : stalled !== null ? t('tsk.release.retryLaunchBtn') : t('tsk.release.title')}</Button>
           </div>
         )
       ) : null}
       {last ? (
         <div>
           <Note><Time at={last.at} suffix={` · ${outcomeLine(last, releases.version)}`} /></Note>
-          {last.lines.length ? <Details id={`release:${last.at}`} title="这次上线的记录" summaryClassName="text-xs"><pre className={PRE}>{last.lines.join('\n')}</pre></Details> : null}
+          {last.lines.length ? <Details id={`release:${last.at}`} title={t('tsk.release.logTitle')} summaryClassName="text-xs"><pre className={PRE}>{last.lines.join('\n')}</pre></Details> : null}
         </div>
       ) : null}
     </ActionCard>
@@ -1062,11 +1098,25 @@ function ReleaseCard({ taskId, releases }: { taskId: string; releases: TaskRelea
 
 // Merging a delivered PR/branch into main without hunting for a command.
 function LandCard({ taskId, landable }: { taskId: string; landable: LandableInfo }) {
+  const { t } = useI18n();
   const client = useQueryClient();
   const mounted = useMounted();
   const [integrating, setIntegrating] = useState(false);
   const [startedTaskId, setStartedTaskId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const seenAuthoritativeActive = useRef(Boolean(landable.active_landing_task_id));
+
+  // Once the server confirms the active landing task (or integration completes), hand control
+  // back to authoritative `landable` so an abandoned merge task never sticks the card on "merging".
+  useEffect(() => {
+    if (landable.active_landing_task_id) {
+      seenAuthoritativeActive.current = true;
+      setStartedTaskId(null);
+    } else if (landable.already_integrated || seenAuthoritativeActive.current) {
+      seenAuthoritativeActive.current = false;
+      setStartedTaskId(null);
+    }
+  }, [landable.active_landing_task_id, landable.already_integrated]);
 
   const activeLandingId = landable.active_landing_task_id ?? startedTaskId;
   const shouldShow = landable.landable || Boolean(activeLandingId) || landable.already_integrated;
@@ -1099,16 +1149,16 @@ function LandCard({ taskId, landable }: { taskId: string; landable: LandableInfo
   const aside = landable.commit
     ? landable.commit.slice(0, 12)
     : landable.already_integrated
-      ? '已合入'
+      ? t('tsk.land.asideIntegrated')
       : activeLandingId
-        ? '合入中'
-        : '可合入';
+        ? t('tsk.land.asideIntegrating')
+        : t('tsk.land.asideReady');
 
   return (
     <ActionCard
-      label="并入主线"
+      label={t('tsk.land.title')}
       icon={<GitMerge />}
-      title="并入主线"
+      title={t('tsk.land.title')}
       aside={aside}
     >
       {landable.pr ? (
@@ -1120,25 +1170,25 @@ function LandCard({ taskId, landable }: { taskId: string; landable: LandableInfo
       {landable.already_integrated ? (
         <div className="flex flex-wrap items-center gap-2">
           <StatusDot state="done" className="size-3.5" />
-          <span className="font-medium text-success-foreground">已并入主线 ✓</span>
+          <span className="font-medium text-success-foreground">{t('tsk.land.mergedOk')}</span>
           {landable.commit ? <Mono className="text-xs text-muted-foreground">{landable.commit.slice(0, 12)}</Mono> : null}
         </div>
       ) : activeLandingId ? (
         <div className="flex flex-wrap items-center gap-2">
           <StatusDot state={landable.active_landing_task_state ?? 'running'} className="size-3.5" />
-          <span className="text-muted-foreground">正在并入主线</span>
+          <span className="text-muted-foreground">{t('tsk.land.merging')}</span>
           {landable.active_landing_task_state ? (
             <StateBadge state={landable.active_landing_task_state} className="text-2xs" />
           ) : null}
           {landable.active_landing_task_title ? (
             <span className="truncate text-xs text-faint">{landable.active_landing_task_title}</span>
           ) : null}
-          <Link to={`/task/${encodeURIComponent(activeLandingId)}`}>查看并入任务</Link>
+          <Link to={`/task/${encodeURIComponent(activeLandingId)}`}>{t('tsk.land.viewLandingTask')}</Link>
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="primary" disabled={integrating} onClick={() => void integrate()}>
-            {integrating ? '发起中…' : '并入主线'}
+            {integrating ? t('tsk.common.startingEllipsis') : t('tsk.land.title')}
           </Button>
         </div>
       )}
@@ -1149,6 +1199,7 @@ function LandCard({ taskId, landable }: { taskId: string; landable: LandableInfo
 
 // Live background automation status (Router quota rest or active handoff).
 function AutomationNotice({ task, automation }: { task: TaskPageData['task']; automation?: TaskAutomation | null }) {
+  const { t } = useI18n();
   if (!automation) return null;
   const resting = automation.resting_until && Date.parse(automation.resting_until) > Date.now()
     ? automation.resting_until
@@ -1163,13 +1214,13 @@ function AutomationNotice({ task, automation }: { task: TaskPageData['task']; au
       {resting ? (
         <p className="flex items-center gap-1.5">
           <StatusDot state="waiting_timer" className="size-3.5" />
-          <span><Time at={resting} prefix="负责人额度歇息中，约 " suffix=" 恢复后会自动继续处理" /></span>
+          <span><Time at={resting} prefix={t('tsk.auto.restingPrefix')} suffix={t('tsk.auto.restingSuffix')} /></span>
         </p>
       ) : null}
       {processingNext ? (
         <p className="flex items-center gap-1.5">
           <StatusDot state="running" className="size-3.5" />
-          <span>负责人正在自动处理下一步…</span>
+          <span>{t('tsk.auto.routerProcessing')}</span>
         </p>
       ) : null}
     </div>
@@ -1199,17 +1250,18 @@ function ranAs(data: TaskPageData, snapshot: RunSnapshot | undefined): { role: s
 }
 
 const verdictLine = (verdict: VerdictRecord): string =>
-  `${VERDICT_LABELS[verdict.result]}${verdict.same_executor ? `（${SAME_EXECUTOR_LABEL}：${verdict.same_executor} 审的）` : ''} · ${verdict.summary}`;
+  `${VERDICT_LABELS[verdict.result]}${verdict.same_executor ? translate('tsk.review.sameExecutorTag', { label: SAME_EXECUTOR_LABEL, executor: verdict.same_executor }) : ''} · ${verdict.summary}`;
 
 function VerdictFacts({ verdict }: { verdict: VerdictRecord }) {
+  const { t } = useI18n();
   return (
     <>
-      <p className="mt-1.5 wrap-anywhere">{`结论：${verdictLine(verdict)}`}</p>
+      <p className="mt-1.5 wrap-anywhere">{t('tsk.review.verdictLine', { line: verdictLine(verdict) })}</p>
       {(verdict.violations ?? []).map((each, index) => (
-        <Note key={index} className="mt-1 text-xs">{`违反的要求：${each.requirement}；证据：${each.evidence}；要改的范围：${each.scope}`}</Note>
+        <Note key={index} className="mt-1 text-xs">{t('tsk.review.violationLine', { requirement: each.requirement, evidence: each.evidence, scope: each.scope })}</Note>
       ))}
-      {verdict.missing ? <Note className="mt-1 text-xs">{`缺的：${verdict.missing}`}</Note> : null}
-      {verdict.current ? null : <Note className="mt-1 text-xs">这份结论出来时，被审任务的产物已经变了（或已经被退回过），只留作记录，不算数。</Note>}
+      {verdict.missing ? <Note className="mt-1 text-xs">{t('tsk.review.missingLine', { missing: verdict.missing })}</Note> : null}
+      {verdict.current ? null : <Note className="mt-1 text-xs">{t('tsk.review.staleVerdictNote')}</Note>}
     </>
   );
 }
@@ -1219,24 +1271,27 @@ function VerdictFacts({ verdict }: { verdict: VerdictRecord }) {
 // pushed to, or the folder on the machine it was read from. A binding from before code sources
 // has no reviewed commit, and the page shows the binding without one.
 function reviewedText(reviewed: ReviewedCommit): string {
-  if (reviewed.source_kind === 'folder') return '审的是机器上那个文件夹里的提交';
-  const where = reviewed.url ? `仓库 ${reviewed.url}` : '仓库';
-  return reviewed.branch ? `审的是${where} ${reviewed.branch} 分支上的提交` : `审的是${where}上的提交`;
+  if (reviewed.source_kind === 'folder') return translate('tsk.review.reviewedFolder');
+  const where = reviewed.url ? translate('tsk.review.reviewedRepoWithUrl', { url: reviewed.url }) : translate('tsk.review.reviewedRepoGeneric');
+  return reviewed.branch
+    ? translate('tsk.review.reviewedRepoBranch', { where, branch: reviewed.branch })
+    : translate('tsk.review.reviewedRepoCommit', { where });
 }
 
 // What a review is bound to and what it concluded; for a reviewed Task, its reviews and the
 // times a rejection moved it up a tier (docs/design/roles-and-tiers.md §4, §6).
 function ReviewFacts({ review }: { review: TaskReview }) {
+  const { t } = useI18n();
   const { of, verdict, reviews, escalations } = review;
   if (of === null && reviews.length === 0 && escalations.length === 0) return null;
   return (
-    <section aria-label="审阅">
+    <section aria-label={t('tsk.review.sectionLabel')}>
       {of ? (
         <>
-          <p className={LABEL}>审阅对象</p>
+          <p className={LABEL}>{t('tsk.review.targetLabel')}</p>
           <p className="wrap-anywhere">
             <Link to={`/task/${encodeURIComponent(of.task_id)}`}>{of.reviewed_title}</Link>
-            {` 修订 ${of.revision} 的那一轮产物`}
+            {t('tsk.review.targetRevisionSuffix', { revision: of.revision })}
           </p>
           {of.reviewed ? (
             <div className="mt-1">
@@ -1244,23 +1299,31 @@ function ReviewFacts({ review }: { review: TaskReview }) {
               <p><Copyable value={of.reviewed.commit} /></p>
             </div>
           ) : null}
-          {of.files.map((file) => <Note key={file.name} className="mt-1 text-xs">{`${file.name} · ${file.bytes} 字节 · sha256 ${file.sha256.slice(0, 12)}…`}</Note>)}
-          <Note className="mt-1.5 text-xs">{`写过它的执行器：${listText(of.writers)}。有别的执行器能审时，写过的不能来审`}</Note>
-          {verdict ? <VerdictFacts verdict={verdict} /> : <Note className="mt-1.5">还没有结论。</Note>}
+          {of.files.map((file) => <Note key={file.name} className="mt-1 text-xs">{t('tsk.review.fileMeta', { name: file.name, bytes: file.bytes, sha: file.sha256.slice(0, 12) })}</Note>)}
+          <Note className="mt-1.5 text-xs">{t('tsk.review.writersNote', { writers: listText(of.writers) })}</Note>
+          {verdict ? <VerdictFacts verdict={verdict} /> : <Note className="mt-1.5">{t('tsk.review.noVerdictYet')}</Note>}
         </>
       ) : null}
       {reviews.length ? (
         <>
-          <p className={LABEL}>审阅</p>
+          <p className={LABEL}>{t('tsk.review.sectionLabel')}</p>
           {reviews.map((each) => (
             <p key={each.id} className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 wrap-anywhere first-of-type:mt-0">
               <Link to={`/task/${encodeURIComponent(each.id)}`}>{each.title}</Link>
               {each.verdict ? (
-                <span className="text-muted-foreground">{`　${verdictLine(each.verdict)}${each.verdict.current ? '' : '（已不算数）'}`}</span>
+                <span className="text-muted-foreground">
+                  {each.verdict.current
+                    ? t('tsk.review.itemVerdict', { line: verdictLine(each.verdict) })
+                    : t('tsk.review.itemVerdictStale', { line: verdictLine(each.verdict) })}
+                </span>
               ) : (
                 <span className="inline-flex items-center gap-1 text-muted-foreground">
                   <StatusDot state={each.state} className="size-3.5" />
-                  <span>{`${taskStateLabels[each.state] ?? each.state}${each.reason ? `：${each.reason}` : ''}`}</span>
+                  <span>
+                    {each.reason
+                      ? t('tsk.review.stateWithReason', { state: taskStateLabels[each.state] ?? each.state, reason: each.reason })
+                      : (taskStateLabels[each.state] ?? each.state)}
+                  </span>
                 </span>
               )}
             </p>
@@ -1269,7 +1332,7 @@ function ReviewFacts({ review }: { review: TaskReview }) {
       ) : null}
       {escalations.map((each) => (
         <Note key={`${each.at}:${each.review_task_id}`} className="mt-1.5 text-xs">
-          <Time at={each.at} suffix={` · 审阅打回，从${tierLabel(each.from)}升到${tierLabel(each.to)}`} />
+          <Time at={each.at} suffix={t('tsk.review.escalationSuffix', { from: tierLabel(each.from), to: tierLabel(each.to) })} />
         </Note>
       ))}
     </section>
@@ -1279,15 +1342,16 @@ function ReviewFacts({ review }: { review: TaskReview }) {
 // A gate or curation Task belongs to no project (knowledge §3): what it works on, where it came
 // from, and the projects whose content its material carries, which decide where it may run.
 function KnowledgeFacts({ knowledge }: { knowledge: KnowledgeTaskView }) {
+  const { t } = useI18n();
   const { data: projects } = useQuery(projectsQuery);
   const name = (id: string): string => projects?.find((each) => each.id === id)?.name ?? id;
   return (
     <>
-      <p className={LABEL}>知识任务</p>
+      <p className={LABEL}>{t('tsk.knowledge.label')}</p>
       <p className="wrap-anywhere">
         {knowledge.kind === 'gate' && knowledge.proposal_id
-          ? <Link to={`/knowledge/proposals/${encodeURIComponent(knowledge.proposal_id)}`}>把关一份知识提议</Link>
-          : `整理 ${knowledge.entries?.length ?? 0} 条知识`}
+          ? <Link to={`/knowledge/proposals/${encodeURIComponent(knowledge.proposal_id)}`}>{t('tsk.knowledge.gateProposal')}</Link>
+          : t('tsk.knowledge.curateEntries', { count: knowledge.entries?.length ?? 0 })}
       </p>
       <p className="mt-1 text-muted-foreground wrap-anywhere">{knowledgeTaskPlaceText(knowledge.source_project_id === null ? null : name(knowledge.source_project_id), knowledge.projects.map(name))}</p>
     </>
@@ -1297,15 +1361,16 @@ function KnowledgeFacts({ knowledge }: { knowledge: KnowledgeTaskView }) {
 // The skills the Task names (knowledge §4.1): its rounds are given them in full. One retired
 // since stops its next round, so it is said here.
 function NamedSkills({ skills }: { skills: NonNullable<TaskPageData['skills']> }) {
+  const { t } = useI18n();
   return (
     <>
-      <p className={LABEL}>点名的技能</p>
+      <p className={LABEL}>{t('tsk.skills.label')}</p>
       <ul className="grid gap-1">
         {skills.map((skill) => (
           <li key={skill.id} className="wrap-anywhere">
             <Link to={isDirectorySkillId(skill.id) ? `/knowledge?view=entries&select=${encodeURIComponent(skill.id)}` : `/knowledge/entries/${encodeURIComponent(skill.id)}`}>{skill.title ?? skill.id}</Link>
-            {skill.state === 'retired' ? <span className="text-waiting-foreground">（已退役：下一轮不会开，要改掉这个点名）</span> : null}
-            {skill.state === null ? <span className="text-waiting-foreground">（这个技能不在了）</span> : null}
+            {skill.state === 'retired' ? <span className="text-waiting-foreground">{t('tsk.skills.retired')}</span> : null}
+            {skill.state === null ? <span className="text-waiting-foreground">{t('tsk.skills.missing')}</span> : null}
           </li>
         ))}
       </ul>
@@ -1318,9 +1383,15 @@ function NamedSkills({ skills }: { skills: NonNullable<TaskPageData['skills']> }
 // folder on that machine. The machine a folder round ran on is the round's own, shown beside
 // its login.
 function roundSourceText(source: SnapshotSource, run: Run | undefined): string {
-  if (source.kind === 'repo') return source.branch ? `仓库 ${source.url}（分支 ${source.branch}）` : `仓库 ${source.url}`;
+  if (source.kind === 'repo') {
+    return source.branch
+      ? translate('tsk.source.repoWithBranch', { url: source.url, branch: source.branch })
+      : translate('tsk.source.repoOnly', { url: source.url });
+  }
   const machine = run?.machine_id ?? run?.host;
-  return machine ? `${machine} 上的 ${source.path}` : `机器上的文件夹 ${source.path}`;
+  return machine
+    ? translate('tsk.source.folderOnMachine', { machine, path: source.path })
+    : translate('tsk.source.folderGeneric', { path: source.path });
 }
 
 // Where this Task's code comes from (docs/design/code-sources.md §1, §4): the source it is
@@ -1329,15 +1400,18 @@ function roundSourceText(source: SnapshotSource, run: Run | undefined): string {
 // there now or why the pin stops the work. The label is the service's: the page does not work a
 // source out again from the list it happens to have read.
 function SourceFacts({ source, state, label, now }: { source: TaskSource; state: TaskSourceState; label: string | null; now: SourceView[] }) {
+  const { t } = useI18n();
   const here = now.find((item) => item.id === source.source_id);
   return (
-    <section aria-label="这件活选定的来源">
-      <p className={LABEL}>这件活选定的来源</p>
+    <section aria-label={t('tsk.source.selectedLabel')}>
+      <p className={LABEL}>{t('tsk.source.selectedLabel')}</p>
       <p className="wrap-anywhere">{label}</p>
       {state === 'current' ? null : state === 'changed' ? (
-        <Note className="mt-1 text-xs">{`这一项在项目里改过了：现在是${here ? ` ${here.label}` : '别的样子'}，下一轮仍使用这件活选定时的来源；要使用现在的配置，需要改派这件活。`}</Note>
+        <Note className="mt-1 text-xs">
+          {here ? t('tsk.source.changedToKnown', { label: here.label }) : t('tsk.source.changedToOther')}
+        </Note>
       ) : (
-        <Note className="mt-1 text-xs text-waiting-foreground">来源已删除：这件活在改到别的来源之前不会开工。</Note>
+        <Note className="mt-1 text-xs text-waiting-foreground">{t('tsk.source.deleted')}</Note>
       )}
     </section>
   );
@@ -1348,17 +1422,18 @@ function SourceFacts({ source, state, label, now }: { source: TaskSource; state:
 // A snapshot without a source is a round whose project names none: it worked in an empty task
 // directory. A round from before code sources kept `repo` instead and is said as such.
 function RoundSourceFacts({ run, snapshot }: { run: Run | undefined; snapshot: RunSnapshot | undefined }) {
+  const { t } = useI18n();
   if (!snapshot) return null;
   const { source } = snapshot;
   return (
-    <section aria-label="这一轮用的来源">
-      <p className={LABEL}>这一轮用的来源</p>
+    <section aria-label={t('tsk.source.roundLabel')}>
+      <p className={LABEL}>{t('tsk.source.roundLabel')}</p>
       {source !== undefined ? (
         <p className="wrap-anywhere">{roundSourceText(source, run)}</p>
       ) : snapshot.repo !== undefined ? (
-        <Note className="text-xs">这一轮的快照里没有记来源，只有代码包：它是代码来源之前的一轮。</Note>
+        <Note className="text-xs">{t('tsk.source.legacyRepoSnapshot')}</Note>
       ) : (
-        <p className="wrap-anywhere">这一轮在空的任务目录里干活。</p>
+        <p className="wrap-anywhere">{t('tsk.source.emptyDir')}</p>
       )}
     </section>
   );
@@ -1375,6 +1450,7 @@ function TaskDetails({ data, run, wide, embedded = false, selected, snapshot, so
   editable: boolean;
   onSelect: (runId: string | null) => void;
 }) {
+  const { t } = useI18n();
   const { task, work, runs } = data;
   const shown = ranAs(data, snapshot);
   const artifacts = runs.flatMap(shownArtifacts);
@@ -1390,7 +1466,7 @@ function TaskDetails({ data, run, wide, embedded = false, selected, snapshot, so
     // Beside the site it has no heading to fold under; on a narrow page or embedded thread pane it opens on request.
     <Details
       id={embedded ? `task-pane-details:${task.id}` : `task-details:${task.id}`}
-      title={embedded ? '任务详情与配置' : '任务详情'}
+      title={embedded ? t('tsk.details.embeddedTitle') : t('task.details')}
       {...(!embedded && wide ? { open: true } : {})}
       className="text-sm"
       summaryClassName={embedded ? undefined : 'wide:hidden'}
@@ -1398,7 +1474,7 @@ function TaskDetails({ data, run, wide, embedded = false, selected, snapshot, so
       <div className={embedded ? 'pt-2 pb-2' : 'pt-1 pb-3 wide:pt-0'}>
         {task.id === work.id ? null : (
           <>
-            <p className={LABEL}>所属工作</p>
+            <p className={LABEL}>{t('tsk.details.parentWork')}</p>
             <Link to={`/work/${encodeURIComponent(work.id)}`} className="wrap-anywhere">{work.title}</Link>
           </>
         )}
@@ -1410,15 +1486,15 @@ function TaskDetails({ data, run, wide, embedded = false, selected, snapshot, so
 
         {/* (2) 产物 */}
         <section className="mt-5 border-t border-border pt-4 first:mt-0 first:border-t-0 first:pt-0">
-          <h2 className={cn(H, 'mb-2')}>产物</h2>
+          <h2 className={cn(H, 'mb-2')}>{t('tsk.details.artifactsHeading')}</h2>
           <Artifacts items={artifacts} projectId={task.project_id ?? work.project_id ?? undefined} />
         </section>
 
         {/* (3) 执行记录 */}
         <section className="mt-5 border-t border-border pt-4">
           <div className="mb-2 flex items-center justify-between gap-2">
-            <h2 className={H}>执行记录</h2>
-            <Button size="sm" variant="ghost" aria-pressed={selected === null} onClick={() => onSelect(null)}>全部现场</Button>
+            <h2 className={H}>{t('tsk.details.runsHeading')}</h2>
+            <Button size="sm" variant="ghost" aria-pressed={selected === null} onClick={() => onSelect(null)}>{t('tsk.details.allRunsBtn')}</Button>
           </div>
           <div className="flex flex-col gap-1">
             {runs.map((item, index) => (
@@ -1430,18 +1506,18 @@ function TaskDetails({ data, run, wide, embedded = false, selected, snapshot, so
                 onClick={() => onSelect(item.id)}
               >
                 {/* Where each round ran: a Task that names no target may move between rounds. */}
-                <span className="text-sm">{`第 ${index + 1} 轮 · ${EXIT_TEXT[item.exit_kind ?? ''] ?? runStateLabels[item.state]} · ${item.login_name ? loginName(item.login_name) : '未知登录'}`}</span>
-                <small className="text-xs text-faint"><Time at={item.started_at ?? item.created_at} prefix="开始 " /></small>
-                {item.placed_by ? <small className="text-xs text-faint">{`挑法：${placedByLabels[item.placed_by] ?? item.placed_by}`}</small> : null}
-                <small className="text-xs text-faint"><Time at={item.ended_at} prefix="结束 " /></small>
+                <span className="text-sm">{t('tsk.details.roundRow', { round: index + 1, status: EXIT_TEXT[item.exit_kind ?? ''] ?? runStateLabels[item.state], login: item.login_name ? loginName(item.login_name) : t('tsk.details.unknownLogin') })}</span>
+                <small className="text-xs text-faint"><Time at={item.started_at ?? item.created_at} prefix={t('tsk.details.startedPrefix')} /></small>
+                {item.placed_by ? <small className="text-xs text-faint">{t('tsk.details.placedBy', { method: placedByLabels[item.placed_by] ?? item.placed_by })}</small> : null}
+                <small className="text-xs text-faint"><Time at={item.ended_at} prefix={t('tsk.details.endedPrefix')} /></small>
               </button>
             ))}
-            {runs.length ? null : <Note className="text-xs">还没有执行过。</Note>}
+            {runs.length ? null : <Note className="text-xs">{t('tsk.details.noRuns')}</Note>}
           </div>
           {/* The drawer's trigger: when the drawer shuts, the focus comes back here. */}
           {run ? (
             <div className="flex flex-wrap items-center gap-2">
-              <SheetTrigger asChild><Button size="sm" className="mt-2">为什么开始这一轮</Button></SheetTrigger>
+              <SheetTrigger asChild><Button size="sm" className="mt-2">{t('tsk.details.whyStartedBtn')}</Button></SheetTrigger>
               <RunDiagnosticsButton runId={run.id} round={runs.findIndex((item) => item.id === run.id) + 1} />
             </div>
           ) : null}
@@ -1449,38 +1525,50 @@ function TaskDetails({ data, run, wide, embedded = false, selected, snapshot, so
 
         {/* (4) 紧凑配置摘要 */}
         <section className="mt-5 border-t border-border pt-4">
-          <p className={LABEL}>职能</p>
+          <p className={LABEL}>{t('tsk.roleForm.roleAria')}</p>
           <p className="wrap-anywhere">{shown.role}</p>
-          <p className={LABEL}>登录与档位</p>
+          <p className={LABEL}>{t('tsk.details.loginAndTier')}</p>
           {/* The tier is named the way every page names it; a Run's own snapshot decides which
               one that round ran on (docs/design/roles-and-tiers.md §2). */}
           <p className="wrap-anywhere">{loginLine([
             (run?.login_name ?? task.login_name) ? loginName((run?.login_name ?? task.login_name)!) : ANY_LOGIN_TEXT,
             run?.machine_id ?? run?.host ?? task.machine_id,
-            shown.tier ? `${tierLabel(shown.tier)}${shown.from ? `（${tierSubstituteText(shown.from)}）` : shown.source ? `（${TIER_SOURCE_TEXT[shown.source]}）` : ''}` : null,
+            shown.tier
+              ? (shown.from
+                ? t('tsk.details.tierWithNote', { tier: tierLabel(shown.tier), note: tierSubstituteText(shown.from) })
+                : shown.source
+                  ? t('tsk.details.tierWithNote', { tier: tierLabel(shown.tier), note: TIER_SOURCE_TEXT[shown.source] })
+                  : tierLabel(shown.tier))
+              : null,
           ])}</p>
-          {shown.reason ? <Note className="mt-1 text-xs">{`理由：${shown.reason}`}</Note> : null}
+          {shown.reason ? <Note className="mt-1 text-xs">{t('tsk.details.reasonLine', { reason: shown.reason })}</Note> : null}
           {/* The Router's preference for this Task, if it wrote one (roles-and-tiers.md §11):
               names, in its order, and why. A fallback to the tier's order, never a pin. */}
           {task.prefer ? (
             <>
-              <p className={LABEL}>优先名单</p>
-              <p className="wrap-anywhere">{task.prefer.login_ids.join('、') || '（空的，按派发顺序）'}</p>
-              <Note className="mt-1 text-xs">{`理由：${task.prefer.reason}`}</Note>
+              <p className={LABEL}>{t('tsk.details.preferList')}</p>
+              <p className="wrap-anywhere">{task.prefer.login_ids.join(t('tsk.details.preferListSep')) || t('tsk.details.preferListEmpty')}</p>
+              <Note className="mt-1 text-xs">{t('tsk.details.reasonLine', { reason: task.prefer.reason })}</Note>
             </>
           ) : null}
           {/* How the round shown actually ran, as its snapshot recorded it: read-only and to which
               layer, or writable. Nothing is said for a Task that has not run yet. */}
           {/* A read-only round's code check, as its settlement judged it (roles-and-tiers.md §5). */}
-          {snapshot ? <p className="mt-1.5 wrap-anywhere">{`权限：${accessText(snapshot.access)}${run?.error?.code_check ? `，${codeCheckText(run.error.code_check)}` : ''}`}</p> : null}
+          {snapshot ? (
+            <p className="mt-1.5 wrap-anywhere">
+              {run?.error?.code_check
+                ? t('tsk.details.accessWithCheck', { access: accessText(snapshot.access), check: codeCheckText(run.error.code_check) })
+                : t('tsk.details.accessOnly', { access: accessText(snapshot.access) })}
+            </p>
+          ) : null}
           {/* What the round may still read on its machine beyond its snapshot (knowledge §4.1, §1.3). */}
           {snapshot?.machine_inputs ? machineInputsText(snapshot.machine_inputs).map((line) => <p key={line} className="mt-1.5 text-xs text-muted-foreground wrap-anywhere">{line}</p>) : null}
           {task.source ? (
             <SourceFacts source={task.source} state={task.source_state ?? 'current'} label={task.source_label} now={sources} />
           ) : task.project_id ? (
-            <section aria-label="这件活选定的来源">
-              <p className={LABEL}>这件活选定的来源</p>
-              <p className="wrap-anywhere">{task.machine_id ? '使用目标机器默认任务目录（未绑定项目代码来源）。' : '没有配代码来源。'}</p>
+            <section aria-label={t('tsk.source.selectedLabel')}>
+              <p className={LABEL}>{t('tsk.source.selectedLabel')}</p>
+              <p className="wrap-anywhere">{task.machine_id ? t('tsk.source.defaultMachineDir') : t('tsk.source.noneConfigured')}</p>
             </section>
           ) : null}
           {/* What the round shown was told, apart from what the work is pinned to now — merged when identical. */}
@@ -1491,7 +1579,7 @@ function TaskDetails({ data, run, wide, embedded = false, selected, snapshot, so
         {editable ? (
           <Details
             id={`role-form:${task.id}`}
-            title="调整职能与档位"
+            title={t('tsk.details.adjustRoleTier')}
             {...(task.role_id === null ? { open: true } : {})}
             className="mt-4 border-t border-border pt-2"
           >
@@ -1502,34 +1590,34 @@ function TaskDetails({ data, run, wide, embedded = false, selected, snapshot, so
         {runs.length ? (
           // Each round shows what it was sent out with; this is the Task as it stands now, which a
           // revision since the last round has changed.
-          <Details id={`goal:${task.id}`} title="现在的目标与验收标准" className="mt-4 border-t border-border pt-2">
+          <Details id={`goal:${task.id}`} title={t('tsk.details.currentGoalAndAcceptance')} className="mt-4 border-t border-border pt-2">
             <div className="pb-2">
               <Markdown text={task.goal} projectId={task.project_id ?? work.project_id ?? undefined} />
-              {task.acceptance ? <><p className={LABEL}>验收标准</p><Markdown text={task.acceptance} projectId={task.project_id ?? work.project_id ?? undefined} /></> : null}
+              {task.acceptance ? <><p className={LABEL}>{t('task.acceptance')}</p><Markdown text={task.acceptance} projectId={task.project_id ?? work.project_id ?? undefined} /></> : null}
             </div>
           </Details>
         ) : null}
 
         {/* (6) 技术细节 */}
-        <Details id={`tech:${task.id}`} title="技术细节" className="mt-4 border-t border-border pt-2">
+        <Details id={`tech:${task.id}`} title={t('tsk.details.techTitle')} className="mt-4 border-t border-border pt-2">
           <div className="pb-2">
-            <p className={LABEL}>任务编号</p>
+            <p className={LABEL}>{t('tsk.details.taskId')}</p>
             <p><Copyable value={task.id} /></p>
-            <p className={LABEL}>当前修订</p>
+            <p className={LABEL}>{t('tsk.details.currentRevision')}</p>
             <p><Copyable value={String(task.revision)} /></p>
             {run ? (
               <>
-                <p className={LABEL}>这一轮的修订</p>
+                <p className={LABEL}>{t('tsk.details.roundRevision')}</p>
                 <p><Copyable value={String(run.task_revision)} /></p>
               </>
             ) : null}
             {runs.map((item, index) => (
               <div key={item.id}>
-                <p className={LABEL}>{`第 ${index + 1} 轮的 Run id`}</p>
+                <p className={LABEL}>{t('tsk.details.roundRunId', { round: index + 1 })}</p>
                 <p><Copyable value={item.id} /></p>
                 {item.session_ref ? (
                   <>
-                    <p className={LABEL}>{`第 ${index + 1} 轮执行器里的会话`}</p>
+                    <p className={LABEL}>{t('tsk.details.roundSession', { round: index + 1 })}</p>
                     <p><Copyable value={item.session_ref} /></p>
                     <Note className="mt-1 text-xs">{task.state === 'held' && !active
                       ? (() => {
@@ -1539,16 +1627,16 @@ function TaskDetails({ data, run, wide, embedded = false, selected, snapshot, so
                             : item.executor === 'dsh' ? `dsh --profile headless --session-id ${item.session_ref}`
                             : null;
                           return cmd
-                            ? `在实例上 ${cmd} 查看。人工操作后，请通过插话说明现场变化。`
-                            : '可在实例上查阅原生记录。此账号的续接方式未提供。';
+                            ? t('tsk.details.resumeCmdHint', { cmd })
+                            : t('tsk.details.resumeUnavailableHint');
                         })()
-                      : '执行期间请在这里查看现场。'}</Note>
+                      : t('tsk.details.liveHereHint')}</Note>
                   </>
                 ) : null}
               </div>
             ))}
             {runs.length ? (
-              <Details id={`replay:${task.id}`} title="回放与隔离重跑" lazy className="mt-3 border-t border-border pt-2">
+              <Details id={`replay:${task.id}`} title={t('tsk.details.replayTitle')} lazy className="mt-3 border-t border-border pt-2">
                 <TrajectoryReplay runs={runs} />
               </Details>
             ) : null}
@@ -1570,63 +1658,64 @@ interface TraceView {
 }
 
 function TraceDrawer({ view, projectId }: { view: TraceView; projectId?: string }) {
+  const { t } = useI18n();
   const { trace } = view;
   const heading = 'mt-5 mb-1.5 text-sm font-semibold first:mt-0';
   return (
-    <SheetContent title={`第 ${view.round} 轮为什么开始`}>
-      {view.loading ? <Note>正在读取…</Note> : view.failure ? <Problem>{view.failure}</Problem> : trace ? (
+    <SheetContent title={t('tsk.trace.sheetTitle', { round: view.round })}>
+      {view.loading ? <Note>{t('tsk.common.readingEllipsis')}</Note> : view.failure ? <Problem>{view.failure}</Problem> : trace ? (
         <div>
-          <h3 className={heading}>触发</h3>
+          <h3 className={heading}>{t('tsk.trace.triggerHeading')}</h3>
           <p>{trace.trigger.label}</p>
           {trace.trigger.message ? <Markdown text={trace.trigger.message.text} className="mt-1.5" projectId={projectId} /> : null}
           {trace.trigger.change
             ? <Note className="mt-1.5"><Time at={trace.trigger.change.at} suffix={` · ${trace.trigger.change.actor} · ${trace.trigger.change.action}`} /></Note>
-            : <Note className="mt-1.5">账本里未找到可核实的触发记录</Note>}
+            : <Note className="mt-1.5">{t('tsk.trace.noTriggerChange')}</Note>}
           {trace.trigger.tool_call || trace.origin_call ? (
             [trace.trigger.tool_call, trace.origin_call].map((call, index) => call && (
               <section key={call.id}>
-                <h3 className={heading}>{index === 0 ? '本轮的负责人调用' : '建任务时的负责人调用'}</h3>
+                <h3 className={heading}>{index === 0 ? t('tsk.trace.roundRouterCall') : t('tsk.trace.originRouterCall')}</h3>
                 <p className="wrap-anywhere"><Mono>{call.name}</Mono></p>
                 <Note><Time at={call.started_at} /></Note>
-                {call.committed.length > 0 ? <p>账本已提交操作。</p> : <Note>本次调用没有关联的账本操作。</Note>}
-                <Note>{call.result_state ? ROUTER_CALL_RESULT_TEXT[call.result_state] : '调用的返回未确认。'}</Note>
-                {call.receipt_confirmed ? null : <Note>负责人是否收到结果未知。</Note>}
-                <Details id={`tool-io:${call.id}`} title="查看工具输入与结果" className="mt-2">
-                  <p className={LABEL}>收到的参数</p>
-                  {call.request === null ? <Note>参数未记录。</Note> : <pre className={PRE}>{call.request}</pre>}
-                  <p className={LABEL}>服务生成的结果</p>
-                  {call.result === null ? <Note>结果正文未记录。</Note> : <pre className={PRE}>{call.result}</pre>}
+                {call.committed.length > 0 ? <p>{t('tsk.trace.ledgerCommitted')}</p> : <Note>{t('tsk.trace.noLedgerOp')}</Note>}
+                <Note>{call.result_state ? ROUTER_CALL_RESULT_TEXT[call.result_state] : t('tsk.trace.callReturnUnconfirmed')}</Note>
+                {call.receipt_confirmed ? null : <Note>{t('tsk.trace.receiptUnconfirmed')}</Note>}
+                <Details id={`tool-io:${call.id}`} title={t('tsk.trace.viewToolIo')} className="mt-2">
+                  <p className={LABEL}>{t('tsk.trace.requestParams')}</p>
+                  {call.request === null ? <Note>{t('tsk.trace.paramsUnrecorded')}</Note> : <pre className={PRE}>{call.request}</pre>}
+                  <p className={LABEL}>{t('tsk.trace.serviceResult')}</p>
+                  {call.result === null ? <Note>{t('tsk.trace.resultUnrecorded')}</Note> : <pre className={PRE}>{call.result}</pre>}
                 </Details>
               </section>
             ))
-          ) : trace.trigger.message ? <Note className="mt-1.5">没有这次派发对应的负责人工具记录。</Note> : null}
-          <h3 className={heading}>绑定的插话</h3>
+          ) : trace.trigger.message ? <Note className="mt-1.5">{t('tsk.trace.noRouterToolRecord')}</Note> : null}
+          <h3 className={heading}>{t('tsk.trace.boundInputsHeading')}</h3>
           {trace.inputs.length
             ? <div className="grid gap-1.5">{trace.inputs.map((input, index) => <p key={index} className="wrap-anywhere">{input.text}</p>)}</div>
-            : <Note>没有绑定的插话</Note>}
-          <h3 className={heading}>沿用的执行器会话</h3>
-          <p className="wrap-anywhere">{trace.session_ref ?? '本轮新开'}</p>
-          <p className="mt-1">{`快照修订 ${trace.task_revision}`}</p>
-          <h3 className={heading}>派发时的条件</h3>
+            : <Note>{t('tsk.trace.noBoundInputs')}</Note>}
+          <h3 className={heading}>{t('tsk.trace.executorSessionHeading')}</h3>
+          <p className="wrap-anywhere">{trace.session_ref ?? t('tsk.trace.newSessionThisRound')}</p>
+          <p className="mt-1">{t('tsk.trace.snapshotRevision', { revision: trace.task_revision })}</p>
+          <h3 className={heading}>{t('tsk.trace.dispatchConditionsHeading')}</h3>
           {trace.dispatchConditions
             ? <pre className={PRE}>{JSON.stringify(trace.dispatchConditions, null, 2)}</pre>
-            : <Note>这轮没有记录派发条件，无法还原</Note>}
+            : <Note>{t('tsk.trace.noDispatchConditions')}</Note>}
           {trace.settlement ? (
             <>
-              <h3 className={heading}>结算与通知</h3>
-              <p>{trace.settlement.task_state ? taskStateLabels[trace.settlement.task_state as keyof typeof taskStateLabels] ?? trace.settlement.task_state : '未记录结算时的任务状态'}</p>
+              <h3 className={heading}>{t('tsk.trace.settlementHeading')}</h3>
+              <p>{trace.settlement.task_state ? taskStateLabels[trace.settlement.task_state as keyof typeof taskStateLabels] ?? trace.settlement.task_state : t('tsk.trace.noSettlementState')}</p>
               <Note><Time at={trace.settlement.at} /></Note>
-              {trace.settlement.policy?.reason === 'owner_acceptance_requested' ? <Note>按这次任务的要求，服务直接通知你验收。</Note> : null}
-              <Note>{{
-                held: '结果通知等待合并。',
-                pending: '结果通知已入出站队列。',
-                sent: '出站记录为已发送。',
-                given_up: '结果通知已停止重试。',
-                unknown: '没有可核实的结果通知记录。',
-              }[trace.settlement.delivery]}</Note>
+              {trace.settlement.policy?.reason === 'owner_acceptance_requested' ? <Note>{t('tsk.trace.ownerAcceptancePolicy')}</Note> : null}
+              <Note>{t({
+                held: 'tsk.trace.delivery.held',
+                pending: 'tsk.trace.delivery.pending',
+                sent: 'tsk.trace.delivery.sent',
+                given_up: 'tsk.trace.delivery.given_up',
+                unknown: 'tsk.trace.delivery.unknown',
+              }[trace.settlement.delivery])}</Note>
             </>
           ) : null}
-          <Details id={`changes:${view.runId}`} title="相关状态变更" className="mt-3">
+          <Details id={`changes:${view.runId}`} title={t('tsk.trace.relatedChanges')} className="mt-3">
             {trace.changes.map((change, index) => <Note key={index} className="mb-1 pl-5"><Time at={change.at} suffix={` · ${change.action} · ${change.actor}`} /></Note>)}
           </Details>
         </div>
@@ -1752,10 +1841,10 @@ function TaskSiteBody({
   control: TaskAct;
   end: RefObject<HTMLDivElement | null>;
   onSelect: (runId: string | null) => void;
-  onQuote?: (quote: { source: string; excerpt: string }) => void;
+  onQuote?: (quote: { source: string; sourceKey?: QuoteSourceKey; excerpt: string }) => void;
   className?: string;
 }) {
-  const { t, bi } = useI18n();
+  const { t } = useI18n();
   const { task, runs } = data;
   const inputs = data.inputs.filter((input) => !selected || !input.run_id || input.run_id === selected);
   const queuedInputs = inputs.filter((input) => input.state === 'queued');
@@ -1798,16 +1887,22 @@ function TaskSiteBody({
   ].sort((a, b) => a.at.localeCompare(b.at));
 
   const [viewTab, setViewTab] = useState<'process' | 'diff'>('process');
+  const processTabRef = useRef<HTMLButtonElement>(null);
+  const diffTabRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     setViewTab('process');
   }, [task.id]);
 
-  const collapseOlder = selected === null && runs.length > 1;
-  const olderRuns = collapseOlder ? runs.slice(0, -1) : [];
-  const expandedRuns = collapseOlder ? runs.slice(-1) : shown;
-  const olderRunIds = new Set(olderRuns.map((run) => run.id));
-  const expandedInputs = historyInputs.filter((input) => !input.run_id || !olderRunIds.has(input.run_id));
-  const entries = buildTimelineEntries(expandedRuns, expandedInputs);
+  // Every ended round renders inside a collapsible `<Details id="round:<run>">`.
+  // Earlier ended rounds start collapsed and lazy-mounted; the latest (or explicitly
+  // selected) ended round starts expanded (`defaultOpen={true}`) so it reads immediately
+  // while remaining 1-click collapsible. Live active rounds stay directly on the timeline.
+  const endedShownRuns = shown.filter((run) => run.state === 'ended');
+  const activeShownRuns = shown.filter((run) => run.state !== 'ended');
+  const endedRunIds = new Set(endedShownRuns.map((run) => run.id));
+  const latestRunId = runs.at(-1)?.id ?? null;
+  const looseHistoryInputs = historyInputs.filter((input) => !input.run_id || !endedRunIds.has(input.run_id));
+  const entries = buildTimelineEntries(activeShownRuns, looseHistoryInputs);
   const shownEventsCount = shown.reduce((total, run) => total + streams.events(run.id).length, 0);
 
   const fallbackChanges = useMemo(
@@ -1823,23 +1918,23 @@ function TaskSiteBody({
           const sha = artifact.ref.trim();
           if (!seen.has(sha)) {
             seen.add(sha);
-            items.push({ commit: sha, label: `第 ${index + 1} 轮` });
+            items.push({ commit: sha, label: t('tsk.common.roundN', { n: index + 1 }) });
           }
         }
       }
     });
     if (data.landable?.commit && !seen.has(data.landable.commit)) {
-      items.push({ commit: data.landable.commit, label: '当前交付' });
+      items.push({ commit: data.landable.commit, label: t('tsk.siteBody.currentDeliverable') });
     }
     return items;
-  }, [runs, data.landable?.commit]);
+  }, [runs, data.landable?.commit, t]);
 
   const canShowDiffTab = runs.length > 0 || fallbackChanges.length > 0 || Boolean(task.source);
 
   return (
     <div className={className}>
       {data.dispatch_info?.failover_note ? (
-        <Callout tone="plain" role="status" aria-label="自动切换账号说明" className="py-2 text-xs text-muted-foreground">
+        <Callout tone="plain" role="status" aria-label={t('tsk.siteBody.failoverAria')} className="py-2 text-xs text-muted-foreground">
           {data.dispatch_info.failover_note}
         </Callout>
       ) : null}
@@ -1877,21 +1972,35 @@ function TaskSiteBody({
       })()}
       {selected !== null ? (
         <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted px-3.5 py-2 text-sm">
-          <span>{`当前仅看第 ${runs.findIndex((run) => run.id === selected) + 1} 轮`}</span>
-          <Button size="sm" variant="ghost" onClick={() => onSelect(null)}>显示全部</Button>
+          <span>{t('tsk.siteBody.viewingSingleRound', { round: runs.findIndex((run) => run.id === selected) + 1 })}</span>
+          <Button size="sm" variant="ghost" onClick={() => onSelect(null)}>{t('tsk.siteBody.showAllRounds')}</Button>
         </div>
       ) : null}
       {canShowDiffTab ? (
         <div
           role="tablist"
-          aria-label="任务视图切换"
+          aria-label={t('tsk.siteBody.viewSwitchAria')}
           className="inline-flex w-fit items-center gap-1 rounded-lg border border-border bg-muted/50 p-0.5 text-xs"
         >
           <button
+            ref={processTabRef}
+            id={`task-tab-process-${task.id}`}
             type="button"
             role="tab"
             aria-selected={viewTab === 'process'}
+            aria-controls={`task-panel-process-${task.id}`}
+            tabIndex={viewTab === 'process' ? 0 : -1}
             onClick={() => setViewTab('process')}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowRight' || event.key === 'ArrowLeft' || event.key === 'End') {
+                event.preventDefault();
+                setViewTab('diff');
+                diffTabRef.current?.focus();
+              } else if (event.key === 'Home') {
+                event.preventDefault();
+                processTabRef.current?.focus();
+              }
+            }}
             className={cn(
               'rounded-md px-3 py-1 font-medium transition-colors',
               viewTab === 'process'
@@ -1899,13 +2008,27 @@ function TaskSiteBody({
                 : 'text-muted-foreground hover:text-foreground',
             )}
           >
-            {bi('过程', 'Process')}
+            {t('tsk.siteBody.tabProcess')}
           </button>
           <button
+            ref={diffTabRef}
+            id={`task-tab-diff-${task.id}`}
             type="button"
             role="tab"
             aria-selected={viewTab === 'diff'}
+            aria-controls={`task-panel-diff-${task.id}`}
+            tabIndex={viewTab === 'diff' ? 0 : -1}
             onClick={() => setViewTab('diff')}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'Home') {
+                event.preventDefault();
+                setViewTab('process');
+                processTabRef.current?.focus();
+              } else if (event.key === 'End') {
+                event.preventDefault();
+                diffTabRef.current?.focus();
+              }
+            }}
             className={cn(
               'inline-flex items-center gap-1 rounded-md px-3 py-1 font-medium transition-colors',
               viewTab === 'diff'
@@ -1914,52 +2037,57 @@ function TaskSiteBody({
             )}
           >
             <Code2 className="size-3.5" aria-hidden="true" />
-            {bi('代码变更', 'Code changes')}
+            {t('tsk.siteBody.tabDiff')}
           </button>
         </div>
       ) : null}
       {viewTab === 'diff' ? (
-        <TaskDiffPanel
-          taskId={task.id}
-          taskState={task.state}
-          selectedRunId={selected}
-          fallbackChanges={fallbackChanges}
-          checkpointCommits={checkpointCommits}
-          onSubmitted={() => setViewTab('process')}
-        />
+        <div id={`task-panel-diff-${task.id}`} role="tabpanel" aria-labelledby={`task-tab-diff-${task.id}`} className="min-w-0">
+          <TaskDiffPanel
+            taskId={task.id}
+            taskState={task.state}
+            selectedRunId={selected}
+            fallbackChanges={fallbackChanges}
+            checkpointCommits={checkpointCommits}
+            onSubmitted={() => setViewTab('process')}
+          />
+        </div>
       ) : (
-        <>
+        <div id={`task-panel-process-${task.id}`} role={canShowDiffTab ? 'tabpanel' : undefined} aria-labelledby={canShowDiffTab ? `task-tab-process-${task.id}` : undefined} className="flex min-w-0 flex-col gap-5">
           {long ? (
             <div className="sticky top-0 z-10 -my-1 flex flex-wrap items-center gap-2 bg-background py-2">
               <Button size="sm" onClick={() => end.current?.scrollIntoView({ block: 'end' })}><ArrowDownToLine />{t('task.jumpLatest')}</Button>
               <Button size="sm" aria-pressed={reportsOnly} onClick={() => setReportsOnly((only) => !only)}>{t('task.reportsOnly')}</Button>
-              <Note className="text-xs">{bi(`这段现场有 ${shownEventsCount} 条过程记录`, `${shownEventsCount} process events`)}</Note>
+              <Note className="text-xs">{t('tsk.siteBody.processEventsCount', { count: shownEventsCount })}</Note>
             </div>
           ) : null}
-          {olderRuns.length > 0 ? (
-            <div className="grid gap-2">
-              {olderRuns.map((run, index) => {
+          {endedShownRuns.length > 0 ? (
+            <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2.5">
+              {endedShownRuns.map((run) => {
+                const roundNumber = runs.indexOf(run) + 1;
                 const roundInputs = historyInputs.filter((input) => input.run_id === run.id);
                 const roundEntries = buildTimelineEntries([run], roundInputs);
                 const snippet = run.receipt?.summary ?? run.error?.reason ?? run.error?.message ?? '';
+                const defaultExpanded = selected !== null || run.id === latestRunId;
                 return (
                   <Details
                     key={run.id}
                     id={`round:${run.id}`}
-                    className="rounded-xl border border-border bg-raised/60 px-3 py-1"
+                    defaultOpen={defaultExpanded}
+                    className="min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-raised/60 px-3 py-1"
                     summaryClassName="min-h-9 gap-2 text-foreground"
-                    title={(
-                      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
-                        <span className="font-medium">{`第 ${index + 1} 轮`}</span>
-                        <Badge tone={exitTone(run)}>{exitText(run)}</Badge>
-                        {snippet ? <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{snippet}</span> : null}
-                        <Time at={run.ended_at ?? run.created_at} className="ml-auto text-xs text-faint" />
+                    title={(isOpen) => (
+                      <span className="flex min-w-0 flex-1 items-center gap-x-2 overflow-hidden text-sm">
+                        <span className="flex-none whitespace-nowrap font-medium">{t('tsk.common.roundN', { n: roundNumber })}</span>
+                        <Badge tone={exitTone(run)} className="flex-none">{exitText(run)}</Badge>
+                        {!isOpen && snippet ? <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{snippet}</span> : null}
+                        <Time at={run.ended_at ?? run.created_at} className="ml-auto flex-none whitespace-nowrap text-xs text-faint" />
                       </span>
                     )}
                   >
-                    <div className="relative mt-2 mb-3 flex flex-col gap-5 before:absolute before:top-3 before:bottom-3 before:left-[11.5px] before:w-px before:bg-border">
+                    <div className="relative mt-2 mb-3 flex min-w-0 flex-col gap-5 before:absolute before:top-3 before:bottom-3 before:left-[11.5px] before:w-px before:bg-border">
                       {roundEntries.map((entry) => (
-                        <div key={entry.key} className="relative pl-10">
+                        <div key={entry.key} className="relative min-w-0 pl-10">
                           {entry.mark ? <span aria-hidden="true" className={cn('absolute top-0 left-0 flex size-6 items-center justify-center rounded-full bg-raised shadow-card [&_svg]:size-3.5', entry.tone)}>{entry.mark}</span> : null}
                           {entry.node}
                         </div>
@@ -1971,10 +2099,10 @@ function TaskSiteBody({
             </div>
           ) : null}
           {entries.length ? (
-            // The site as a line of time: what was sent out, what came back, what was said in between.
-            <div className="relative flex flex-col gap-6 before:absolute before:top-3 before:bottom-3 before:left-[11.5px] before:w-px before:bg-border">
+            // The site as a line of time: active live round & unassigned history entries.
+            <div className="relative flex min-w-0 flex-col gap-6 before:absolute before:top-3 before:bottom-3 before:left-[11.5px] before:w-px before:bg-border">
               {entries.map((entry) => (
-                <div key={entry.key} className="relative pl-10">
+                <div key={entry.key} className="relative min-w-0 pl-10">
                   {entry.mark ? <span aria-hidden="true" className={cn('absolute top-0 left-0 flex size-6 items-center justify-center rounded-full bg-raised shadow-card [&_svg]:size-3.5', entry.tone)}>{entry.mark}</span> : null}
                   {entry.node}
                 </div>
@@ -1982,9 +2110,9 @@ function TaskSiteBody({
             </div>
           ) : null}
           {queuedInputs.length > 0 ? (
-            <section aria-label="待下一轮接收" className="grid gap-2 rounded-xl border border-dashed border-border-strong bg-muted/40 p-3.5">
-              <p className="text-xs font-medium text-muted-foreground">待下一轮接收</p>
-              <div className="flex flex-col gap-2">
+            <section aria-label={t('tsk.siteBody.queuedForNextRound')} className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 rounded-xl border border-dashed border-border-strong bg-muted/40 p-3.5">
+              <p className="text-xs font-medium text-muted-foreground">{t('tsk.siteBody.queuedForNextRound')}</p>
+              <div className="flex min-w-0 flex-col gap-2">
                 {queuedInputs.map((input) => (
                   <QueuedInputCard
                     key={input.id}
@@ -2000,19 +2128,19 @@ function TaskSiteBody({
           <div ref={end} aria-hidden="true" />
           {runs.length ? null : (
             // Not run yet: no dispatch note says what it is for, so the Task says it itself.
-            <section aria-label="任务目标" className="grid gap-3">
-              <div className="rounded-xl bg-muted px-4 py-3.5">
+            <section aria-label={t('tsk.siteBody.taskGoalAria')} className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3">
+              <div className="min-w-0 max-w-full overflow-hidden rounded-xl bg-muted px-4 py-3.5">
                 <Markdown text={task.goal} projectId={projectId ?? undefined} />
-                {task.acceptance ? <><p className="mt-3 mb-1 text-xs text-faint">验收标准</p><Markdown text={task.acceptance} projectId={projectId ?? undefined} /></> : null}
+                {task.acceptance ? <><p className="mt-3 mb-1 text-xs text-faint">{t('task.acceptance')}</p><Markdown text={task.acceptance} projectId={projectId ?? undefined} /></> : null}
               </div>
-              <Note>还没有执行记录，插话会在下一次执行时送达。</Note>
+              <Note>{t('tsk.siteBody.noRunsYet')}</Note>
             </section>
           )}
           <RunFactsCard taskId={task.id} projectId={task.project_id ?? null} />
-          <Details id={`feedback:${task.id}`} title="任务反馈" lazy>
+          <Details id={`feedback:${task.id}`} title={t('tsk.feedback.sectionLabel')} lazy>
             <TaskFeedbackPanel key={`${task.id}:${selected ?? ''}`} taskId={task.id} runs={runs} selectedRun={selected} />
           </Details>
-        </>
+        </div>
       )}
     </div>
   );
@@ -2026,7 +2154,6 @@ export interface TaskThreadPaneProps {
   focused?: boolean;
   onToggleFocus?: () => void;
   dimmed?: boolean;
-  incomingQuote?: { seq: number; source: string; excerpt: string } | null;
 }
 
 // Embedded right-hand split-pane inside the Project Workspace: shares 100% of the live stream,
@@ -2039,21 +2166,15 @@ export function TaskThreadPane({
   focused = false,
   onToggleFocus,
   dimmed = false,
-  incomingQuote = null,
 }: TaskThreadPaneProps) {
+  const live = useLive();
+  const paneRef = useRef<HTMLElement>(null);
   const [requestedRun, setRequestedRun] = useState<string | null>(null);
-  const [localQuote, setLocalQuote] = useState<{ seq: number; source: string; excerpt: string } | null>(null);
-  const quoteSeqRef = useRef(10000);
   useEffect(() => {
     setRequestedRun(null);
-    setLocalQuote(null);
   }, [id]);
-  useEffect(() => {
-    if (incomingQuote) setLocalQuote(incomingQuote);
-  }, [incomingQuote]);
-  const pushLocalQuote = (quote: { source: string; excerpt: string }) => {
-    quoteSeqRef.current += 1;
-    setLocalQuote({ seq: quoteSeqRef.current, ...quote });
+  const pushLocalQuote = (quote: { source: string; sourceKey?: QuoteSourceKey; excerpt: string }) => {
+    live.addTaskQuote(id, quote);
   };
 
   const {
@@ -2081,7 +2202,7 @@ export function TaskThreadPane({
     hasSession,
   } = useTaskWorkspace(id, requestedRun, setRequestedRun);
 
-  const { t, bi } = useI18n();
+  const { t } = useI18n();
   const currentLogin = data
     ? data.dispatch_info?.latest_login ?? (current?.login_name ? loginName(current.login_name) : (data.task.login_name ? loginName(data.task.login_name) : null))
     : null;
@@ -2092,7 +2213,7 @@ export function TaskThreadPane({
 
   return (
     <Sheet open={trace !== null} onOpenChange={(open) => { if (open) void openTrace(); else setTraceView(null); }}>
-      <section aria-label={bi('任务线程', 'Task thread')} className="flex h-full min-h-0 flex-col bg-background">
+      <section ref={paneRef} data-pane="thread" aria-label={t('tsk.pane.title')} className="flex h-full min-h-0 flex-col bg-background">
         {hideHeaderChrome ? (
           <div className="flex flex-none flex-col gap-1 border-b border-border bg-muted/30 px-4 py-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -2115,9 +2236,9 @@ export function TaskThreadPane({
                   </Button>
                 ) : null}
                 <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" asChild>
-                  <Link to={`/task/${encodeURIComponent(id)}`} aria-label={bi('在独立页面打开', 'Open in full page')} title={bi('在独立页面打开', 'Open in full page')}>
+                  <Link to={`/task/${encodeURIComponent(id)}`} aria-label={t('tsk.pane.openFullPage')} title={t('tsk.pane.openFullPage')}>
                     <ExternalLink className="size-3.5" aria-hidden="true" />
-                    {bi('独立页面', 'Full page')}
+                    {t('tsk.pane.fullPageShort')}
                   </Link>
                 </Button>
               </div>
@@ -2129,7 +2250,7 @@ export function TaskThreadPane({
                 {data.task.lost?.waiting?.no_candidate ? (
                   <>
                     {' · '}
-                    <Link to={data.task.project_id ? `/projects/${encodeURIComponent(data.task.project_id)}/settings` : '/accounts'}>{bi('检查项目登录', 'Check project logins')}</Link>
+                    <Link to={data.task.project_id ? `/projects/${encodeURIComponent(data.task.project_id)}/settings` : '/accounts'}>{t('tsk.checkProjectLogins')}</Link>
                   </>
                 ) : null}
               </p>
@@ -2156,7 +2277,7 @@ export function TaskThreadPane({
                 </>
               ) : (
                 <div className="min-w-0 flex-1">
-                  {isPending ? <Skeleton className="h-4 w-36" /> : <span className="text-sm font-semibold text-muted-foreground">{bi('任务线程', 'Task thread')}</span>}
+                  {isPending ? <Skeleton className="h-4 w-36" /> : <span className="text-sm font-semibold text-muted-foreground">{t('tsk.pane.title')}</span>}
                 </div>
               )}
               <div className="ml-auto flex flex-none items-center gap-1">
@@ -2174,11 +2295,11 @@ export function TaskThreadPane({
                   </Button>
                 ) : null}
                 <Button variant="ghost" size="icon-sm" asChild>
-                  <Link to={`/task/${encodeURIComponent(id)}`} aria-label={bi('在独立页面打开', 'Open in full page')} title={bi('在独立页面打开', 'Open in full page')}>
+                  <Link to={`/task/${encodeURIComponent(id)}`} aria-label={t('tsk.pane.openFullPage')} title={t('tsk.pane.openFullPage')}>
                     <ExternalLink className="size-3.5" aria-hidden="true" />
                   </Link>
                 </Button>
-                <Button variant="ghost" size="icon-sm" aria-label={bi('关闭线程面板', 'Close thread pane')} title={bi('关闭线程面板', 'Close thread pane')} onClick={onClose}>
+                <Button variant="ghost" size="icon-sm" aria-label={t('tsk.pane.closePane')} title={t('tsk.pane.closePane')} onClick={onClose}>
                   <X className="size-3.5" aria-hidden="true" />
                 </Button>
               </div>
@@ -2190,7 +2311,7 @@ export function TaskThreadPane({
                 {data.task.lost?.waiting?.no_candidate ? (
                   <>
                     {' · '}
-                    <Link to={data.task.project_id ? `/projects/${encodeURIComponent(data.task.project_id)}/settings` : '/accounts'}>检查项目登录</Link>
+                    <Link to={data.task.project_id ? `/projects/${encodeURIComponent(data.task.project_id)}/settings` : '/accounts'}>{t('tsk.checkProjectLogins')}</Link>
                   </>
                 ) : null}
               </p>
@@ -2244,9 +2365,14 @@ export function TaskThreadPane({
             currentLogin={currentLogin}
             currentMachine={currentMachine}
             dimmed={dimmed}
-            incomingQuote={localQuote}
             control={control}
             className="flex flex-none flex-col gap-1.5 border-t border-border bg-background px-4 py-2.5"
+          />
+        ) : null}
+        {hideHeaderChrome && !hideComposer ? (
+          <SelectionQuotePopover
+            rootRef={paneRef}
+            onQuote={(sel) => pushLocalQuote({ source: sel.source, ...(sel.sourceKey ? { sourceKey: sel.sourceKey } : {}), excerpt: sel.excerpt })}
           />
         ) : null}
         {trace ? <TraceDrawer view={trace} projectId={projectId ?? undefined} /> : null}
@@ -2264,11 +2390,8 @@ export function TaskPage({ id }: { id: string }) {
   const navigate = useNavigate();
   const live = useLive();
   const pageRootRef = useRef<HTMLDivElement>(null);
-  const [pageQuote, setPageQuote] = useState<{ seq: number; source: string; excerpt: string } | null>(null);
-  const quoteSeqRef = useRef(0);
-  const pushPageQuote = (quote: { source: string; excerpt: string }) => {
-    quoteSeqRef.current += 1;
-    setPageQuote({ seq: quoteSeqRef.current, ...quote });
+  const pushPageQuote = (quote: { source: string; sourceKey?: QuoteSourceKey; excerpt: string }) => {
+    live.addTaskQuote(id, quote);
   };
 
   const {
@@ -2304,8 +2427,8 @@ export function TaskPage({ id }: { id: string }) {
   });
 
   // A knowledge Task belongs to no project: it sits under the knowledge page.
-  const home: Crumb = data?.knowledge ? { label: '知识', to: '/knowledge' }
-    : { label: project?.name ?? '项目', to: projectId ? `/projects/${encodeURIComponent(projectId)}/work` : '/projects' };
+  const home: Crumb = data?.knowledge ? { label: t('nav.knowledge'), to: '/knowledge' }
+    : { label: project?.name ?? t('project.defaultTitle'), to: projectId ? `/projects/${encodeURIComponent(projectId)}/work` : '/projects' };
   const crumbs: Crumb[] = data
     ? [home, ...(data.work.id === data.task.id ? [] : [{ label: data.work.title, to: `/work/${encodeURIComponent(data.work.id)}` }]), { label: data.task.title }]
     : [];
@@ -2324,7 +2447,7 @@ export function TaskPage({ id }: { id: string }) {
             <PageTitle>{task.title}</PageTitle>
             <TaskStatus task={task} className="mt-2" />
             {assignment ? <TaskIdentityStrip assignment={assignment} showLiveLabel className="mt-2" /> : null}
-            {task.wake_at ? <p className="mt-1 text-sm text-muted-foreground"><Time at={task.wake_at} prefix="预约在 " suffix=" 重新开始" /></p> : null}
+            {task.wake_at ? <p className="mt-1 text-sm text-muted-foreground"><Time at={task.wake_at} prefix={t('tsk.page.wakePrefix')} suffix={t('tsk.page.wakeSuffix')} /></p> : null}
             <p className="mt-1 text-xs text-faint"><Time at={task.created_at} prefix={t('task.createdAt')} /></p>
           </header>
           <aside aria-label={t('task.details')} className="min-w-0 border-b border-border wide:col-start-2 wide:row-span-2 wide:row-start-1 wide:border-b-0 wide:pb-10">
@@ -2365,7 +2488,6 @@ export function TaskPage({ id }: { id: string }) {
                 hasSession={hasSession}
                 currentLogin={currentLogin}
                 currentMachine={currentMachine}
-                incomingQuote={pageQuote}
                 control={control}
               />
             )}
@@ -2386,7 +2508,7 @@ export function TaskPage({ id }: { id: string }) {
             variant="ghost"
             onClick={() => {
               // In the conversation of the task's own project (docs/design/project-sessions.md §1).
-              live.typeFor(projectId, `关于任务 ${data.task.title}（${data.task.id}）：`);
+              live.typeFor(projectId, t('tsk.chatPrefill', { title: data.task.title, id: data.task.id }));
               void navigate(`/projects/${encodeURIComponent(projectId)}`, { state: { compose: true } });
             }}
           >
@@ -2404,7 +2526,7 @@ export function TaskPage({ id }: { id: string }) {
       {hideComposer ? null : (
         <SelectionQuotePopover
           rootRef={pageRootRef}
-          onQuote={(sel) => pushPageQuote({ source: sel.source, excerpt: sel.excerpt })}
+          onQuote={(sel) => pushPageQuote({ source: sel.source, ...(sel.sourceKey ? { sourceKey: sel.sourceKey } : {}), excerpt: sel.excerpt })}
         />
       )}
     </>

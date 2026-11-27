@@ -4,6 +4,7 @@
 // `executor:<executor>:<route>`) so identical multi-machine logins stay collapsed into one row
 // while distinct routes/providers (e.g. office LAN `lan-gw` vs paid `deepseek-official`)
 // naturally split into independent priority slots.
+import { t } from './i18n.ts';
 import { TIER_IDS, type TierId } from './tiers.ts';
 
 export type DispatchSlotName = 'p1' | 'p2' | 'off';
@@ -300,32 +301,32 @@ export function executionPermissionSummary(executor: string, permissionMode: str
   const raw = permissionMode?.trim() || null;
   if (executor === 'claude') {
     const mode = raw ?? 'bypassPermissions';
-    if (mode === 'bypassPermissions') return { mode, label: '完全授权（免审批 · 自动）', autoFullAccess: true };
-    if (mode === 'acceptEdits') return { mode, label: '自动接受编辑（命令需受控）', autoFullAccess: false };
-    if (mode === 'plan') return { mode, label: '仅规划模式（只读）', autoFullAccess: false };
-    return { mode, label: `自定义模式（${mode}）`, autoFullAccess: false };
+    if (mode === 'bypassPermissions') return { mode, label: t('sh.dispatchSlots.perm.fullAuto'), autoFullAccess: true };
+    if (mode === 'acceptEdits') return { mode, label: t('sh.dispatchSlots.perm.claudeAcceptEdits'), autoFullAccess: false };
+    if (mode === 'plan') return { mode, label: t('sh.dispatchSlots.perm.planReadOnly'), autoFullAccess: false };
+    return { mode, label: t('sh.dispatchSlots.perm.custom', { mode }), autoFullAccess: false };
   }
   if (executor === 'gemini') {
     const mode = raw ?? 'dangerously-skip-permissions';
-    if (mode === 'dangerously-skip-permissions') return { mode, label: '完全授权（跳过全部确认 · 自动）', autoFullAccess: true };
-    if (mode === 'accept-edits') return { mode, label: '自动接受编辑', autoFullAccess: false };
-    if (mode === 'plan') return { mode, label: '仅规划模式（只读）', autoFullAccess: false };
-    return { mode, label: `原生模式（${mode}）`, autoFullAccess: false };
+    if (mode === 'dangerously-skip-permissions') return { mode, label: t('sh.dispatchSlots.perm.geminiFullAuto'), autoFullAccess: true };
+    if (mode === 'accept-edits') return { mode, label: t('sh.dispatchSlots.perm.geminiAcceptEdits'), autoFullAccess: false };
+    if (mode === 'plan') return { mode, label: t('sh.dispatchSlots.perm.planReadOnly'), autoFullAccess: false };
+    return { mode, label: t('sh.dispatchSlots.perm.geminiNative', { mode }), autoFullAccess: false };
   }
   if (executor === 'dsh') {
     const mode = raw ?? 'danger-full-access';
-    if (mode === 'danger-full-access') return { mode, label: '完全授权（免审批 · 自动）', autoFullAccess: true };
-    if (mode === 'workspace-write') return { mode, label: '工作区可写（沙箱）', autoFullAccess: false };
-    if (mode === 'read-only') return { mode, label: '只读模式', autoFullAccess: false };
-    return { mode, label: `自定义模式（${mode}）`, autoFullAccess: false };
+    if (mode === 'danger-full-access') return { mode, label: t('sh.dispatchSlots.perm.fullAuto'), autoFullAccess: true };
+    if (mode === 'workspace-write') return { mode, label: t('sh.dispatchSlots.perm.workspaceWrite'), autoFullAccess: false };
+    if (mode === 'read-only') return { mode, label: t('sh.dispatchSlots.perm.readOnly'), autoFullAccess: false };
+    return { mode, label: t('sh.dispatchSlots.perm.custom', { mode }), autoFullAccess: false };
   }
   if (executor === 'codex') {
     const mode = raw ?? 'danger-full-access';
-    if (mode === 'danger-full-access') return { mode, label: '完全授权（免审批 · 跨机一致）', autoFullAccess: true };
-    if (mode === 'inherit-machine') return { mode, label: '跟随各机 ~/.codex/config.toml', autoFullAccess: false };
-    if (mode === 'workspace-write') return { mode, label: '工作区可写（沙箱）', autoFullAccess: false };
-    if (mode === 'read-only') return { mode, label: '只读模式', autoFullAccess: false };
-    return { mode, label: `自定义模式（${mode}）`, autoFullAccess: false };
+    if (mode === 'danger-full-access') return { mode, label: t('sh.dispatchSlots.perm.codexFullAuto'), autoFullAccess: true };
+    if (mode === 'inherit-machine') return { mode, label: t('sh.dispatchSlots.perm.codexInherit'), autoFullAccess: false };
+    if (mode === 'workspace-write') return { mode, label: t('sh.dispatchSlots.perm.workspaceWrite'), autoFullAccess: false };
+    if (mode === 'read-only') return { mode, label: t('sh.dispatchSlots.perm.readOnly'), autoFullAccess: false };
+    return { mode, label: t('sh.dispatchSlots.perm.custom', { mode }), autoFullAccess: false };
   }
-  return { mode: raw ?? 'default', label: raw ?? '执行器默认权限', autoFullAccess: true };
+  return { mode: raw ?? 'default', label: raw ?? t('sh.dispatchSlots.perm.executorDefault'), autoFullAccess: true };
 }

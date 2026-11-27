@@ -9,6 +9,7 @@ import { Chevron, Problem } from '@/components/bits';
 import { PageScroll } from '@/components/page-scroll';
 import { Button } from '@/components/ui/button';
 import { SkeletonPage } from '@/components/ui/skeleton';
+import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
 // The side column is a drawer on a narrow screen, and the button that opens it lives in
@@ -19,6 +20,7 @@ export const MenuContext = createContext<{ open: boolean; toggle: () => void; bu
 const JUST_SHUT_MS = 1000;
 
 function MenuButton() {
+  const { t } = useI18n();
   const menu = useContext(MenuContext);
   // The bar of a page chosen in the menu is drawn after the menu shut: its button is the
   // one that opened it, as far as the owner can tell, and gets the focus back.
@@ -27,7 +29,7 @@ function MenuButton() {
   }, [menu]);
   if (!menu) return null;
   return (
-    <Button ref={menu.button} variant="ghost" size="icon" aria-label="菜单" aria-expanded={menu.open} aria-controls="side" className="-ml-1.5 flex-none shell:hidden" onClick={menu.toggle}>
+    <Button ref={menu.button} variant="ghost" size="icon" aria-label={t('core.page.menu')} aria-expanded={menu.open} aria-controls="side" className="-ml-1.5 flex-none shell:hidden" onClick={menu.toggle}>
       <Menu />
     </Button>
   );
@@ -37,8 +39,9 @@ export interface Crumb { label: ReactNode; to?: string }
 
 // Where the page in view sits: 项目 › 工作 › 任务. Every step with an address leads back.
 export function Crumbs({ items, className }: { items: Crumb[]; className?: string }) {
+  const { t } = useI18n();
   return (
-    <nav aria-label="所在位置" className={cn('flex min-w-0 items-center gap-1 text-sm text-muted-foreground', className)}>
+    <nav aria-label={t('core.page.breadcrumbs')} className={cn('flex min-w-0 items-center gap-1 text-sm text-muted-foreground', className)}>
       {items.map((item, index) => (
         <Fragment key={index}>
           {index ? <Chevron className="size-3.5" /> : null}

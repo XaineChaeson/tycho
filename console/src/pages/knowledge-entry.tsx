@@ -6,22 +6,29 @@ import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { ENTRY_STATE_LABELS, KIND_LABELS, SOURCE_LABELS, citation } from '@shared/knowledge.ts';
 import { Callout, Details, Mono, Problem, SectionTitle, Time } from '@/components/bits';
-import { EvidenceList, OwnerChangeForm, RetireDialog, SKILL_LOADING_TEXT, draftOf, entryPath, loadingText, proposalPath, reviewText, scopeOf } from '@/components/knowledge-bits';
+import { EvidenceList, OwnerChangeForm, RetireDialog, draftOf, entryPath, loadingText, proposalPath, reviewText, scopeOf } from '@/components/knowledge-bits';
 import { Markdown } from '@/components/markdown';
 import { PageBar, PageBody, PageTitle } from '@/components/page';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useI18n } from '@/lib/i18n';
 import { entryQuery, knowledgeQuery } from '@/lib/queries';
 import type { KnowledgeEntry, KnowledgeEntryPage, KnowledgePage } from '@/lib/types';
 
 function Retired({ entry, library }: { entry: KnowledgeEntry; library: KnowledgePage | undefined }) {
+  const { t } = useI18n();
   const replacement = library?.entries.find((each) => each.id === entry.replaced_by);
   return (
-    <Callout tone="plain" role="region" aria-label="退役情况" className="mt-4">
-      <p className="wrap-anywhere">{`${entry.retired_by ?? '？'} 退役了它，`}<Time at={entry.retired_at} /></p>
-      {entry.retired_reason ? <p className="mt-1 wrap-anywhere">{`理由：${entry.retired_reason}`}</p> : null}
+    <Callout tone="plain" role="region" aria-label={t('know.entry.retiredAria')} className="mt-4">
+      <p className="wrap-anywhere">{t('know.entry.retiredBy', { by: entry.retired_by ?? t('know.unknownMark') })}<Time at={entry.retired_at} /></p>
+      {entry.retired_reason ? <p className="mt-1 wrap-anywhere">{t('know.entry.retiredReason', { reason: entry.retired_reason })}</p> : null}
       {entry.replaced_by ? (
-        <p className="mt-1 wrap-anywhere">{'替代它的：'}<Link to={entryPath(entry.replaced_by)}>{replacement ? `${replacement.title}（${citation(replacement.id, replacement.revision)}）` : entry.replaced_by}</Link></p>
+        <p className="mt-1 wrap-anywhere">
+          {t('know.entry.replacedByPrefix')}
+          <Link to={entryPath(entry.replaced_by)}>
+            {replacement ? t('know.retire.replacementOption', { title: replacement.title, ref: citation(replacement.id, replacement.revision) }) : entry.replaced_by}
+          </Link>
+        </p>
       ) : null}
     </Callout>
   );
@@ -31,24 +38,30 @@ function Retired({ entry, library }: { entry: KnowledgeEntry; library: Knowledge
 const LABEL = 'text-muted-foreground';
 
 function RevisionContents({ revision, library }: { revision: KnowledgeEntryPage['revisions'][number]; library: KnowledgePage | undefined }) {
+  const { t } = useI18n();
   return (
     <>
       <p className="font-semibold wrap-anywhere">{revision.title}</p>
-      {revision.when_to_use ? <p className="mt-1 wrap-anywhere"><span className={LABEL}>什么时候用：</span>{revision.when_to_use}</p> : null}
-      <p className="mt-1 wrap-anywhere"><span className={LABEL}>作用域：</span>{scopeOf(library, revision.project_ids, revision.roles)}</p>
-      <p className="mt-1"><span className={LABEL}>加载方式：</span>{loadingText(revision.kind, revision.loading)}</p>
+      {revision.when_to_use ? <p className="mt-1 wrap-anywhere"><span className={LABEL}>{t('know.entry.whenToUsePrefix')}</span>{revision.when_to_use}</p> : null}
+      <p className="mt-1 wrap-anywhere"><span className={LABEL}>{t('know.entry.scopePrefix')}</span>{scopeOf(library, revision.project_ids, revision.roles)}</p>
+      <p className="mt-1"><span className={LABEL}>{t('know.entry.loadingPrefix')}</span>{loadingText(revision.kind, revision.loading)}</p>
       <Markdown text={revision.body} className="my-2" />
       <p className="text-xs text-muted-foreground wrap-anywhere">
-        {`${SOURCE_LABELS[revision.source] ?? revision.source} · ${revision.proposed_by} 提议，${revision.published_by} 发布 · `}
-        <Link to={proposalPath(revision.proposal_id)}>看提议</Link>
+        {t('know.entry.revisionMeta', {
+          source: SOURCE_LABELS[revision.source] ?? revision.source,
+          proposedBy: revision.proposed_by,
+          publishedBy: revision.published_by,
+        })}
+        <Link to={proposalPath(revision.proposal_id)}>{t('know.entry.viewProposal')}</Link>
       </p>
-      <h3 className="mt-3 mb-2 text-xs text-faint">证据</h3>
+      <h3 className="mt-3 mb-2 text-xs text-faint">{t('know.field.evidence')}</h3>
       <EvidenceList evidence={revision.evidence} />
     </>
   );
 }
 
 export function EntryPage({ id }: { id: string }) {
+  const { t } = useI18n();
   const { data, isPending, error } = useQuery(entryQuery(id));
   // The names scopes are shown by, and the entries that could replace this one.
   const { data: library } = useQuery(knowledgeQuery);
@@ -68,17 +81,17 @@ export function EntryPage({ id }: { id: string }) {
     return (
       <>
         <PageBar
-          crumbs={[{ label: '知识', to: '/knowledge' }, { label: '历史修订' }]}
-          actions={entry ? <Link to={entryPath(entry.id)}>查看当前条目</Link> : undefined}
+          crumbs={[{ label: t('knowledge.title'), to: '/knowledge' }, { label: t('know.entry.historicalRevision') }]}
+          actions={entry ? <Link to={entryPath(entry.id)}>{t('know.entry.viewCurrentEntry')}</Link> : undefined}
         />
         <PageBody width="narrow" loading={isPending} failure={error?.message}>
-          {data && !revision ? <Problem role="alert">这个修订已不可查看。</Problem> : null}
+          {data && !revision ? <Problem role="alert">{t('know.entry.revisionUnavailable')}</Problem> : null}
           {revision ? (
-            <section aria-label={`历史修订 ${revision.revision}`}>
-              <PageTitle>历史修订 {revision.revision}</PageTitle>
+            <section aria-label={t('know.entry.historicalRevisionNum', { rev: revision.revision })}>
+              <PageTitle>{t('know.entry.historicalRevisionNum', { rev: revision.revision })}</PageTitle>
               <p className="mb-4 mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                 <Mono>{citation(revision.id, revision.revision)}</Mono>
-                <Time at={revision.published_at} prefix="发布于 " />
+                <Time at={revision.published_at} prefix={t('know.entry.publishedPrefix')} />
                 <span>{reviewText(revision.reviewed_at)}</span>
               </p>
               <RevisionContents revision={revision} library={library} />
@@ -92,11 +105,11 @@ export function EntryPage({ id }: { id: string }) {
   return (
     <>
       <PageBar
-        crumbs={[{ label: '知识', to: '/knowledge' }, ...(entry ? [{ label: entry.title }] : [])]}
+        crumbs={[{ label: t('knowledge.title'), to: '/knowledge' }, ...(entry ? [{ label: entry.title }] : [])]}
         actions={entry && active ? (
           <>
-            <Button onClick={() => setEditing(true)}><Pencil />直接改</Button>
-            <Button variant="danger" onClick={() => setRetiring(true)}>退役这一条</Button>
+            <Button onClick={() => setEditing(true)}><Pencil />{t('know.entry.directEdit')}</Button>
+            <Button variant="danger" onClick={() => setRetiring(true)}>{t('know.entry.retireThis')}</Button>
           </>
         ) : null}
       />
@@ -115,21 +128,21 @@ export function EntryPage({ id }: { id: string }) {
             </header>
             {active ? null : <Retired entry={entry} library={library} />}
 
-            <section aria-label="现在的内容" className="mt-8">
-              <SectionTitle>现在的内容</SectionTitle>
-              {entry.when_to_use ? <p className="text-sm wrap-anywhere"><span className={LABEL}>什么时候用：</span>{entry.when_to_use}</p> : null}
-              <p className="mt-1 text-sm wrap-anywhere"><span className={LABEL}>加载方式：</span>{entry.kind === 'skill' ? SKILL_LOADING_TEXT : loadingText(entry.kind, entry.loading)}</p>
+            <section aria-label={t('know.entry.currentContent')} className="mt-8">
+              <SectionTitle>{t('know.entry.currentContent')}</SectionTitle>
+              {entry.when_to_use ? <p className="text-sm wrap-anywhere"><span className={LABEL}>{t('know.entry.whenToUsePrefix')}</span>{entry.when_to_use}</p> : null}
+              <p className="mt-1 text-sm wrap-anywhere"><span className={LABEL}>{t('know.entry.loadingPrefix')}</span>{entry.kind === 'skill' ? t('know.bits.skillLoadingText') : loadingText(entry.kind, entry.loading)}</p>
               <Markdown text={entry.body} className="mt-3 text-base" />
             </section>
 
-            <section aria-label="修订记录" className="mt-8">
-              <SectionTitle count={revisions.length}>修订记录</SectionTitle>
+            <section aria-label={t('know.entry.revisionHistory')} className="mt-8">
+              <SectionTitle count={revisions.length}>{t('know.entry.revisionHistory')}</SectionTitle>
               <div className="divide-y divide-border border-y border-border">
                 {revisions.map((each) => (
                   <Details
                     key={each.revision}
                     id={`knowledge-revision:${each.id}@${each.revision}`}
-                    title={<><span className="text-foreground">{`修订 ${each.revision}`}</span><span>{' · 发布于 '}<Time at={each.published_at} />{` · ${reviewText(each.reviewed_at)}`}</span></>}
+                    title={<><span className="text-foreground">{t('know.entry.revisionNum', { rev: each.revision })}</span><span>{t('know.entry.publishedMid')}<Time at={each.published_at} />{` · ${reviewText(each.reviewed_at)}`}</span></>}
                   >
                     <div className="pb-4 pl-5 text-sm">
                       <RevisionContents revision={each} library={library} />
@@ -142,8 +155,8 @@ export function EntryPage({ id }: { id: string }) {
             {retiring && active ? <RetireDialog entry={entry} others={others} onClose={() => setRetiring(false)} /> : null}
             {editing && active && library ? (
               <OwnerChangeForm
-                label="直接改"
-                lead="改完就是这一条的新修订，直接生效，算已审阅。"
+                label={t('know.entry.directEdit')}
+                lead={t('know.entry.directEditLead')}
                 names={library}
                 initial={draftOf(entry, entry.kind)}
                 edits

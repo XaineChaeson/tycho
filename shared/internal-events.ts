@@ -3,23 +3,25 @@
 // the owner's push (service/pushes.ts) and the triggers; neither judges it again. The project is
 // always the one of the event's Task, so the payload names it and nothing else.
 
+import { localeMap, t } from './i18n.ts';
+
 export const INTERNAL_EVENT_KINDS = ['work_ready', 'accepted', 'merged', 'released'] as const;
 export type InternalEventKind = (typeof INTERNAL_EVENT_KINDS)[number];
 
-export const INTERNAL_EVENT_LABELS: Record<InternalEventKind, string> = {
-  work_ready: '一项工作整体完成',
-  accepted: '已验收',
-  merged: '已合入',
-  released: '已上线',
-};
+export const INTERNAL_EVENT_LABELS: Readonly<Record<InternalEventKind, string>> = localeMap({
+  work_ready: 'sh.internalEvents.label.work_ready',
+  accepted: 'sh.internalEvents.label.accepted',
+  merged: 'sh.internalEvents.label.merged',
+  released: 'sh.internalEvents.label.released',
+});
 
 // When each happens, in the owner's words: what the console and the Router's tools say.
-export const INTERNAL_EVENT_WHEN: Record<InternalEventKind, string> = {
-  work_ready: '顶层任务进入“就绪等验收”的那一次（返工后再次就绪算新的一次）',
-  accepted: '任务验收的那一次',
-  merged: '任务的产物并入主线（合入 PR）的那一次',
-  released: '任务的产物上线并通过核对的那一次',
-};
+export const INTERNAL_EVENT_WHEN: Readonly<Record<InternalEventKind, string>> = localeMap({
+  work_ready: 'sh.internalEvents.when.work_ready',
+  accepted: 'sh.internalEvents.when.accepted',
+  merged: 'sh.internalEvents.when.merged',
+  released: 'sh.internalEvents.when.released',
+});
 
 // One occurrence. `id` is made at the transition and never again: the identity a trigger keeps
 // it by, and the key its push goes out once by. `task_id` is the Task it is about; its project is
@@ -57,5 +59,8 @@ export interface EventFilter {
 }
 
 export function describeEventFilter(filter: EventFilter): string {
-  return `内部事件：${INTERNAL_EVENT_LABELS[filter.kind]}${filter.task_id === null ? '（本项目的全部任务）' : `（只看任务 ${filter.task_id} 和它下面的任务）`}`;
+  const label = INTERNAL_EVENT_LABELS[filter.kind];
+  return filter.task_id === null
+    ? t('sh.internalEvents.filterAll', { label })
+    : t('sh.internalEvents.filterTask', { label, taskId: filter.task_id });
 }

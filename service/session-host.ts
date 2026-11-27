@@ -28,7 +28,7 @@ import { instructionsOf } from '../runner/snapshot.ts';
 import type { MachineInputs } from '../shared/machine-inputs.ts';
 import { restingUntil } from './ledger.ts';
 import { fromOwner, TRIGGER_CHANNEL } from '../shared/triggers.ts';
-import { getActiveLocale } from '../shared/i18n.ts';
+import { DEFAULT_LOCALE, getActiveLocale, getLocalePack } from '../shared/i18n.ts';
 import { ROUTER_RECEIPT } from '../shared/trajectory.ts';
 import { hostname } from 'node:os';
 import type { Tools } from './tools.ts';
@@ -52,11 +52,13 @@ const MAX_TURN_IMAGES = 4;
 export const MCP_SERVER = 'tycho';
 const PROXY = fileURLToPath(new URL('./tools-proxy.ts', import.meta.url));
 const ROUTER_PROMPT = readFileSync(new URL('./router-prompt.md', import.meta.url), 'utf8');
-const routerPromptForLocale = (): string => (
-  getActiveLocale() === 'en'
-    ? `${ROUTER_PROMPT}\n\n## System Language\nThe owner's console language is set to English (en). Reply in English by default unless the owner writes in another language.\n`
-    : ROUTER_PROMPT
-);
+const routerPromptForLocale = (): string => {
+  const active = getActiveLocale();
+  if (active === DEFAULT_LOCALE) return ROUTER_PROMPT;
+  const pack = getLocalePack(active);
+  const label = pack ? `${pack.name} (${pack.nativeName}, ${pack.id})` : active;
+  return `${ROUTER_PROMPT}\n\n## System Language\nThe owner's console language is set to ${label}. Reply in ${pack?.name ?? active} by default unless the owner writes in another language.\n`;
+};
 const INTERNAL_PREFIX = '[tycho 内部事件]';
 // A trigger's message carries its own account of where it came from (docs/design/triggers.md §3, §6).
 const TRIGGER_PREFIX = '[tycho 触发器]';

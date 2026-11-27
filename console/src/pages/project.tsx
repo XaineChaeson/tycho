@@ -34,6 +34,7 @@ import { api, messageOf, post, projectFileRawUrl, uploadProjectFile } from '@/li
 import { conversationItems, hasTurn } from '@/lib/conversation';
 import { EXAMPLE_ASKS, useAsk } from '@/lib/examples';
 import { useI18n } from '@/lib/i18n';
+import { MAX_COMPOSER_QUOTES } from '@/lib/quotes';
 import { useLive, useLiveState } from '@/lib/live-context';
 import { approvalsQuery, PAGE, projectFilesQuery, projectsQuery, stateQuery, tasksQuery } from '@/lib/queries';
 import type { Conversation, Message, Project, ProjectFileSummary, Segment, Task, TurnChanges } from '@/lib/types';
@@ -94,11 +95,12 @@ const projectPath = (id: string, tab = ''): string => `/projects/${encodeURIComp
 // Said on every side of a paused project, under its bar, with the one press that ends it: the
 // shell's banner across the top is for the service's own trouble, not the owner's choice.
 function PausedNotice({ project }: { project: Pick<Project, 'id' | 'paused_at'> }) {
+  const { t } = useI18n();
   const pause = useProjectFlag(project, 'paused');
   if (!pause.on) return null;
   return (
     <div className="px-4 pt-3 shell:px-6">
-      <Callout tone="waiting" role="status" aria-label={PROJECT_PAUSED_TEXT} action={<Button size="sm" disabled={pause.busy} onClick={() => void pause.set(false)}>恢复</Button>}>
+      <Callout tone="waiting" role="status" aria-label={PROJECT_PAUSED_TEXT} action={<Button size="sm" disabled={pause.busy} onClick={() => void pause.set(false)}>{t('common.resume')}</Button>}>
         {PROJECT_PAUSED_NOTE}
         {pause.error ? <Problem role="alert" className="mt-1.5">{pause.error}</Problem> : null}
       </Callout>
@@ -190,11 +192,11 @@ function Composer({ busy, project, dimmed = false, routerError = null, focusSign
     return () => window.clearTimeout(timer);
   }, [pasteNotice]);
 
-  async function handleUploadFiles(files: File[], convertedPaste = false): Promise<void> {
+  async function handleUploadFiles(files: File[], convertedPasteText?: string): Promise<void> {
     if (files.length === 0 || sending !== null || uploading) return;
     const remaining = MAX_COMPOSER_ATTACHMENTS - live.getState().attachments.length;
     if (remaining <= 0) {
-      setUploadError(`单条消息最多附带 ${MAX_COMPOSER_ATTACHMENTS} 个文件`);
+      setUploadError(t('proj.chat.maxAttachments', { max: MAX_COMPOSER_ATTACHMENTS }));
       return;
     }
     const batch = files.slice(0, remaining);
@@ -210,17 +212,21 @@ function Composer({ busy, project, dimmed = false, routerError = null, focusSign
           live.addAttachment(uploaded);
           uploadedAny = true;
         } catch (error) {
-          errors.push(`${file.name}：${messageOf(error)}`);
+          errors.push(t('proj.files.uploadFileError', { name: file.name, reason: messageOf(error) }));
         }
       }
       if (uploadedAny) {
         await client.invalidateQueries({ queryKey: projectFilesQuery(project).queryKey });
-        if (convertedPaste) setPasteNotice('已将长文本转为附件');
+        if (convertedPasteText !== undefined) setPasteNotice(t('project.pastedAsFile'));
+      } else if (convertedPasteText !== undefined) {
+        // Restore pasted text into the draft if conversion upload failed so the user never loses it.
+        const current = live.getState().draft;
+        live.type(current ? `${current}\n${convertedPasteText}` : convertedPasteText);
       }
       if (errors.length > 0) {
-        setUploadError(errors.join('；'));
+        setUploadError(errors.join(t('proj.files.errorSep')));
       } else if (files.length > remaining) {
-        setUploadError(`单条消息最多附带 ${MAX_COMPOSER_ATTACHMENTS} 个文件，已忽略超出部分`);
+        setUploadError(t('proj.chat.maxAttachmentsTruncated', { max: MAX_COMPOSER_ATTACHMENTS }));
       }
     } finally {
       setUploading(false);
@@ -254,9 +260,13 @@ function Composer({ busy, project, dimmed = false, routerError = null, focusSign
       return;
     }
     if (plainText && new Blob([plainText]).size > LARGE_PASTE_THRESHOLD) {
+      // Reserve an upload slot before intercepting the paste: if already uploading or at the
+      // attachment limit, let the text paste normally instead of silently dropping it.
+      if (sending !== null || uploading || live.getState().attachments.length >= MAX_COMPOSER_ATTACHMENTS) {
+        return;
+      }
       event.preventDefault();
-      setPasteNotice('已将长文本转为附件');
-      void handleUploadFiles([createPastedLogFile(plainText)], true);
+      void handleUploadFiles([createPastedLogFile(plainText)], plainText);
     }
   }
 
@@ -354,8 +364,11 @@ function Composer({ busy, project, dimmed = false, routerError = null, focusSign
           <QuoteTray
             quotes={quotes}
             disabled={sending !== null}
+            submitDisabled={sending !== null || uploading}
             onRemove={(quoteId) => live.removeQuote(quoteId)}
             onClear={() => live.clearQuotes()}
+            onUpdateReply={(quoteId, reply) => live.updateQuoteReply(quoteId, reply)}
+            onSubmit={() => { if (!uploading && sending === null) void live.send(); }}
           />
           {attachments.length > 0 || uploading ? (
             <div className="flex flex-wrap items-center gap-2 border-b border-border/60 px-3 pt-2.5 pb-2">
@@ -382,7 +395,7 @@ function Composer({ busy, project, dimmed = false, routerError = null, focusSign
                   <Button
                     variant="ghost"
                     size="icon-sm"
-                    aria-label={`移除附件 ${file.name}`}
+                    aria-label={t('proj.chat.removeAttachmentAria', { name: file.name })}
                     className="size-6 flex-none rounded-md"
                     disabled={sending !== null}
                     onClick={() => live.removeAttachment(file.id)}
@@ -394,7 +407,7 @@ function Composer({ busy, project, dimmed = false, routerError = null, focusSign
               {uploading ? (
                 <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
-                  正在上传…
+                  {t('project.uploading')}
                 </span>
               ) : null}
             </div>
@@ -405,7 +418,7 @@ function Composer({ busy, project, dimmed = false, routerError = null, focusSign
               type="file"
               multiple
               className="sr-only"
-              aria-label="选择附件"
+              aria-label={t('proj.chat.chooseAttachmentsAria')}
               onChange={onFileInputChange}
             />
             <Tooltip text={t('project.attachTooltip')}>
@@ -423,7 +436,7 @@ function Composer({ busy, project, dimmed = false, routerError = null, focusSign
             <Textarea
               ref={input}
               rows={1}
-              placeholder={t('project.composerPlaceholder')}
+              placeholder={quotes.length > 0 ? t('project.composerPlaceholderWithQuotes') : t('project.composerPlaceholder')}
               aria-label={t('project.composerPlaceholder')}
               className="max-h-[40vh] min-h-8 flex-1 overflow-y-auto border-0 bg-transparent px-1 py-1.5 text-base shadow-none focus:outline-0 read-only:bg-transparent"
               value={draft}
@@ -481,8 +494,6 @@ function inView(rows: Iterable<Message>, project: string, segment: string | null
       : mine(row)));
 }
 
-const segmentLabel = ({ seq, state }: Segment): string => `第 ${seq} 段${state === 'current' ? '（当前）' : ''}`;
-
 const worksOf = (tasks: readonly Task[] | undefined, project: string): Task[] => (tasks ?? []).filter((task) => task.project_id === project);
 
 // Compact collapsible work-status bar shown above the chat below 1180px so active,
@@ -492,6 +503,7 @@ function CompactWorkBar({ id, selectedThreadId, onSelectThread }: {
   selectedThreadId?: string | null;
   onSelectThread: (taskId: string) => void;
 }) {
+  const { t } = useI18n();
   const { data: listing } = useQuery(tasksQuery);
   const [open, setOpen] = useState(false);
   const works = worksOf(listing?.tasks, id).filter((task) => workGroup(task) !== WORK_GROUPS.ended);
@@ -503,11 +515,11 @@ function CompactWorkBar({ id, selectedThreadId, onSelectThread }: {
   }).length;
   const movingCount = works.length - waitingCount;
   const summaryParts = [
-    waitingCount > 0 ? `${waitingCount} 件待处理` : null,
-    movingCount > 0 ? `${movingCount} 项进行中` : null,
+    waitingCount > 0 ? t('proj.chat.compactWaiting', { count: waitingCount }) : null,
+    movingCount > 0 ? t('proj.chat.compactMoving', { count: movingCount }) : null,
   ].filter(Boolean).join(' · ');
   return (
-    <section aria-label="在办工作状态" className="flex-none border-b border-border bg-muted/40 px-4 py-1.5 wide:hidden">
+    <section aria-label={t('proj.chat.compactBarAria')} className="flex-none border-b border-border bg-muted/40 px-4 py-1.5 wide:hidden">
       <div className="mx-auto flex w-full max-w-[760px] items-center gap-2">
         <button
           type="button"
@@ -516,11 +528,11 @@ function CompactWorkBar({ id, selectedThreadId, onSelectThread }: {
           className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 text-left text-xs text-foreground hover:bg-hover"
         >
           <Dot tone={waitingCount > 0 ? 'waiting' : 'running'} />
-          <span className="font-medium">{`在办的工作（${works.length}）`}</span>
+          <span className="font-medium">{t('proj.chat.compactBarTitle', { count: works.length })}</span>
           {summaryParts ? <span className="min-w-0 truncate text-muted-foreground">{summaryParts}</span> : null}
           <Chevron className={cn('ml-auto transition-transform duration-100', open && 'rotate-90')} />
         </button>
-        <Link to={projectPath(id, 'work')} className="flex-none text-xs text-muted-foreground">全部</Link>
+        <Link to={projectPath(id, 'work')} className="flex-none text-xs text-muted-foreground">{t('common.all')}</Link>
       </div>
       {open ? (
         <div className="mx-auto mt-1.5 max-h-56 w-full max-w-[760px] overflow-y-auto rounded-lg border border-border bg-raised">
@@ -565,10 +577,11 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
   const [asked, setAsked] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const threadSheetOpenerRef = useRef<HTMLElement | null>(null);
+  const [workspaceWidth, setWorkspaceWidth] = useState(0);
   const [composerFocusSignal, setComposerFocusSignal] = useState(0);
   const [sideAskOpen, setSideAskOpen] = useState(false);
   const [sideAskQuote, setSideAskQuote] = useState<SideAskQuote | null>(null);
-  const [threadQuote, setThreadQuote] = useState<{ seq: number; source: string; excerpt: string } | null>(null);
   const meta = useQuery({
     queryKey: [PAGE, 'conversation', id, asked],
     queryFn: () => api<Conversation>(`/api/projects/${encodeURIComponent(id)}/conversation${asked ? `?segment=${encodeURIComponent(asked)}` : ''}`),
@@ -576,9 +589,9 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
   const shown = meta.data?.segment ?? null;
   const writable = meta.data?.writable ?? false;
   const home = meta.data?.home;
-  const ownerNotice = home?.phase === 'frozen' ? '该项目正在移交，此服务保留历史记录。'
-    : home?.phase === 'incoming' ? '此服务已准备接管。接管确认后才能继续。'
-    : home?.phase === 'unknown' ? '项目归属待核实，当前只读。' : null;
+  const ownerNotice = home?.phase === 'frozen' ? t('proj.chat.homeFrozen')
+    : home?.phase === 'incoming' ? t('proj.chat.homeIncoming')
+    : home?.phase === 'unknown' ? t('proj.chat.homeUnknown') : null;
   // Archived is out of sight everywhere else; its conversation still opens, read only until
   // it is restored. The list is the fresher answer once it has one; before that, the
   // conversation's own read says it.
@@ -607,24 +620,39 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
   }, []);
 
   useEffect(() => {
+    const el = workspaceRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const sync = () => setWorkspaceWidth(el.clientWidth);
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     if (!selectedThreadId || !wide) setThreadFocused(false);
   }, [selectedThreadId, wide]);
 
+  const effectiveThreadMax = workspaceWidth > 0
+    ? Math.max(MIN_THREAD_PANE_WIDTH, Math.min(MAX_THREAD_PANE_WIDTH, workspaceWidth - 360))
+    : MAX_THREAD_PANE_WIDTH;
+  const effectiveThreadWidth = Math.min(threadPaneWidth, effectiveThreadMax);
+
   const updateThreadWidth = useCallback((nextWidth: number) => {
-    const clamped = clampThreadPaneWidth(nextWidth);
+    const clamped = Math.min(effectiveThreadMax, clampThreadPaneWidth(nextWidth));
     setThreadPaneWidth(clamped);
     saveThreadPaneWidth(clamped);
-  }, []);
+  }, [effectiveThreadMax]);
 
   const startResize = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
     event.preventDefault();
     resizeCleanup.current?.();
     const startX = event.clientX;
-    const startWidth = threadPaneWidth;
+    const startWidth = effectiveThreadWidth;
     let latestWidth = startWidth;
 
     const onMouseMove = (moveEvent: MouseEvent): void => {
-      latestWidth = clampThreadPaneWidth(startWidth + (startX - moveEvent.clientX));
+      latestWidth = Math.min(effectiveThreadMax, clampThreadPaneWidth(startWidth + (startX - moveEvent.clientX)));
       setThreadPaneWidth(latestWidth);
     };
     const onMouseUp = (): void => {
@@ -639,9 +667,12 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
     resizeCleanup.current = cleanup;
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
-  }, [threadPaneWidth]);
+  }, [effectiveThreadWidth, effectiveThreadMax]);
 
   const openThread = useCallback((taskId: string) => {
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      threadSheetOpenerRef.current = document.activeElement;
+    }
     setActivePane('thread');
     setSearchParams((prev) => {
       if (prev.get('thread') === taskId) return prev;
@@ -703,7 +734,7 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
       sending: writable ? sending : null,
       sendingAttachments: writable ? sendingAttachments : [],
     }),
-    [rows, changes, approvals, sending, sendingAttachments, writable, id],
+    [rows, changes, approvals, sending, sendingAttachments, writable, id, t],
   );
   // Waiting for the turn under way is the same question the composer asks.
   const busy = useMemo(() => rows.some((row) => row.state === 'processing'), [rows]);
@@ -749,21 +780,35 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
     }
   }
 
-  const quoteToMain = useCallback((quote: { source: string; excerpt: string }) => {
-    if (!writable || archived) return;
-    live.addQuote(quote, id);
+  const quoteToMain = useCallback((quote: { source: string; sourceKey?: import('@/lib/quotes').QuoteSourceKey; excerpt: string }): boolean => {
+    if (!writable || archived) return false;
+    const ok = live.addQuote(quote, id);
+    if (!ok) {
+      live.showError(t('quote.trayFull', { max: MAX_COMPOSER_QUOTES }));
+      return false;
+    }
     setActivePane('chat');
     setComposerFocusSignal((n) => n + 1);
-  }, [writable, archived, live, id]);
+    return true;
+  }, [writable, archived, live, id, t]);
 
   const handleSelectionQuote = useCallback((selection: SelectedExcerpt) => {
     if (selection.pane === 'thread' && selectedThreadId) {
-      setThreadQuote((prev) => ({ seq: (prev?.seq ?? 0) + 1, source: selection.source, excerpt: selection.excerpt }));
+      const ok = live.addTaskQuote(selectedThreadId, {
+        source: selection.source,
+        ...(selection.sourceKey ? { sourceKey: selection.sourceKey } : {}),
+        excerpt: selection.excerpt,
+      });
+      if (!ok) live.showError(t('quote.trayFull', { max: MAX_COMPOSER_QUOTES }));
       setActivePane('thread');
       return;
     }
-    quoteToMain({ source: selection.source, excerpt: selection.excerpt });
-  }, [selectedThreadId, quoteToMain]);
+    quoteToMain({
+      source: selection.source,
+      ...(selection.sourceKey ? { sourceKey: selection.sourceKey } : {}),
+      excerpt: selection.excerpt,
+    });
+  }, [selectedThreadId, live, quoteToMain, t]);
 
   const handleSelectionSideAsk = useCallback((selection: SelectedExcerpt) => {
     setSideAskQuote({ source: selection.source, excerpt: selection.excerpt });
@@ -779,17 +824,23 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
           <>
             {meta.data && meta.data.segments.length > 1 ? (
               <Select aria-label={t('project.segmentLabel')} value={shown ?? ''} onChange={(event) => setAsked(event.target.value || null)}>
-                {meta.data.segments.map((segment) => <Option key={segment.id} value={segment.id}>{segmentLabel(segment)}</Option>)}
+                {meta.data.segments.map((segment: Segment) => (
+                  <Option key={segment.id} value={segment.id}>
+                    {segment.state === 'current'
+                      ? t('proj.chat.segmentCurrent', { seq: segment.seq })
+                      : t('proj.chat.segmentClosed', { seq: segment.seq })}
+                  </Option>
+                ))}
               </Select>
             ) : null}
             <Tooltip text={t('sideAsk.tooltip')}>
               <Button variant={sideAskOpen ? 'secondary' : 'ghost'} onClick={() => setSideAskOpen((open) => !open)}>
                 <MessageCircleQuestion />
-                {t('sideAsk.action')}
+                <span className="max-sm:sr-only">{t('sideAsk.action')}</span>
               </Button>
             </Tooltip>
             <Tooltip text={t('project.filesTooltip')}>
-              <Button variant="ghost" onClick={() => setFilesOpen(true)}>
+              <Button variant="ghost" className="hidden sm:inline-flex" onClick={() => setFilesOpen(true)}>
                 <FolderOpen />
                 {t('project.files')}
                 {fileCount > 0 ? (
@@ -800,11 +851,20 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
               </Button>
             </Tooltip>
             <Tooltip text={rows.length === 0 ? t('project.newTopicNoMsg') : busy ? t('project.newTopicBusy') : t('project.newTopicTooltip')}>
-              <Button variant="ghost" disabled={!canStartNewTopic} onClick={() => void newTopic()}><MessageSquarePlus />{t('project.newTopic')}</Button>
+              <Button variant="ghost" className="hidden sm:inline-flex" disabled={!canStartNewTopic} onClick={() => void newTopic()}><MessageSquarePlus />{t('project.newTopic')}</Button>
             </Tooltip>
             <Menu>
               <MenuTrigger asChild><Button variant="ghost" size="icon" aria-label={t('common.more')}><Ellipsis /></Button></MenuTrigger>
               <MenuContent>
+                <MenuItem className="sm:hidden" onSelect={() => setFilesOpen(true)}>
+                  <FolderOpen />
+                  {t('project.files')}
+                  {fileCount > 0 ? <span className="ml-auto text-xs text-muted-foreground tabular-nums">{fileCount}</span> : null}
+                </MenuItem>
+                <MenuItem className="sm:hidden" disabled={!canStartNewTopic} onSelect={() => void newTopic()}>
+                  <MessageSquarePlus />
+                  {t('project.newTopic')}
+                </MenuItem>
                 <MenuItem asChild>
                   <Link to={`/legacy?project=${encodeURIComponent(id)}`} className="no-underline">
                     <History />
@@ -827,7 +887,7 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
           )}
         >
           <CompactWorkBar id={id} selectedThreadId={selectedThreadId} onSelectThread={openThread} />
-          <PageScroll follow opens="latest">
+          <PageScroll follow opens="latest" resetKey={`${id}:${shown ?? ''}`}>
             <div className="mx-auto w-full max-w-[760px] px-4">
               {problem ? <Problem role="alert" className="mt-3">{problem}</Problem> : null}
               {meta.error ? <Problem role="alert" className="mt-3">{meta.error.message}</Problem> : null}
@@ -859,9 +919,9 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
                 title={PROJECT_ARCHIVED_TEXT}
                 action={(
                   <div className="flex items-center gap-2">
-                    <Button size="sm" disabled={archive.busy} onClick={() => void archive.set(false)}>恢复</Button>
+                    <Button size="sm" disabled={archive.busy} onClick={() => void archive.set(false)}>{t('common.resume')}</Button>
                     {project && project.deletable?.allowed !== false ? (
-                      <Button size="sm" variant="danger" onClick={() => setConfirmDelete(true)}>删除项目</Button>
+                      <Button size="sm" variant="danger" onClick={() => setConfirmDelete(true)}>{t('project.deleteProject')}</Button>
                     ) : null}
                   </div>
                 )}
@@ -886,27 +946,29 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
                   <Callout
                     tone="failed"
                     role="alert"
-                    title="项目负责人已停摆"
+                    title={t('project.routerStoppedTitle')}
                     className="mx-auto w-full max-w-[760px]"
                     action={(
                       <div className="flex items-center gap-2">
                         <Button
                           size="sm"
+                          title={t('project.routerRestartScope')}
                           disabled={restartingRouter || Boolean(serviceState?.router.restarting)}
                           onClick={() => void restartRouter()}
                         >
-                          {restartingRouter || serviceState?.router.restarting ? '重启中…' : '重启负责人'}
+                          {restartingRouter || serviceState?.router.restarting ? t('project.routerRestarting') : t('project.routerRestart')}
                         </Button>
                         <Link
                           to={projectPath(id, 'settings')}
                           className="text-xs font-medium text-link no-underline hover:underline"
                         >
-                          项目设置
+                          {t('project.projectSettings')}
                         </Link>
                       </div>
                     )}
                   >
                     <p className="wrap-anywhere">{routerError}</p>
+                    <p className="mt-1 text-2xs text-muted-foreground">{t('project.routerRestartScope')}</p>
                     {restartProblem ? <Problem role="alert" className="mt-1.5">{restartProblem}</Problem> : null}
                   </Callout>
                 </div>
@@ -922,7 +984,7 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
           ) : null}
         </div>
         {selectedThreadId === null ? (
-          <aside aria-label="项目工作台" className="hidden w-[340px] flex-none flex-col overflow-hidden border-l border-border wide:flex">
+          <aside aria-label={t('project.workspaceRail')} className="hidden w-[340px] flex-none flex-col overflow-hidden border-l border-border wide:flex">
             <ProjectWorkspaceRail
               projectId={id}
               activeTab={railTab}
@@ -939,20 +1001,20 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
                 role="separator"
                 tabIndex={0}
                 aria-orientation="vertical"
-                aria-label="调整线程面板宽度"
+                aria-label={t('proj.chat.resizePaneAria')}
                 aria-valuemin={MIN_THREAD_PANE_WIDTH}
-                aria-valuemax={MAX_THREAD_PANE_WIDTH}
-                aria-valuenow={threadPaneWidth}
-                title="拖动调整宽度，双击恢复默认"
+                aria-valuemax={effectiveThreadMax}
+                aria-valuenow={effectiveThreadWidth}
+                title={t('proj.chat.resizePaneTitle')}
                 onMouseDown={startResize}
                 onDoubleClick={() => updateThreadWidth(DEFAULT_THREAD_PANE_WIDTH)}
                 onKeyDown={(event) => {
                   if (event.key === 'ArrowLeft') {
                     event.preventDefault();
-                    updateThreadWidth(threadPaneWidth + 24);
+                    updateThreadWidth(effectiveThreadWidth + 24);
                   } else if (event.key === 'ArrowRight') {
                     event.preventDefault();
-                    updateThreadWidth(threadPaneWidth - 24);
+                    updateThreadWidth(effectiveThreadWidth - 24);
                   } else if (event.key === 'Home') {
                     event.preventDefault();
                     updateThreadWidth(DEFAULT_THREAD_PANE_WIDTH);
@@ -964,14 +1026,14 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
               </div>
             ) : null}
             <aside
-              aria-label="执行线程"
+              aria-label={t('project.threadPane')}
               data-pane="thread"
               onFocusCapture={() => setActivePane('thread')}
               onPointerDownCapture={() => setActivePane('thread')}
-              style={threadFocused ? undefined : { width: `${threadPaneWidth}px` }}
+              style={threadFocused ? undefined : { width: `${effectiveThreadWidth}px` }}
               className={cn(
                 'hidden min-w-0 flex-col overflow-hidden border-l border-border bg-background wide:flex',
-                threadFocused ? 'flex-1 border-l-0' : 'flex-none min-w-[420px] max-w-[820px]',
+                threadFocused ? 'flex-1 border-l-0' : 'flex-none min-w-[320px] max-w-[820px]',
               )}
             >
               <TaskThreadPane
@@ -981,7 +1043,6 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
                 focused={threadFocused}
                 onToggleFocus={() => setThreadFocused((value) => !value)}
                 dimmed={!threadFocused && activePane === 'chat'}
-                incomingQuote={threadQuote}
               />
             </aside>
           </>
@@ -1002,9 +1063,16 @@ function ConversationTab({ id, project }: { id: string; project: Project | undef
       <Sheet open={selectedThreadId !== null && !wide} onOpenChange={(next) => { if (!next) closeThread(); }}>
         {selectedThreadId && !wide ? (
           <SheetContent
-            title={selectedThreadTitle ?? '执行线程'}
+            title={selectedThreadTitle ?? t('project.threadPane')}
             className="w-[min(640px,96vw)] max-w-none"
             bodyClassName="flex min-h-0 flex-col overflow-hidden p-0"
+            onCloseAutoFocus={(event) => {
+              if (threadSheetOpenerRef.current) {
+                event.preventDefault();
+                threadSheetOpenerRef.current.focus();
+                threadSheetOpenerRef.current = null;
+              }
+            }}
           >
             <TaskThreadPane id={selectedThreadId} onClose={closeThread} hideHeaderChrome />
           </SheetContent>
@@ -1046,15 +1114,16 @@ function saveWorkViewMode(mode: WorkViewMode): void {
   }
 }
 
-const WORK_VIEW_OPTIONS: { id: WorkViewMode; label: string; icon: typeof List }[] = [
-  { id: 'list', label: '列表', icon: List },
-  { id: 'hud', label: '蓝图', icon: Cpu },
-  { id: 'trace', label: '泳道', icon: Activity },
+const WORK_VIEW_OPTIONS: { id: WorkViewMode; labelKey: string; icon: typeof List }[] = [
+  { id: 'list', labelKey: 'proj.work.viewList', icon: List },
+  { id: 'hud', labelKey: 'proj.work.viewHud', icon: Cpu },
+  { id: 'trace', labelKey: 'proj.work.viewTrace', icon: Activity },
 ];
 
 // Every work of the project that the side column's list holds, by where it stands; the ones
 // that ended longer ago are a page away.
 function WorkTab({ id, project }: { id: string; project: Project | undefined }) {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const { data: listing, isPending, error } = useQuery(tasksQuery);
   const [viewMode, setViewMode] = useState<WorkViewMode>(loadWorkViewMode);
@@ -1091,14 +1160,16 @@ function WorkTab({ id, project }: { id: string; project: Project | undefined }) 
           <>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs text-muted-foreground">
-                {works.length} 项工作{childCount > 0 ? ` · ${childCount} 个派生子任务` : ''}
+                {childCount > 0
+                  ? t('proj.work.countSummaryWithChildren', { count: works.length, children: childCount })
+                  : t('proj.work.countSummary', { count: works.length })}
               </span>
               <div
                 role="tablist"
-                aria-label="工作视图"
+                aria-label={t('proj.work.viewTabsAria')}
                 className="inline-flex items-center rounded-lg border border-border bg-muted p-0.5 text-xs"
               >
-                {WORK_VIEW_OPTIONS.map(({ id: optionId, label, icon: Icon }) => {
+                {WORK_VIEW_OPTIONS.map(({ id: optionId, labelKey, icon: Icon }) => {
                   const active = viewMode === optionId;
                   return (
                     <button
@@ -1115,7 +1186,7 @@ function WorkTab({ id, project }: { id: string; project: Project | undefined }) 
                       )}
                     >
                       <Icon className="size-3.5" aria-hidden="true" />
-                      {label}
+                      {t(labelKey)}
                     </button>
                   );
                 })}
@@ -1155,10 +1226,10 @@ function WorkTab({ id, project }: { id: string; project: Project | undefined }) 
               />
             )}
           </>
-        ) : <Empty title="这个项目还没有工作">在对话里告诉负责人要做什么，它建的工作会列在这里。</Empty>}
-        <p className="mt-6 text-sm text-muted-foreground"><Link to={`/work?show=ended&project=${encodeURIComponent(id)}`}>这个项目全部已结束的工作</Link></p>
+        ) : <Empty title={t('proj.work.emptyTitle')}>{t('proj.work.emptyDesc')}</Empty>}
+        <p className="mt-6 text-sm text-muted-foreground"><Link to={`/work?show=ended&project=${encodeURIComponent(id)}`}>{t('proj.work.allEndedLink')}</Link></p>
         {project ? (
-          <Details id={`history-evidence:${id}`} title="按关键词、提交号或知识版本查历史证据" lazy className="mt-4">
+          <Details id={`history-evidence:${id}`} title={t('proj.work.historyEvidenceTitle')} lazy className="mt-4">
             <div className="mt-2"><HistoryEvidence key={id} projectId={id} /></div>
           </Details>
         ) : null}
@@ -1168,22 +1239,24 @@ function WorkTab({ id, project }: { id: string; project: Project | undefined }) 
 }
 
 function TriggersTab({ id, project }: { id: string; project: Project | undefined }) {
+  const { t } = useI18n();
   return (
     <>
       <ProjectBar id={id} project={project} />
       <PageBody width="wide">
-        <ProjectTriggers projectId={id} projectName={project?.name ?? '项目'} />
+        <ProjectTriggers projectId={id} projectName={project?.name ?? t('project.defaultTitle')} />
       </PageBody>
     </>
   );
 }
 
 function SettingsTab({ id, project, loading, failure }: { id: string; project: Project | undefined; loading: boolean; failure: string | undefined }) {
+  const { t } = useI18n();
   return (
     <>
       <ProjectBar id={id} project={project} />
       <PageBody width="default" loading={loading} failure={failure}>
-        {project ? <ProjectSettings key={project.id} project={project} /> : loading ? null : <Empty title="没有这个项目">它可能已经被删掉了。<Link to="/projects" className="ml-1">看全部项目</Link></Empty>}
+        {project ? <ProjectSettings key={project.id} project={project} /> : loading ? null : <Empty title={t('proj.settings.notFoundTitle')}>{t('proj.settings.notFoundDesc')}<Link to="/projects" className="ml-1">{t('proj.settings.viewAllProjects')}</Link></Empty>}
       </PageBody>
     </>
   );
@@ -1202,6 +1275,7 @@ export function ProjectPage({ id }: { id: string }) {
 // The old global Router's conversation (docs/design/project-sessions.md §6), read only; with a
 // project, the part of it the ledger can tie to that project.
 export function LegacyPage() {
+  const { t } = useI18n();
   const [params] = useSearchParams();
   const project = params.get('project');
   // The messages and what each request's turn committed, in one read as for any conversation.
@@ -1214,15 +1288,15 @@ export function LegacyPage() {
     const committed = read.data?.changes ?? {};
     const changes = new Map<string, TurnChanges>(messages.filter(hasTurn).map(({ id }) => [id, committed[id] ?? { changes: [], tasks: [] }]));
     return conversationItems({ messages, changes, approvals: [], sending: null });
-  }, [read.data]);
+  }, [read.data, t]);
   return (
     <>
-      <PageBar title="旧全局记录" crumbs={project ? [{ label: '项目', to: '/projects' }, { label: '这个项目', to: projectPath(project) }] : [{ label: '项目', to: '/projects' }]} />
+      <PageBar title={t('project.legacyRecord')} crumbs={project ? [{ label: t('nav.projects'), to: '/projects' }, { label: t('proj.legacy.thisProjectCrumb'), to: projectPath(project) }] : [{ label: t('nav.projects'), to: '/projects' }]} />
       <PageBody width="narrow" failure={read.error?.message}>
         <Note className="rounded-lg bg-muted px-3 py-2">
-          {project ? '旧全局记录里能从账本确定属于这个项目的部分。' : '旧全局记录：所有项目共用一个负责人时的对话。'}只能看，不会再续接；确定不了属于哪个项目的留在这里。
+          {project ? t('proj.legacy.noteProject') : t('proj.legacy.noteGlobal')}
         </Note>
-        <div role="log" aria-label="旧全局记录" className="flex flex-col gap-5 pt-6 pb-6 text-base">
+        <div role="log" aria-label={t('project.legacyRecord')} className="flex flex-col gap-5 pt-6 pb-6 text-base">
           {items.filter((item) => item.kind !== 'empty').map((item) => <ItemView key={item.key} item={item} projectId={project ?? undefined} />)}
         </div>
       </PageBody>

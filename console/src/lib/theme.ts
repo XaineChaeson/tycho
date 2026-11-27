@@ -1,6 +1,7 @@
 // Colour scheme (跟随系统 / 浅色 / 深色) and pluggable visual theme skins:
 // 9 built-in named themes + host directory theme plugins (`/api/themes` -> `<dataDir>/themes/*.json`)
 // + browser-local fallback custom theme packs.
+import { onLocaleChange, t } from '@shared/i18n.ts';
 import { sanitizeThemeTokens, validateThemePack, type BuiltinThemeId, type DirectoryThemePack } from '@shared/themes.ts';
 import { api, del, post } from '@/lib/api';
 
@@ -28,115 +29,63 @@ const SKIN_KEY = 'tycho.skin';
 const LOCAL_PACKS_KEY = 'tycho.customThemePacks';
 const DIR_PACKS_CACHE_KEY = 'tycho.directoryThemePacks';
 
+function builtinPack(spec: {
+  id: BuiltinThemeSkin;
+  badge: string;
+  group: ThemePackGroup;
+  swatches: [string, string, string];
+}): ThemePack {
+  return {
+    id: spec.id,
+    badge: spec.badge,
+    group: spec.group,
+    source: 'builtin',
+    swatches: spec.swatches,
+    builtin: true,
+    get name() {
+      return t(`core.theme.pack.${spec.id}.name`);
+    },
+    get description() {
+      return t(`core.theme.pack.${spec.id}.desc`);
+    },
+  };
+}
+
 export const BUILTIN_THEME_PACKS: readonly ThemePack[] = [
-  {
-    id: 'hud',
-    name: '测控星盘',
-    badge: 'HUD',
-    group: 'hybrid',
-    source: 'builtin',
-    description: '紧凑平铺 + 精密点阵外框 + 青蓝遥测 + 锐利 1px 网格',
-    swatches: ['#050811', '#0D1322', '#38BDF8'],
-    builtin: true,
-  },
-  {
-    id: 'linear',
-    name: '星仪暗夜',
-    badge: 'LINEAR',
-    group: 'hybrid',
-    source: 'builtin',
-    description: '柔炭灰/陶瓷白层次 + 钴蓝高光 + 舒展圆角',
-    swatches: ['#090B10', '#121620', '#5B8CFF'],
-    builtin: true,
-  },
-  {
-    id: 'tactile',
-    name: '信号橙工坊',
-    badge: 'TACTILE',
-    group: 'hybrid',
-    source: 'builtin',
-    description: '骨白/哑光炭黑 + 信号橙警示 + 瑞士工业线条',
-    swatches: ['#E7E4DC', '#1F1F1D', '#FF4F00'],
-    builtin: true,
-  },
-  {
-    id: 'glass',
-    name: '极光玻璃',
-    badge: 'AURORA',
-    group: 'hybrid',
-    source: 'builtin',
-    description: '柔光氛围景深 + 玻璃层级 + 靛蓝微光',
-    swatches: ['#0A0F1F', '#1A2444', '#818CF8'],
-    builtin: true,
-  },
-  {
-    id: 'te',
-    name: '合成器控制台',
-    badge: 'FIELD',
-    group: 'signature',
-    source: 'builtin',
-    description: '骨白铝灰机身 + 实体按压键 + 森林绿状态灯',
-    swatches: ['#ECEAE4', '#1B1C1A', '#FF4F00'],
-    builtin: true,
-  },
-  {
-    id: 'paper',
-    name: '燕麦书房',
-    badge: 'PAPER',
-    group: 'signature',
-    source: 'builtin',
-    description: '燕麦暖纸 / 浓缩咖啡底色 + 陶土红点缀 + 衬线标题温润阅读',
-    swatches: ['#F6F3EC', '#1E1C1A', '#C4552D'],
-    builtin: true,
-  },
-  {
-    id: 'quant',
-    name: '琥珀暗房',
-    badge: 'QUANT',
-    group: 'signature',
-    source: 'builtin',
-    description: '极深碳底 + 1px 钢灰网格 + 荧光琥珀与翡翠绿信号',
-    swatches: ['#050608', '#0E1218', '#FFB000'],
-    builtin: true,
-  },
-  {
-    id: 'swiss',
-    name: '苏黎世墨印',
-    badge: 'SWISS',
-    group: 'signature',
-    source: 'builtin',
-    description: '纯白纯黑 0 圆角建筑网格 + 唯一朱红信号点 + 极致锋利反差',
-    swatches: ['#FFFFFF', '#0A0A0A', '#E62E2D'],
-    builtin: true,
-  },
-  {
-    id: 'classic',
-    name: '天仪经典',
-    badge: 'CLASSIC',
-    group: 'signature',
-    source: 'builtin',
-    description: 'Tycho 初代钴蓝圆润工作台风格',
-    swatches: ['#ECEFF5', '#FCFDFF', '#2D5BE3'],
-    builtin: true,
-  },
+  builtinPack({ id: 'hud', badge: 'HUD', group: 'hybrid', swatches: ['#050811', '#0D1322', '#38BDF8'] }),
+  builtinPack({ id: 'linear', badge: 'LINEAR', group: 'hybrid', swatches: ['#090B10', '#121620', '#5B8CFF'] }),
+  builtinPack({ id: 'tactile', badge: 'TACTILE', group: 'hybrid', swatches: ['#E7E4DC', '#1F1F1D', '#FF4F00'] }),
+  builtinPack({ id: 'glass', badge: 'AURORA', group: 'hybrid', swatches: ['#0A0F1F', '#1A2444', '#818CF8'] }),
+  builtinPack({ id: 'te', badge: 'FIELD', group: 'signature', swatches: ['#ECEAE4', '#1B1C1A', '#FF4F00'] }),
+  builtinPack({ id: 'paper', badge: 'PAPER', group: 'signature', swatches: ['#F6F3EC', '#1E1C1A', '#C4552D'] }),
+  builtinPack({ id: 'quant', badge: 'QUANT', group: 'signature', swatches: ['#050608', '#0E1218', '#FFB000'] }),
+  builtinPack({ id: 'swiss', badge: 'SWISS', group: 'signature', swatches: ['#FFFFFF', '#0A0A0A', '#E62E2D'] }),
+  builtinPack({ id: 'classic', badge: 'CLASSIC', group: 'signature', swatches: ['#ECEFF5', '#FCFDFF', '#2D5BE3'] }),
 ];
 
-export const SAMPLE_THEME_PACK_JSON = JSON.stringify({
-  id: 'emerald-terminal',
-  name: '翡翠终端',
-  badge: 'EMERALD',
-  description: '暗绿琥珀量化终端主题插件示例',
-  swatches: ['#060B09', '#0E1714', '#10B981'],
-  tokens: {
-    '--canvas': 'light-dark(#EAF2EE, #060B09)',
-    '--background': 'light-dark(#FFFFFF, #0D1613)',
-    '--raised': 'light-dark(#F4F9F6, #13211C)',
-    '--primary': 'light-dark(#047857, #10B981)',
-    '--primary-hover': 'light-dark(#065F46, #34D399)',
-    '--running': 'light-dark(#047857, #10B981)',
-    '--waiting': 'light-dark(#D97706, #FFB000)',
-  },
-}, null, 2);
+export function getSampleThemePackJson(): string {
+  return JSON.stringify({
+    id: 'emerald-terminal',
+    name: t('core.theme.sample.name'),
+    badge: 'EMERALD',
+    description: t('core.theme.sample.desc'),
+    swatches: ['#060B09', '#0E1714', '#10B981'],
+    tokens: {
+      '--canvas': 'light-dark(#EAF2EE, #060B09)',
+      '--background': 'light-dark(#FFFFFF, #0D1613)',
+      '--raised': 'light-dark(#F4F9F6, #13211C)',
+      '--primary': 'light-dark(#047857, #10B981)',
+      '--primary-hover': 'light-dark(#065F46, #34D399)',
+      '--running': 'light-dark(#047857, #10B981)',
+      '--waiting': 'light-dark(#D97706, #FFB000)',
+    },
+  }, null, 2);
+}
+
+export let SAMPLE_THEME_PACK_JSON = getSampleThemePackJson();
+onLocaleChange(() => {
+  SAMPLE_THEME_PACK_JSON = getSampleThemePackJson();
+});
 
 let appliedCustomKeys: string[] = [];
 let cachedThemesDir: string | null = null;
@@ -176,9 +125,9 @@ export function saveTheme(choice: ThemeChoice): void {
 }
 
 export const THEME_CHOICES: { value: ThemeChoice; label: string }[] = [
-  { value: 'system', label: '跟随系统' },
-  { value: 'light', label: '浅色' },
-  { value: 'dark', label: '深色' },
+  { value: 'system', get label() { return t('nav.themeSystem'); } },
+  { value: 'light', get label() { return t('nav.themeLight'); } },
+  { value: 'dark', get label() { return t('nav.themeDark'); } },
 ];
 
 function parseStoredPacks(storageKey: string, source: 'directory' | 'local'): ThemePack[] {
@@ -304,7 +253,7 @@ export function importCustomThemePack(rawJson: string): { ok: true; pack: ThemeP
   try {
     parsed = JSON.parse(rawJson);
   } catch {
-    return { ok: false, error: 'JSON 格式有误，请检查语法。' };
+    return { ok: false, error: t('core.theme.invalidJson') };
   }
   const checked = validateThemePack(parsed);
   if (!checked.ok) return checked;
@@ -325,7 +274,7 @@ export async function installThemePack(rawJson: string): Promise<{ ok: true; pac
   try {
     parsed = JSON.parse(rawJson);
   } catch {
-    return { ok: false, error: 'JSON 格式有误，请检查语法。' };
+    return { ok: false, error: t('core.theme.invalidJson') };
   }
   const checked = validateThemePack(parsed);
   if (!checked.ok) return checked;

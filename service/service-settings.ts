@@ -7,7 +7,8 @@ import { readSecret, wecomSecretFile } from './secrets.ts';
 import type { Settings, SettingsOptions } from './settings.ts';
 import { createSettings, DISPATCH_ORDER_KEYS } from './settings.ts';
 import type { SettingKey } from './settings.ts';
-import { normalizeLocale, setActiveLocale } from '../shared/i18n.ts';
+import { isValidLocaleId, normalizeLocale, setActiveLocale } from '../shared/i18n.ts';
+import { syncDirectoryLocales } from './locales.ts';
 import { isTierId, tierNamesText } from '../shared/tiers.ts';
 import { knowledgeLimitsOf, type KnowledgeLimits } from './knowledge.ts';
 
@@ -18,6 +19,8 @@ interface ServiceSettingsOptions {
 }
 
 export function serviceSettings({ ledger, dataDir, log }: ServiceSettingsOptions): Settings {
+  // Load any hot-plugged `<dataDir>/locales/*.json` language packs before resolving `ui.locale`.
+  syncDirectoryLocales(dataDir);
   // Every list of logins is held to the logins this data directory has: a removed one is
   // passed over where it is used, but one typed in now has to exist.
   const knownLogins = (ids: unknown): string | null => {
@@ -49,6 +52,7 @@ export function serviceSettings({ ledger, dataDir, log }: ServiceSettingsOptions
       'gateway.wss': (wss) => wssProblem(wss as string),
       // Logins the owner has now; one removed later is passed over where it is used.
       'knowledge.logins': knownLogins,
+      'ui.locale': (value) => (isValidLocaleId(value) ? null : '语言代码格式不对，应为 BCP-47 标识（例如 zh-CN、en、ja）'),
     },
     derived: {
       // Whoever the channel answers to is who may command through it: the old receiver's

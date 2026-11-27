@@ -5,9 +5,10 @@
 // break the page reads the snapshot again and says when it last heard anything; it keeps
 // no cursor.
 import type { QueryClient } from '@tanstack/react-query';
+import { t as translate } from '@shared/i18n.ts';
 import { api, messageOf, post } from './api.ts';
 import { hasTurn, processing, summaryLine } from './conversation.ts';
-import { composeWithQuotes, MAX_COMPOSER_QUOTES, trimQuoteExcerpt, type ComposerQuote } from './quotes.ts';
+import { composeWithQuotes, MAX_COMPOSER_QUOTES, trimQuoteExcerpt, type ComposerQuote, type QuoteSourceKey } from './quotes.ts';
 import type { Message, ProjectFileSummary, TurnChanges } from './types.ts';
 
 const SNAPSHOT_SIZE = 50;
@@ -16,6 +17,9 @@ const BACKOFF_MAX_MS = 30_000;
 // Changes come in bursts (a Run settles in several commits): one read again for all of them.
 const GATHER_MS = 100;
 const MAX_ATTACHMENTS = 8;
+const MAX_KEPT_CONVERSATIONS = 16;
+const MAX_BACKLOG_EVENTS = 250;
+const MAX_LIVE_MESSAGES = 200;
 const NO_CHANGES: TurnChanges = { changes: [], tasks: [] };
 const TASK_DRAFTS_STORAGE_KEY = 'tycho.taskDrafts';
 
@@ -79,6 +83,8 @@ export interface LiveState {
   // "Since you last opened": read once, before the first snapshot moves that moment.
   summary: string;
   error: string | null;
+  // Increments when any per-task draft or quote changes so task composers re-sync cleanly.
+  taskDraftVersion: number;
 }
 
 // The part of EventSource the console uses.
@@ -95,7 +101,18 @@ interface Source {
 interface Round {
   source: Source;
   reading: boolean;
-  backlog: (() => void)[];
+  backlog: { key?: string; run: () => void }[];
+  backlogOverflow: boolean;
+}
+
+interface PendingSend {
+  project: string;
+  segment: string | null;
+  text: string;
+  attachments: readonly ProjectFileSummary[];
+  attachmentIds: readonly string[];
+  row: string | null;
+  awaiting: string | null;
 }
 
 interface LiveOptions {
@@ -116,15 +133,15 @@ export function createLive({
   now = Date.now,
   gather = (fn) => setTimeout(fn, GATHER_MS),
 }: LiveOptions) {
-  let state: LiveState = { focus: null, loaded: false, messages: new Map(), changes: new Map(), connected: false, lastUpdate: null, sending: null, sendingAttachments: [], draft: '', attachments: [], quotes: [], refused: null, summary: '', error: null };
+  let state: LiveState = { focus: null, loaded: false, messages: new Map(), changes: new Map(), connected: false, lastUpdate: null, sending: null, sendingAttachments: [], draft: '', attachments: [], quotes: [], refused: null, summary: '', error: null, taskDraftVersion: 0 };
   const listeners = new Set<() => void>();
   // The round under way, if the console is connected or connecting. A read that comes
   // back to find another round, or none, belongs to a connection that is over: all of
   // it is dropped.
   let round: Round | undefined;
-  let awaiting: string | null = null;
-  // A send has gone out and its answer, which names the message, is not back.
-  let unanswered: { project: string; text: string; attachmentIds: readonly string[]; row: string | null } | undefined;
+  // Pending optimistic sends scoped per project so Project A's send never appears in or
+  // locks Project B's composer.
+  const pendingSends = new Map<string, PendingSend>();
   let backoff = BACKOFF_START_MS;
   let timer: unknown;
   // Goes up on every start and stop: what an earlier run still has under way is dropped.
@@ -134,14 +151,43 @@ export function createLive({
   const draftAttachments = new Map<string, ProjectFileSummary[]>();
   const draftQuotes = new Map<string, ComposerQuote[]>();
   let nextQuoteSeq = 0;
-  // What was typed into each task's follow-up/interjection composer and not sent yet.
+  // What was typed & quoted into each task's follow-up/interjection composer, with revision
+  // tracking so a late send ack never clears newer unsent edits.
   const taskDrafts = loadTaskDrafts();
+  const taskQuotes = new Map<string, ComposerQuote[]>();
+  const taskDraftRevisions = new Map<string, number>();
   // And why a text of a project's came back, while another one is in view.
   const refusals = new Map<string, string>();
-  // What was last shown of each conversation read since the console opened, while another is
-  // in view: its own rows only, never another conversation's.
+  // What was last shown of each conversation read since the console opened (bounded LRU).
   const kept = new Map<string, Pick<LiveState, 'messages' | 'changes'>>();
   let gathering = false;
+
+  const rememberConversation = (key: string, entry: Pick<LiveState, 'messages' | 'changes'>): void => {
+    kept.delete(key);
+    kept.set(key, entry);
+    if (kept.size > MAX_KEPT_CONVERSATIONS) {
+      const oldest = kept.keys().next().value;
+      if (oldest !== undefined) kept.delete(oldest);
+    }
+  };
+
+  const pendingForFocus = (focus: Focus | null): PendingSend | undefined => {
+    if (!focus) return undefined;
+    const pending = pendingSends.get(focus.project);
+    if (!pending) return undefined;
+    // Match exact segment, or a project queue that just created its first segment.
+    if (pending.segment === null || focus.segment === null || pending.segment === focus.segment) {
+      return pending;
+    }
+    return undefined;
+  };
+
+  const bumpTaskDraftRevision = (taskId: string): number => {
+    const next = (taskDraftRevisions.get(taskId) ?? 0) + 1;
+    taskDraftRevisions.set(taskId, next);
+    set({ taskDraftVersion: state.taskDraftVersion + 1 });
+    return next;
+  };
 
   // What a snapshot reads: the segment in view, the project's queue before its first segment,
   // or the newest messages when no conversation is in view.
@@ -171,8 +217,11 @@ export function createLive({
 
   async function refreshChanges(id: string): Promise<void> {
     const mine = round;
+    const targetFocus = state.focus ? focusKey(state.focus) : null;
     const turn = await api<TurnChanges>(`/api/messages/${id}/changes`);
-    if (mine === round) set({ changes: new Map(state.changes).set(id, turn) });
+    if (mine === round && (state.focus ? focusKey(state.focus) : null) === targetFocus) {
+      set({ changes: new Map(state.changes).set(id, turn) });
+    }
   }
 
   // False when the round ended while its snapshot was read: nothing of it was kept. Once the
@@ -180,8 +229,8 @@ export function createLive({
   // view reads only its own messages.
   async function snapshot(mine: Round, connecting: boolean): Promise<boolean> {
     mine.reading = true;
+    const url = snapshotUrl(state.focus);
     try {
-      const url = snapshotUrl(state.focus);
       const { messages, changes: committed = {} } = await api<{ messages: Message[]; changes?: Record<string, TurnChanges> }>(url);
       if (mine !== round) return false;
       // Another conversation came into view meanwhile: this read is not about it.
@@ -205,19 +254,39 @@ export function createLive({
       // being opened was pushed to nobody.
       if (connecting) invalidate();
       return true;
+    } catch (err) {
+      if (mine !== round) return false;
+      // If the user already switched to another conversation while this read failed, never
+      // leave the new conversation stranded on a skeleton — read the new conversation instead.
+      if (snapshotUrl(state.focus) !== url) {
+        mine.reading = false;
+        return await snapshot(mine, connecting);
+      }
+      throw err;
     } finally {
       // Only what is this round's own: a later round has its own backlog and its own read.
       mine.reading = false;
       const waiting = mine.backlog;
+      const overflowed = mine.backlogOverflow;
       mine.backlog = [];
-      if (mine === round) for (const replay of waiting) replay();
+      mine.backlogOverflow = false;
+      if (mine === round) {
+        if (overflowed) {
+          void snapshot(mine, false).catch((err: unknown) => showError(messageOf(err)));
+        } else {
+          for (const item of waiting) item.run();
+        }
+      }
     }
   }
 
-  function settleSending(id: string): void {
-    if (awaiting !== id) return;
-    awaiting = null;
-    set({ sending: null, sendingAttachments: [] });
+  function settleSending(project: string, id: string): void {
+    const pending = pendingSends.get(project);
+    if (!pending || pending.awaiting !== id) return;
+    pendingSends.delete(project);
+    if (state.focus?.project === project) {
+      set({ sending: null, sendingAttachments: [] });
+    }
   }
 
   function sameAttachmentIds(row: Message, expected: readonly string[]): boolean {
@@ -228,32 +297,53 @@ export function createLive({
     return actualIds.size === expected.length && expected.every((id) => actualIds.has(id));
   }
 
+  const withBoundedMessage = (map: ReadonlyMap<string, Message>, row: Message): Map<string, Message> => {
+    const next = new Map(map);
+    next.set(row.id, row);
+    if (next.size > MAX_LIVE_MESSAGES) {
+      const activeProject = state.focus?.project ?? null;
+      // Prefer evicting messages belonging to non-focused projects first so unrelated traffic
+      // never grows unboundedly or pushes the active conversation out of memory.
+      for (const [id, msg] of next) {
+        if (next.size <= MAX_LIVE_MESSAGES) break;
+        if (activeProject !== null && msg.project_id != null && msg.project_id !== activeProject) {
+          next.delete(id);
+        }
+      }
+      for (const id of next.keys()) {
+        if (next.size <= MAX_LIVE_MESSAGES) break;
+        next.delete(id);
+      }
+    }
+    return next;
+  };
+
   function onMessage(row: Message): void {
+    // Settle any project's matching pending send even if another project is currently focused.
+    for (const [projectId, pending] of pendingSends) {
+      if (
+        pending.row === null
+        && row.direction === 'in'
+        && row.channel === 'console'
+        && (row.project_id === undefined || row.project_id === projectId)
+        && row.text === pending.text
+        && sameAttachmentIds(row, pending.attachmentIds)
+      ) {
+        pending.row = row.id;
+        pending.awaiting = row.id;
+      }
+      if (pending.awaiting === row.id) {
+        settleSending(projectId, row.id);
+      }
+    }
+
     const existing = state.messages.get(row.id);
     // An unhydrated status update (`processing`/`processed`) must never wipe attachments
     // already attached to the known row.
     const merged = row.attachments === undefined && existing?.attachments?.length
       ? { ...row, attachments: existing.attachments }
       : row;
-    set({ messages: new Map(state.messages).set(merged.id, merged) });
-    // The service publishes a message before it answers the send that made it, so the
-    // row usually gets here first, with no id yet to know it by. A new row from this
-    // console matching project, text and attachments is that message: from now on the
-    // row shows it.
-    if (
-      unanswered
-      && unanswered.row === null
-      && !existing
-      && merged.direction === 'in'
-      && merged.channel === 'console'
-      && (merged.project_id === undefined || merged.project_id === unanswered.project)
-      && merged.text === unanswered.text
-      && sameAttachmentIds(merged, unanswered.attachmentIds)
-    ) {
-      unanswered.row = merged.id;
-      awaiting = merged.id;
-    }
-    settleSending(merged.id);
+    set({ messages: withBoundedMessage(state.messages, merged) });
     if (hasTurn(merged)) refreshChanges(merged.id).catch(() => undefined);
   }
 
@@ -267,7 +357,7 @@ export function createLive({
     // The first draft of a reply arrives before any row for it has been pushed.
     const row: Message = known ? { ...known, text }
       : { id, direction: 'out', external_id: replyTo ? `reply:${replyTo}` : `out:${id}`, text, final: 0, state: null, project_id: project ?? null, segment_id: segment ?? null };
-    set({ messages: new Map(state.messages).set(id, row) });
+    set({ messages: withBoundedMessage(state.messages, row) });
   }
 
   function onTask({ id, state: taskState }: { id: string; state: string }): void {
@@ -282,24 +372,47 @@ export function createLive({
     if (turn) refreshChanges(turn.id).catch(() => undefined);
   }
 
+  function enqueueBacklog(mine: Round, entry: { key?: string; run: () => void }): void {
+    if (entry.key) {
+      const idx = mine.backlog.findIndex((item) => item.key === entry.key);
+      if (idx !== -1) {
+        mine.backlog[idx] = entry;
+        return;
+      }
+    }
+    if (mine.backlog.length >= MAX_BACKLOG_EVENTS) {
+      mine.backlogOverflow = true;
+      return;
+    }
+    mine.backlog.push(entry);
+  }
+
   function connect(token: number): void {
     if (token !== run) return;
-    const mine: Round = { source: open('/api/stream'), reading: false, backlog: [] };
+    const mine: Round = { source: open('/api/stream'), reading: false, backlog: [], backlogOverflow: false };
     round = mine;
-    const on = <T>(type: string, handler: (data: T) => void): void => mine.source.addEventListener(type, (event) => {
+    const on = <T>(type: string, handler: (data: T) => void, coalesceKey?: (data: T) => string | undefined): void => mine.source.addEventListener(type, (event) => {
       const data = JSON.parse(event.data) as T;
       set({ lastUpdate: now() });
-      if (mine.reading) mine.backlog.push(() => handler(data));
-      else handler(data);
+      if (mine.reading) {
+        const key = coalesceKey?.(data);
+        enqueueBacklog(mine, { ...(key ? { key } : {}), run: () => handler(data) });
+      } else {
+        handler(data);
+      }
     });
-    on('delta', onDelta);
+    on<{ message_id: string; text: string; reply_to?: string; project_id?: string | null; segment_id?: string | null }>(
+      'delta',
+      onDelta,
+      (d) => `delta:${d.message_id}`,
+    );
     on('message', onMessage);
     on('task', onTask);
-    on('changed', invalidate);
+    on('changed', invalidate, () => 'changed');
     mine.source.onopen = () => {
       snapshot(mine, true).then(
-        (kept) => {
-          if (!kept) return;
+        (keptSnapshot) => {
+          if (!keptSnapshot) return;
           backoff = BACKOFF_START_MS;
           set({ connected: true });
         },
@@ -323,8 +436,10 @@ export function createLive({
     const token = run;
     failed.source.close();
     round = undefined;
-    // A sent message never gets its event now; the snapshot on reconnect will show it.
-    if (awaiting) settleSending(awaiting);
+    // Sent messages already accepted by POST never get their SSE event now; reconnect snapshot shows them.
+    for (const [projectId, pending] of [...pendingSends]) {
+      if (pending.awaiting) settleSending(projectId, pending.awaiting);
+    }
     set({ connected: false });
     timer = schedule(() => {
       timer = undefined;
@@ -400,23 +515,45 @@ export function createLive({
       set({ attachments: next, refused: null });
     },
 
-    addQuote(input: { source: string; excerpt: string }, targetProject?: string): void {
+    addQuote(input: { source: string; sourceKey?: QuoteSourceKey; excerpt: string }, targetProject?: string): boolean {
       const excerpt = trimQuoteExcerpt(input.excerpt);
-      if (!excerpt) return;
-      const quote: ComposerQuote = { id: `q-${++nextQuoteSeq}`, source: input.source.trim(), excerpt };
+      if (!excerpt) return false;
+      const quote: ComposerQuote = {
+        id: `q-${++nextQuoteSeq}`,
+        source: input.source.trim(),
+        ...(input.sourceKey ? { sourceKey: input.sourceKey } : {}),
+        excerpt,
+        reply: '',
+      };
       const projectId = targetProject ?? state.focus?.project;
       if (!projectId) {
-        if (state.quotes.length >= MAX_COMPOSER_QUOTES) return;
+        if (state.quotes.length >= MAX_COMPOSER_QUOTES) return false;
         set({ quotes: [...state.quotes, quote], refused: null });
-        return;
+        return true;
       }
       const isFocused = state.focus?.project === projectId;
       const current = isFocused ? state.quotes : (draftQuotes.get(projectId) ?? []);
-      if (current.length >= MAX_COMPOSER_QUOTES) return;
+      if (current.length >= MAX_COMPOSER_QUOTES) return false;
       const next = [...current, quote];
       draftQuotes.set(projectId, next);
       refusals.delete(projectId);
       if (isFocused) set({ quotes: next, refused: null });
+      return true;
+    },
+
+    updateQuoteReply(quoteId: string, reply: string): void {
+      let changed = false;
+      const next = state.quotes.map((existing) => {
+        if (existing.id !== quoteId) return existing;
+        changed = true;
+        return { ...existing, reply };
+      });
+      if (!changed) return;
+      if (state.focus) {
+        draftQuotes.set(state.focus.project, next);
+        refusals.delete(state.focus.project);
+      }
+      set({ quotes: next, refused: null });
     },
 
     removeQuote(quoteId: string): void {
@@ -451,17 +588,82 @@ export function createLive({
       return taskDrafts.get(taskId) ?? '';
     },
 
-    setTaskDraft(taskId: string, text: string): void {
-      if (!taskId) return;
+    getTaskDraftRevision(taskId: string): number {
+      return taskDraftRevisions.get(taskId) ?? 0;
+    },
+
+    setTaskDraft(taskId: string, text: string): number {
+      if (!taskId) return 0;
       if (text === '') taskDrafts.delete(taskId);
       else taskDrafts.set(taskId, text);
       syncTaskDrafts(taskDrafts);
+      return bumpTaskDraftRevision(taskId);
     },
 
-    clearTaskDraft(taskId: string): void {
-      if (!taskId || !taskDrafts.has(taskId)) return;
+    getTaskQuotes(taskId: string): readonly ComposerQuote[] {
+      return taskQuotes.get(taskId) ?? [];
+    },
+
+    addTaskQuote(taskId: string, input: { source: string; sourceKey?: QuoteSourceKey; excerpt: string }): boolean {
+      if (!taskId) return false;
+      const excerpt = trimQuoteExcerpt(input.excerpt);
+      if (!excerpt) return false;
+      const current = taskQuotes.get(taskId) ?? [];
+      if (current.length >= MAX_COMPOSER_QUOTES) return false;
+      const quote: ComposerQuote = {
+        id: `tq-${++nextQuoteSeq}`,
+        source: input.source.trim(),
+        ...(input.sourceKey ? { sourceKey: input.sourceKey } : {}),
+        excerpt,
+        reply: '',
+      };
+      taskQuotes.set(taskId, [...current, quote]);
+      bumpTaskDraftRevision(taskId);
+      return true;
+    },
+
+    updateTaskQuoteReply(taskId: string, quoteId: string, reply: string): void {
+      const current = taskQuotes.get(taskId);
+      if (!current) return;
+      let changed = false;
+      const next = current.map((existing) => {
+        if (existing.id !== quoteId) return existing;
+        changed = true;
+        return { ...existing, reply };
+      });
+      if (!changed) return;
+      taskQuotes.set(taskId, next);
+      bumpTaskDraftRevision(taskId);
+    },
+
+    removeTaskQuote(taskId: string, quoteId: string): void {
+      const current = taskQuotes.get(taskId);
+      if (!current) return;
+      const next = current.filter((existing) => existing.id !== quoteId);
+      if (next.length === current.length) return;
+      if (next.length > 0) taskQuotes.set(taskId, next);
+      else taskQuotes.delete(taskId);
+      bumpTaskDraftRevision(taskId);
+    },
+
+    clearTaskQuotes(taskId: string): void {
+      if (!taskId || !taskQuotes.has(taskId)) return;
+      taskQuotes.delete(taskId);
+      bumpTaskDraftRevision(taskId);
+    },
+
+    clearTaskDraft(taskId: string, expectedRevision?: number): boolean {
+      if (!taskId) return false;
+      const currentRev = taskDraftRevisions.get(taskId) ?? 0;
+      if (expectedRevision !== undefined && currentRev !== expectedRevision) {
+        return false;
+      }
+      const hadAnything = taskDrafts.has(taskId) || taskQuotes.has(taskId);
       taskDrafts.delete(taskId);
+      taskQuotes.delete(taskId);
       syncTaskDrafts(taskDrafts);
+      if (hadAnything) bumpTaskDraftRevision(taskId);
+      return true;
     },
 
     // Brings a conversation into view: its own messages are read again, and the box holds what
@@ -482,11 +684,23 @@ export function createLive({
       const attachments = focus ? draftAttachments.get(focus.project) ?? [] : [];
       const quotes = focus ? draftQuotes.get(focus.project) ?? [] : [];
       const refused = focus ? refusals.get(focus.project) ?? null : null;
-      if (state.focus && state.loaded) kept.set(focusKey(state.focus), { messages: state.messages, changes: state.changes });
+      if (state.focus && state.loaded) rememberConversation(focusKey(state.focus), { messages: state.messages, changes: state.changes });
       // A project's queue that has just been given its first segment is the same conversation.
       const grown = focus !== null && state.loaded && state.focus?.project === focus.project && state.focus.segment === null;
       const back = focus === null ? undefined : grown ? { messages: state.messages, changes: state.changes } : kept.get(focusKey(focus));
-      set({ focus, draft, attachments, quotes, refused, loaded: back !== undefined, messages: back?.messages ?? new Map(), changes: back?.changes ?? new Map() });
+      const pending = pendingForFocus(focus);
+      set({
+        focus,
+        draft,
+        attachments,
+        quotes,
+        refused,
+        sending: pending?.text ?? null,
+        sendingAttachments: pending?.attachments ?? [],
+        loaded: back !== undefined,
+        messages: back?.messages ?? new Map(),
+        changes: back?.changes ?? new Map(),
+      });
       const mine = round;
       if (focus && mine && !mine.reading) snapshot(mine, false).catch((err: unknown) => showError(messageOf(err)));
     },
@@ -496,42 +710,46 @@ export function createLive({
     async send(): Promise<boolean> {
       const rawDraft = state.draft;
       const quotes = state.quotes;
-      const text = composeWithQuotes(rawDraft, quotes);
+      const text = composeWithQuotes(rawDraft, quotes, translate);
       const attachments = state.attachments;
       const project = state.focus?.project;
-      if ((text.trim() === '' && attachments.length === 0) || state.sending !== null) return false;
-      // A message goes to one project's Router (docs/design/project-sessions.md §2).
+      const segment = state.focus?.segment ?? null;
       if (project === undefined) {
-        set({ refused: '要在一个项目的页面里给它的负责人发消息' });
+        if (text.trim() === '' && attachments.length === 0) return false;
+        set({ refused: translate('core.live.requireProjectPage') });
         return false;
       }
+      if ((text.trim() === '' && attachments.length === 0) || pendingSends.has(project)) return false;
       drafts.delete(project);
       draftAttachments.delete(project);
       draftQuotes.delete(project);
-      set({ sending: text, sendingAttachments: attachments, draft: '', attachments: [], quotes: [], refused: null, error: null });
       const attachmentIds = attachments.map((file) => file.id);
-      const mine = { project, text, attachmentIds, row: null as string | null };
-      unanswered = mine;
+      const pending: PendingSend = { project, segment, text, attachments, attachmentIds, row: null, awaiting: null };
+      pendingSends.set(project, pending);
+      set({ sending: text, sendingAttachments: attachments, draft: '', attachments: [], quotes: [], refused: null, error: null });
       try {
         const body = attachmentIds.length > 0
           ? { text, project_id: project, attachment_ids: attachmentIds }
           : { text, project_id: project };
         const { id } = await post<{ id: string }>('/api/messages', body);
-        if (unanswered === mine) unanswered = undefined;
         // Its row may be here already and the pending text gone with it. Otherwise the
         // event is awaited; with no stream it will never come.
-        if (mine.row === null) {
-          awaiting = id;
-          if (state.messages.has(id) || !state.connected) settleSending(id);
+        if (pending.row === null) {
+          pending.awaiting = id;
+          const alreadyPresent = state.focus?.project === project && state.messages.has(id);
+          if (alreadyPresent || !state.connected) settleSending(project, id);
         }
         return true;
       } catch (err) {
-        if (unanswered === mine) unanswered = undefined;
+        if (pendingSends.get(project) === pending) {
+          pendingSends.delete(project);
+        }
         // Ahead of anything begun meanwhile from another page: neither text nor attachments are lost.
         // Back in that project's box, ahead of anything typed there since.
-        const back = [rawDraft, state.focus?.project === project ? state.draft : drafts.get(project) ?? ''].filter(Boolean).join('\n');
-        const currentAttachments = state.focus?.project === project ? state.attachments : draftAttachments.get(project) ?? [];
-        const currentQuotes = state.focus?.project === project ? state.quotes : draftQuotes.get(project) ?? [];
+        const isFocused = state.focus?.project === project;
+        const back = [rawDraft, isFocused ? state.draft : drafts.get(project) ?? ''].filter(Boolean).join('\n');
+        const currentAttachments = isFocused ? state.attachments : draftAttachments.get(project) ?? [];
+        const currentQuotes = isFocused ? state.quotes : draftQuotes.get(project) ?? [];
         const mergedQuotes = [...quotes, ...currentQuotes].slice(0, MAX_COMPOSER_QUOTES);
         const mergedAttachments: ProjectFileSummary[] = [];
         for (const item of [...attachments, ...currentAttachments]) {
@@ -539,7 +757,7 @@ export function createLive({
             mergedAttachments.push(item);
           }
         }
-        if (state.focus?.project === project) {
+        if (isFocused) {
           if (mergedAttachments.length > 0) draftAttachments.set(project, mergedAttachments);
           if (mergedQuotes.length > 0) draftQuotes.set(project, mergedQuotes);
           set({ sending: null, sendingAttachments: [], draft: back, attachments: mergedAttachments, quotes: mergedQuotes, refused: messageOf(err) });
@@ -548,7 +766,6 @@ export function createLive({
           if (mergedAttachments.length > 0) draftAttachments.set(project, mergedAttachments);
           if (mergedQuotes.length > 0) draftQuotes.set(project, mergedQuotes);
           refusals.set(project, messageOf(err));
-          set({ sending: null, sendingAttachments: [] });
         }
         return false;
       }

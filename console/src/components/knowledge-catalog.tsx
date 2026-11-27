@@ -8,6 +8,7 @@ import {
   ANY_ROLE_LABEL, ENTRY_STATE_LABELS, GLOBAL_LABEL, KIND_LABELS, LOADING_LABELS, citation,
   type KnowledgeKind, type Loading,
 } from '@shared/knowledge.ts';
+import { t as tr } from '@shared/i18n.ts';
 import type {
   DirectorySkill, EntryMachinesMap, IgnoredSkillEntry, SkillRegistryBinding,
 } from '@shared/skill-catalog.ts';
@@ -23,6 +24,7 @@ import { Segmented } from '@/components/ui/segmented';
 import { Option, Select } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { messageOf, put } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { KNOWLEDGE, PAGE } from '@/lib/queries';
 import type { KnowledgeEntry } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -88,29 +90,6 @@ const ROLE_ANY = '__any__';
 const MACHINE_ALL_ONLY = '__all_machines__';
 const WIDE_QUERY = '(min-width: 1024px)';
 
-const LOADING_FILTER_OPTIONS: readonly { value: LoadingFilter; label: string }[] = [
-  { value: 'all', label: '全部' },
-  { value: 'resident', label: LOADING_LABELS.resident },
-  { value: 'on_demand', label: LOADING_LABELS.on_demand },
-];
-
-const BINDING_LOADING_OPTIONS: readonly { value: Loading; label: string }[] = [
-  { value: 'on_demand', label: LOADING_LABELS.on_demand },
-  { value: 'resident', label: LOADING_LABELS.resident },
-];
-
-const BINDING_SCOPE_OPTIONS = [
-  { value: 'global', label: GLOBAL_LABEL },
-  { value: 'projects', label: '指定项目' },
-] as const;
-
-const MACHINE_SCOPE_OPTIONS = [
-  { value: 'all', label: '全部机器' },
-  { value: 'machines', label: '指定机器' },
-] as const;
-
-const BOUNDARY_NOTE = '控制 Tycho 派发轮次的注入范围、加载方式与节点同步；不修改 SKILL.md 原文件。';
-
 const EMPTY_MACHINES: readonly MachineOption[] = [];
 const EMPTY_ENTRY_MACHINES: EntryMachinesMap = {};
 
@@ -148,7 +127,9 @@ function sameBinding(a: SkillRegistryBinding, b: SkillRegistryBinding): boolean 
 }
 
 function machineOptionText(machine: MachineOption): string {
-  return machine.host && machine.host !== machine.id ? `${machine.id}（${machine.host}）` : machine.id;
+  return machine.host && machine.host !== machine.id
+    ? tr('know.machine.optionWithHost', { id: machine.id, host: machine.host })
+    : machine.id;
 }
 
 function machineBadgeInfo(
@@ -157,12 +138,23 @@ function machineBadgeInfo(
 ): { label: string; title: string; empty: boolean } | null {
   if (machineIds === null) return null;
   if (machineIds.length === 0) {
-    return { label: '未分配机器', title: '未分配任何机器，不会派发到任何节点', empty: true };
+    return {
+      label: tr('know.machine.unassigned'),
+      title: tr('know.machine.unassignedTitle'),
+      empty: true,
+    };
   }
+  const sep = tr('know.listSep');
   const labels = machineIds.map((id) => machines.find((machine) => machine.id === id)?.id ?? id);
-  const full = labels.join('、');
-  const short = labels.length <= 2 ? full : `${labels.slice(0, 2).join('、')} 等 ${labels.length} 台`;
-  return { label: `仅 ${short}`, title: `仅限机器：${full}`, empty: false };
+  const full = labels.join(sep);
+  const short = labels.length <= 2
+    ? full
+    : tr('know.machine.shortMore', { head: labels.slice(0, 2).join(sep), count: labels.length });
+  return {
+    label: tr('know.machine.onlyLabel', { short }),
+    title: tr('know.machine.onlyTitle', { full }),
+    empty: false,
+  };
 }
 
 function CatalogRow({
@@ -182,6 +174,7 @@ function CatalogRow({
   onSelect: (id: string) => void;
   buttonRef?: (node: HTMLButtonElement | null) => void;
 }) {
+  const { t } = useI18n();
   const machineBadge = machineBadgeInfo(item.machine_ids, machines);
 
   return (
@@ -250,7 +243,7 @@ function CatalogRow({
               {machineBadge.label}
             </Badge>
           ) : (
-            <span>全机</span>
+            <span>{t('know.machine.allShort')}</span>
           )}
 
           {item.inactiveLabel ? <Badge tone="ended">{item.inactiveLabel}</Badge> : null}
@@ -280,12 +273,13 @@ function MachineCheckboxes({
   disabled: boolean;
   onChange: (next: string[]) => void;
 }) {
+  const { t } = useI18n();
   if (!machines.length) {
-    return <Note className="text-xs">还没有接入机器。</Note>;
+    return <Note className="text-xs">{t('know.catalog.noMachines')}</Note>;
   }
   return (
     <fieldset className="min-w-0">
-      <legend className="sr-only">适用机器</legend>
+      <legend className="sr-only">{t('know.catalog.applicableMachines')}</legend>
       <ul className="flex flex-wrap gap-x-4 gap-y-0.5">
         {machines.map((machine) => (
           <li key={machine.id}>
@@ -323,10 +317,15 @@ function LedgerDetailPane({
   entryMachines: EntryMachinesMap;
   showHeader: boolean;
 }) {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const { entry } = item;
   const retired = entry.state === 'retired';
   const ref = citation(entry.id, entry.revision);
+  const machineScopeOptions = [
+    { value: 'all', label: t('know.machine.all') },
+    { value: 'machines', label: t('know.machine.specific') },
+  ] as const;
 
   const serverMachineIds = useMemo(
     () => normalizeIds(entryMachines[entry.id]),
@@ -411,7 +410,7 @@ function LedgerDetailPane({
           </div>
           <Button size="sm" asChild className="flex-none">
             <Link to={entryPath(entry.id)}>
-              查看完整详情
+              {t('know.catalog.viewFullDetail')}
               <ExternalLink className="size-3.5" aria-hidden="true" />
             </Link>
           </Button>
@@ -437,7 +436,7 @@ function LedgerDetailPane({
           </div>
           <Button size="sm" asChild>
             <Link to={entryPath(entry.id)}>
-              查看完整详情
+              {t('know.catalog.viewFullDetail')}
               <ExternalLink className="size-3.5" aria-hidden="true" />
             </Link>
           </Button>
@@ -448,30 +447,30 @@ function LedgerDetailPane({
       <div className={cn('grid gap-3 border-b border-border bg-muted/40 text-xs', showHeader ? 'px-5 py-3.5' : 'mb-4 rounded-xl border p-3.5')}>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-muted-foreground">
           <span>
-            <span className="text-faint">作用域 </span>
+            <span className="text-faint">{t('know.catalog.metaScope')}</span>
             <span className="font-medium text-foreground">{scopeOf(names, entry.project_ids, entry.roles)}</span>
           </span>
           <span>
-            <span className="text-faint">职能 </span>
+            <span className="text-faint">{t('know.catalog.metaRole')}</span>
             <span className="font-medium text-foreground">{rolesText(names, entry.roles)}</span>
           </span>
           <span>
-            <span className="text-faint">加载 </span>
+            <span className="text-faint">{t('know.catalog.metaLoading')}</span>
             <span className="font-medium text-foreground">{loadingText(entry.kind, entry.loading)}</span>
           </span>
           <span className="tabular-nums">
-            <span className="text-faint">大小 </span>
+            <span className="text-faint">{t('know.catalog.metaSize')}</span>
             <span className="font-medium text-foreground">{kib(item.bytes)}</span>
           </span>
         </div>
 
         <div className="grid gap-2 border-t border-border/70 pt-2.5">
           <div className="flex flex-wrap items-center gap-2.5">
-            <span className="text-xs font-medium text-muted-foreground">可用机器</span>
+            <span className="text-xs font-medium text-muted-foreground">{t('know.catalog.availableMachines')}</span>
             <Segmented
-              label="可用机器"
+              label={t('know.catalog.availableMachines')}
               value={machineScope}
-              options={MACHINE_SCOPE_OPTIONS}
+              options={machineScopeOptions}
               disabled={busy}
               onChange={(value) => { setMachineScope(value); markEdited(); }}
             />
@@ -482,7 +481,7 @@ function LedgerDetailPane({
               disabled={busy || invalidMachines || !dirty}
               onClick={() => void saveMachines()}
             >
-              {busy ? '保存中' : '保存机器范围'}
+              {busy ? t('know.saving') : t('know.catalog.saveMachines')}
             </Button>
           </div>
 
@@ -495,9 +494,9 @@ function LedgerDetailPane({
             />
           ) : null}
 
-          {invalidMachines ? <Note className="text-xs">请至少选择一台机器，或切换为全部机器。</Note> : null}
+          {invalidMachines ? <Note className="text-xs">{t('know.catalog.selectMachineHint')}</Note> : null}
           {error ? <Problem role="alert" className="text-xs">{error}</Problem> : null}
-          {saved && !error ? <p role="status" className="text-xs text-success-foreground">已保存可用机器范围。</p> : null}
+          {saved && !error ? <p role="status" className="text-xs text-success-foreground">{t('know.catalog.machinesSaved')}</p> : null}
         </div>
       </div>
 
@@ -505,13 +504,13 @@ function LedgerDetailPane({
       <div className={cn('grid gap-4', showHeader ? 'px-5 py-5' : '')}>
         {entry.when_to_use ? (
           <div className="rounded-lg border border-border bg-muted/45 px-3.5 py-2.5">
-            <p className="text-xs font-medium text-muted-foreground">触发场景</p>
+            <p className="text-xs font-medium text-muted-foreground">{t('know.catalog.triggerSection')}</p>
             <p className="mt-1 text-sm leading-relaxed wrap-anywhere">{entry.when_to_use}</p>
           </div>
         ) : null}
 
         <div>
-          <p className="mb-2 text-xs font-medium text-muted-foreground">正文</p>
+          <p className="mb-2 text-xs font-medium text-muted-foreground">{t('know.field.body')}</p>
           <Markdown text={entry.body} />
         </div>
       </div>
@@ -532,7 +531,20 @@ function DirectorySkillPane({
   machines: readonly MachineOption[];
   showHeader: boolean;
 }) {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
+  const bindingLoadingOptions: readonly { value: Loading; label: string }[] = [
+    { value: 'on_demand', label: LOADING_LABELS.on_demand },
+    { value: 'resident', label: LOADING_LABELS.resident },
+  ];
+  const bindingScopeOptions = [
+    { value: 'global', label: GLOBAL_LABEL },
+    { value: 'projects', label: t('know.catalog.scopeSelectedProjects') },
+  ] as const;
+  const machineScopeOptions = [
+    { value: 'all', label: t('know.machine.all') },
+    { value: 'machines', label: t('know.machine.specific') },
+  ] as const;
   const projectIdsKey = projects.map((project) => project.id).join('\0');
   const roleIdsKey = roles.map((role) => role.id).join('\0');
   const machineIdsKey = machines.map((machine) => machine.id).join('\0');
@@ -615,7 +627,7 @@ function DirectorySkillPane({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-lg font-semibold wrap-anywhere">{skill.name}</h2>
-              {!enabled ? <Badge tone="ended">已停用</Badge> : null}
+              {!enabled ? <Badge tone="ended">{t('common.disabled')}</Badge> : null}
               {machineBadge ? (
                 <Badge tone={machineBadge.empty ? 'waiting' : 'plain'} title={machineBadge.title}>
                   {machineBadge.label}
@@ -634,7 +646,7 @@ function DirectorySkillPane({
       ) : (
         <div className="mb-4 flex flex-wrap items-center gap-1.5">
           <Badge tone="plain">{KIND_LABELS.skill}</Badge>
-          {!enabled ? <Badge tone="ended">已停用</Badge> : null}
+          {!enabled ? <Badge tone="ended">{t('common.disabled')}</Badge> : null}
           {machineBadge ? (
             <Badge tone={machineBadge.empty ? 'waiting' : 'plain'} title={machineBadge.title}>
               {machineBadge.label}
@@ -648,20 +660,20 @@ function DirectorySkillPane({
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <Choice className="min-h-hit-sm text-xs">
             <Switch
-              aria-label="参与 Tycho 派发注入"
+              aria-label={t('know.catalog.dispatchEnabledAria')}
               checked={enabled}
               disabled={busy}
               onCheckedChange={(checked) => { setEnabled(checked); markEdited(); }}
             />
-            <span className="font-medium text-foreground">派发启用</span>
+            <span className="font-medium text-foreground">{t('know.catalog.dispatchEnabled')}</span>
           </Choice>
 
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-muted-foreground">加载方式</span>
+            <span className="text-muted-foreground">{t('know.field.loading')}</span>
             <Segmented
-              label="加载方式"
+              label={t('know.field.loading')}
               value={loading}
-              options={BINDING_LOADING_OPTIONS}
+              options={bindingLoadingOptions}
               disabled={busy}
               onChange={(value) => { setLoading(value); markEdited(); }}
             />
@@ -674,7 +686,7 @@ function DirectorySkillPane({
             disabled={busy || invalidScope || invalidMachines || !dirty}
             onClick={() => void save()}
           >
-            {busy ? '保存中' : '保存配置'}
+            {busy ? t('know.saving') : t('know.catalog.saveConfig')}
           </Button>
         </div>
 
@@ -684,18 +696,18 @@ function DirectorySkillPane({
             scope === 'global' && machineScope === 'all' ? 'sm:grid-cols-2 sm:gap-x-6' : 'grid-cols-1',
           )}>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-              <span className="w-14 flex-none text-muted-foreground">作用域</span>
+              <span className="w-14 flex-none text-muted-foreground">{t('know.field.scope')}</span>
               <Segmented
-                label="作用域"
+                label={t('know.field.scope')}
                 value={scope}
-                options={BINDING_SCOPE_OPTIONS}
+                options={bindingScopeOptions}
                 disabled={busy}
                 onChange={(value) => { setScope(value); markEdited(); }}
               />
               {scope === 'projects' ? (
                 projects.length ? (
                   <fieldset className="min-w-0 flex-1">
-                    <legend className="sr-only">适用项目</legend>
+                    <legend className="sr-only">{t('know.catalog.applicableProjects')}</legend>
                     <ul className="flex flex-wrap gap-x-4 gap-y-0.5">
                       {projects.map((project) => (
                         <li key={project.id}>
@@ -718,16 +730,16 @@ function DirectorySkillPane({
                       ))}
                     </ul>
                   </fieldset>
-                ) : <Note className="text-xs">还没有项目。</Note>
+                ) : <Note className="text-xs">{t('know.noProjects')}</Note>
               ) : null}
             </div>
 
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-              <span className="w-14 flex-none text-muted-foreground">分发机器</span>
+              <span className="w-14 flex-none text-muted-foreground">{t('know.catalog.distributeMachines')}</span>
               <Segmented
-                label="分发机器"
+                label={t('know.catalog.distributeMachines')}
                 value={machineScope}
-                options={MACHINE_SCOPE_OPTIONS}
+                options={machineScopeOptions}
                 disabled={busy}
                 onChange={(value) => { setMachineScope(value); markEdited(); }}
               />
@@ -745,10 +757,10 @@ function DirectorySkillPane({
           </div>
 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-            <span className="w-14 flex-none text-muted-foreground">适用职能</span>
+            <span className="w-14 flex-none text-muted-foreground">{t('know.catalog.applicableRoles')}</span>
             {roles.length ? (
               <fieldset className="min-w-0 flex-1">
-                <legend className="sr-only">适用职能</legend>
+                <legend className="sr-only">{t('know.catalog.applicableRoles')}</legend>
                 <ul className="flex flex-wrap items-center gap-x-4 gap-y-0.5">
                   {roles.map((role) => (
                     <li key={role.id}>
@@ -770,44 +782,44 @@ function DirectorySkillPane({
                     </li>
                   ))}
                   {selectedRoles.length === 0 ? (
-                    <li className="text-faint">（{ANY_ROLE_LABEL}）</li>
+                    <li className="text-faint">{t('know.catalog.anyRoleParen', { label: ANY_ROLE_LABEL })}</li>
                   ) : null}
                 </ul>
               </fieldset>
-            ) : <Note className="text-xs">还没有定义职能，当前为{ANY_ROLE_LABEL}。</Note>}
+            ) : <Note className="text-xs">{t('know.catalog.noRolesDefined', { anyRole: ANY_ROLE_LABEL })}</Note>}
           </div>
         </div>
 
-        {invalidScope ? <Note className="text-xs">请至少选择一个项目，或切换为全局。</Note> : null}
-        {invalidMachines ? <Note className="text-xs">请至少选择一台机器，或切换为全部机器。</Note> : null}
+        {invalidScope ? <Note className="text-xs">{t('know.catalog.selectProjectHint')}</Note> : null}
+        {invalidMachines ? <Note className="text-xs">{t('know.catalog.selectMachineHint')}</Note> : null}
         {error ? <Problem role="alert" className="text-xs">{error}</Problem> : null}
-        {saved && !error ? <p role="status" className="text-xs text-success-foreground">已保存派发注入配置。</p> : null}
+        {saved && !error ? <p role="status" className="text-xs text-success-foreground">{t('know.catalog.configSaved')}</p> : null}
 
-        <Note className="border-t border-border/70 pt-2 text-xs">{BOUNDARY_NOTE}</Note>
+        <Note className="border-t border-border/70 pt-2 text-xs">{t('know.catalog.boundaryNote')}</Note>
       </div>
 
       {/* Reading body */}
       <div className={cn('grid gap-4', showHeader ? 'px-5 py-5' : '')}>
         {skill.description ? (
           <div className="rounded-lg border border-border bg-muted/45 px-3.5 py-2.5">
-            <p className="text-xs font-medium text-muted-foreground">触发场景</p>
+            <p className="text-xs font-medium text-muted-foreground">{t('know.catalog.triggerSection')}</p>
             <p className="mt-1 text-sm leading-relaxed wrap-anywhere">{skill.description}</p>
           </div>
         ) : null}
 
         <div>
-          <p className="mb-2 text-xs font-medium text-muted-foreground">正文</p>
+          <p className="mb-2 text-xs font-medium text-muted-foreground">{t('know.field.body')}</p>
           <Markdown text={skill.body} />
         </div>
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border pt-3 text-xs text-muted-foreground">
           <span className="inline-flex min-w-0 items-center gap-1.5">
-            <span className="text-faint">文件</span>
+            <span className="text-faint">{t('know.catalog.metaFile')}</span>
             <Copyable value={skill.rel_path} />
           </span>
           <span className="tabular-nums">
-            <span className="text-faint">大小 </span>
-            {`${kib(skill.bytes)}（${skill.bytes} B）`}
+            <span className="text-faint">{t('know.catalog.metaSize')}</span>
+            {t('know.catalog.sizeWithBytes', { kib: kib(skill.bytes), bytes: skill.bytes })}
           </span>
           <span className="inline-flex min-w-0 items-center gap-1.5">
             <span className="text-faint">SHA-256</span>
@@ -869,18 +881,19 @@ function IgnoredSkillsDisclosure({
   skillsDir?: string;
   className?: string;
 }) {
+  const { t } = useI18n();
   if (!ignoredSkills.length) return null;
   return (
     <Details
       id="knowledge-catalog:ignored-skills"
-      title={`技能目录里略过 ${ignoredSkills.length} 项非标准内容`}
+      title={t('know.catalog.ignoredTitle', { count: ignoredSkills.length })}
       summaryClassName="min-h-hit-sm text-xs"
       className={className}
     >
       <div className="mt-2 grid gap-2 pb-1">
         {skillsDir ? (
           <Note className="text-xs">
-            扫描目录：<Mono>{skillsDir}</Mono>（仅识别 <Mono>{'<slug>/SKILL.md'}</Mono> 结构）
+            {t('know.catalog.scanDirPrefix')}<Mono>{skillsDir}</Mono>{t('know.catalog.scanDirMid')}<Mono>{'<slug>/SKILL.md'}</Mono>{t('know.catalog.scanDirSuffix')}
           </Note>
         ) : null}
         <Rows>
@@ -914,6 +927,12 @@ export function KnowledgeCatalog({
   initialSelectedId = null,
   onSelectedChange,
 }: KnowledgeCatalogProps) {
+  const { t } = useI18n();
+  const loadingFilterOptions: readonly { value: LoadingFilter; label: string }[] = [
+    { value: 'all', label: t('common.all') },
+    { value: 'resident', label: LOADING_LABELS.resident },
+    { value: 'on_demand', label: LOADING_LABELS.on_demand },
+  ];
   const isWide = useMediaQuery(WIDE_QUERY);
   const [query, setQuery] = useState(initialQuery);
   const [loadingFilter, setLoadingFilter] = useState<LoadingFilter>('all');
@@ -979,7 +998,7 @@ export function KnowledgeCatalog({
         roles: skill.binding.roles,
         machine_ids: normalizeIds(skill.binding.machine_ids),
         inactive: disabled,
-        inactiveLabel: disabled ? '已停用' : null,
+        inactiveLabel: disabled ? t('common.disabled') : null,
         bytes: skill.bytes,
         refText: skill.rel_path,
         searchText: [skill.name, skill.description, skill.body, skill.id, skill.slug, skill.rel_path].join('\n').toLowerCase(),
@@ -988,7 +1007,7 @@ export function KnowledgeCatalog({
     }
 
     return [...ledgerItems, ...directoryItems];
-  }, [entries, directorySkills, entryMachines]);
+  }, [entries, directorySkills, entryMachines, t]);
 
   const queryTokens = useMemo(
     () => query.trim().toLowerCase().split(/\s+/).filter(Boolean),
@@ -1058,7 +1077,7 @@ export function KnowledgeCatalog({
           items: sortItems(shown.filter((item) => item.project_ids !== null && keyOf(item.project_ids) === key)),
         })),
     ].filter((group) => group.items.length > 0);
-  }, [shown, projects, names]);
+  }, [shown, projects, names, t]);
 
   const visibleItems = useMemo(() => groups.flatMap((group) => group.items), [groups]);
 
@@ -1109,15 +1128,15 @@ export function KnowledgeCatalog({
   };
 
   return (
-    <section aria-label="知识与技能目录">
+    <section aria-label={t('know.catalog.ariaLabel')}>
       {/* Compact single-row filter toolbar */}
       <div className="mb-4 grid gap-2">
         <div className="flex flex-wrap items-center gap-1.5">
           <div className="relative min-w-[180px] flex-1">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-faint" aria-hidden="true" />
             <Input
-              aria-label="搜索知识与技能"
-              placeholder="搜索知识或技能…"
+              aria-label={t('know.catalog.searchAria')}
+              placeholder={t('know.catalog.searchPlaceholder')}
               className="pr-8 pl-8"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
@@ -1125,7 +1144,7 @@ export function KnowledgeCatalog({
             {query ? (
               <button
                 type="button"
-                aria-label="清空搜索"
+                aria-label={t('know.catalog.clearSearch')}
                 className="absolute top-1/2 right-1.5 inline-flex size-6 -translate-y-1/2 cursor-pointer items-center justify-center rounded-sm text-faint hover:bg-hover hover:text-foreground"
                 onClick={() => setQuery('')}
               >
@@ -1134,36 +1153,36 @@ export function KnowledgeCatalog({
             ) : null}
           </div>
 
-          <Segmented label="加载方式筛选" value={loadingFilter} options={LOADING_FILTER_OPTIONS} onChange={setLoadingFilter} />
+          <Segmented label={t('know.catalog.filterLoadingAria')} value={loadingFilter} options={loadingFilterOptions} onChange={setLoadingFilter} />
 
-          <Select aria-label="作用域筛选" className="w-auto max-w-[136px] min-w-0" value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value)}>
-            <Option value="">全部作用域</Option>
-            <Option value={SCOPE_GLOBAL}>仅全局</Option>
+          <Select aria-label={t('know.catalog.filterScopeAria')} className="w-auto max-w-[136px] min-w-0" value={scopeFilter} onChange={(event) => setScopeFilter(event.target.value)}>
+            <Option value="">{t('know.catalog.allScopes')}</Option>
+            <Option value={SCOPE_GLOBAL}>{t('know.catalog.onlyGlobal')}</Option>
             {projects.map((project) => <Option key={project.id} value={project.id}>{project.name}</Option>)}
           </Select>
 
-          <Select aria-label="职能筛选" className="w-auto max-w-[116px] min-w-0" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
-            <Option value="">全部职能</Option>
+          <Select aria-label={t('know.catalog.filterRoleAria')} className="w-auto max-w-[116px] min-w-0" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
+            <Option value="">{t('know.catalog.allRoles')}</Option>
             <Option value={ROLE_ANY}>{ANY_ROLE_LABEL}</Option>
             {roles.map((role) => <Option key={role.id} value={role.id}>{role.name}</Option>)}
           </Select>
 
-          <Select aria-label="机器筛选" className="w-auto max-w-[136px] min-w-0" value={machineFilter} onChange={(event) => setMachineFilter(event.target.value)}>
-            <Option value="">全部机器</Option>
-            <Option value={MACHINE_ALL_ONLY}>仅全机通用</Option>
+          <Select aria-label={t('know.catalog.filterMachineAria')} className="w-auto max-w-[136px] min-w-0" value={machineFilter} onChange={(event) => setMachineFilter(event.target.value)}>
+            <Option value="">{t('know.machine.all')}</Option>
+            <Option value={MACHINE_ALL_ONLY}>{t('know.catalog.onlyAllMachines')}</Option>
             {machines.map((machine) => (
               <Option key={machine.id} value={machine.id}>{machineOptionText(machine)}</Option>
             ))}
           </Select>
 
           <Choice className="ml-auto min-h-hit-sm shrink-0 whitespace-nowrap text-xs text-muted-foreground">
-            <Switch aria-label="显示已停用/退役" checked={showInactive} onCheckedChange={setShowInactive} />
-            已停用/退役
+            <Switch aria-label={t('know.catalog.showInactiveAria')} checked={showInactive} onCheckedChange={setShowInactive} />
+            {t('know.catalog.inactiveToggle')}
           </Choice>
         </div>
 
         {!showInactive && hiddenInactive > 0 ? (
-          <Note className="text-xs">{`另有 ${hiddenInactive} 条已停用或退役`}</Note>
+          <Note className="text-xs">{t('know.catalog.hiddenInactive', { count: hiddenInactive })}</Note>
         ) : null}
       </div>
 
@@ -1259,15 +1278,15 @@ export function KnowledgeCatalog({
       ) : (
         <>
           {hasActiveFilters ? (
-            <Empty title="没有符合条件的知识或技能">
-              <p>换个关键词或放宽筛选条件再试。</p>
+            <Empty title={t('know.catalog.noMatchTitle')}>
+              <p>{t('know.catalog.noMatchBody')}</p>
               <div className="mt-3">
-                <Button size="sm" onClick={resetFilters}>重置筛选</Button>
+                <Button size="sm" onClick={resetFilters}>{t('know.catalog.resetFilters')}</Button>
               </div>
             </Empty>
           ) : (
-            <Empty title="还没有可用的知识或技能">
-              通过把关的条目与 <Mono>skills/</Mono> 目录下的技能会统一出现在这里；也可以“自己写一条”。
+            <Empty title={t('know.catalog.emptyTitle')}>
+              {t('know.catalog.emptyBodyBefore')}<Mono>skills/</Mono>{t('know.catalog.emptyBodyAfter')}
             </Empty>
           )}
 
@@ -1286,10 +1305,10 @@ export function KnowledgeCatalog({
             title={explicitSelectedItem.title}
             description={
               explicitSelectedItem.origin === 'ledger'
-                ? `账本修订（${explicitSelectedItem.refText}）`
-                : `文件技能（${explicitSelectedItem.skill.rel_path}）`
+                ? t('know.catalog.sheetLedgerDesc', { ref: explicitSelectedItem.refText })
+                : t('know.catalog.sheetSkillDesc', { path: explicitSelectedItem.skill.rel_path })
             }
-            footer={<Button variant="ghost" onClick={() => selectItem(null)}>关闭</Button>}
+            footer={<Button variant="ghost" onClick={() => selectItem(null)}>{t('common.close')}</Button>}
           >
             <ItemDetailPane
               item={explicitSelectedItem}

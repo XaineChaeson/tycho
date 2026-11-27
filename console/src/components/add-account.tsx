@@ -30,47 +30,51 @@ import { Radio } from '@/components/ui/checkbox';
 import { Dialog, DialogActions, DialogContent } from '@/components/ui/dialog';
 import { newAccountForm, tierEditorOf, tierRefusal, type AccountForm, type TierProblem } from '@/lib/accounts';
 import { messageOf } from '@/lib/api';
+import { useI18n } from '@/lib/i18n';
 import { accountsQuery } from '@/lib/queries';
 import type { AccountsAndMachines } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
+type WayMeta = { title: string; note: string; go: string; lead: string; secret?: { label: string; help: string } };
+
 // Each way a login is obtained, in the owner's words: what it is called, what picking it
 // means, what the button that goes on says, and what the window says over its steps.
 // `secret` is what the typed secret is called, where the way has the owner type one.
-const WAYS: Record<AccountLoginWay, { title: string; note: string; go: string; lead: string; secret?: { label: string; help: string } }> = {
-  page: {
-    title: '在官方页面授权',
-    note: '到它自己的页面登录并授权，tycho 保管拿到的登录。不用碰命令行，也不用复制令牌。',
-    go: '开始登录',
-    lead: '在官方页面授权后，tycho 替你保管这份登录。关掉这个窗口就是取消。',
-  },
-  device: {
-    title: '设备码授权登录',
-    note: '用 ChatGPT 订阅等官方账号在主机完成一次设备码授权，tycho 统一保管并自动续期，放行的每台机器都能直接用。',
-    go: '开始登录',
-    lead: '在浏览器里打开验证页、填入下面的一次性设备码完成登录，tycho 替你统一保管并自动续期。关掉这个窗口就是取消。',
-  },
-  key: {
-    title: '填 API 密钥',
-    note: '用厂商控制台里建的一把 API 密钥，按用量计费。tycho 保管它，放行的每台机器都能用。',
-    go: '下一步',
-    lead: '填上 API 密钥和档位，保存后账号就建好了。',
-    secret: { label: credentialText.typed.label, help: credentialText.typed.help },
-  },
-  provider: {
-    title: '选一条线路，填它的密钥',
-    note: '连官方的模型服务，或者你自己的网关。tycho 保管密钥，放行的每台机器都能用（要够得着那个地址）。',
-    go: '下一步',
-    lead: '选好线路、填上密钥和档位，保存后账号就建好了。',
-  },
-  machine: {
-    title: '在官方页面授权（机器保管）',
-    note: '用 Google AI Pro / Ultra 等官方订阅在浏览器登录一次，凭据由所选机器保管并自动续期，无需 API 密钥。',
-    go: '下一步',
-    lead: '选一台在线机器并在浏览器完成官方授权，之后自动续期。',
-  },
-};
-const CHOOSE = '账号是 tycho 替你保管的一份登录：登一次，项目放行的每台机器都能用。';
+function waysMeta(t: (key: string) => string): Record<AccountLoginWay, WayMeta> {
+  return {
+    page: {
+      title: t('acct.add.way.page.title'),
+      note: t('acct.add.way.page.note'),
+      go: t('acct.add.way.page.go'),
+      lead: t('acct.add.way.page.lead'),
+    },
+    device: {
+      title: t('acct.add.way.device.title'),
+      note: t('acct.add.way.device.note'),
+      go: t('acct.add.way.page.go'),
+      lead: t('acct.add.way.device.lead'),
+    },
+    key: {
+      title: t('acct.add.way.key.title'),
+      note: t('acct.add.way.key.note'),
+      go: t('acct.add.way.key.go'),
+      lead: t('acct.add.way.key.lead'),
+      secret: { label: credentialText.typed.label, help: credentialText.typed.help },
+    },
+    provider: {
+      title: t('acct.add.way.provider.title'),
+      note: t('acct.add.way.provider.note'),
+      go: t('acct.add.way.key.go'),
+      lead: t('acct.add.way.provider.lead'),
+    },
+    machine: {
+      title: t('acct.add.way.machine.title'),
+      note: t('acct.add.way.machine.note'),
+      go: t('acct.add.way.key.go'),
+      lead: t('acct.add.way.machine.lead'),
+    },
+  };
+}
 
 // One of a few things to pick from, each with a line that says what picking it means. The
 // whole card is the target; one that cannot be picked says why in that same line.
@@ -102,7 +106,9 @@ function Steps({ page, busy, seen, seenCodex, onCreate, onClose }: {
   onCreate: (form: AccountForm, provider?: ProviderDraft) => Promise<void>;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const id = useId();
+  const wayInfo = waysMeta(t);
   // An executor that offers a way to obtain its login can be an account; those come first,
   // the rest after them with where their login lives. When an executor already offers a
   // host-managed subscription login ('page' or 'device'), 'machine' is only for re-signing on
@@ -135,7 +141,7 @@ function Steps({ page, busy, seen, seenCodex, onCreate, onClose }: {
   }
 
   async function save(): Promise<void> {
-    const refused = form.credential === '' ? `先填 ${credentialText.typed.label}` : null;
+    const refused = form.credential === '' ? t('acct.add.fillSecretFirst', { label: credentialText.typed.label }) : null;
     // What is wrong with a tier row is said beside that row; the form stays as it was typed.
     const problem = refused ? null : tierRefusal(form.tiers, tierEditorOf(page.tier_forms, form.executor));
     if (refused || problem) {
@@ -157,11 +163,11 @@ function Steps({ page, busy, seen, seenCodex, onCreate, onClose }: {
   }
 
   return (
-    <DialogContent className="max-w-[560px]" title="添加账号" description={step === 'choose' ? CHOOSE : WAYS[step].lead}>
+    <DialogContent className="max-w-[560px]" title={t('accounts.addAccount')} description={step === 'choose' ? t('acct.add.chooseLead') : wayInfo[step].lead}>
       {step === 'choose' ? (
         <form className="grid gap-5" onSubmit={(event) => { event.preventDefault(); next(); }}>
           <fieldset className="grid gap-2">
-            <legend className="mb-2 text-sm font-medium">执行器</legend>
+            <legend className="mb-2 text-sm font-medium">{t('acct.executorTitle')}</legend>
             <div className="grid gap-2">
               {executors.map((each) => (
                 <Pick
@@ -173,21 +179,22 @@ function Steps({ page, busy, seen, seenCodex, onCreate, onClose }: {
                   // The tiers are written the executor's own way: another executor starts them blank.
                   onPick={() => { setForm(newAccountForm(each)); setPicked(null); setTierProblem(null); }}
                 >
-                  {accountable.includes(each) ? '可以在这里添加它的登录，下面选怎么登录' : '它的登录留在机器上，tycho 不保管'}
+                  {accountable.includes(each) ? t('acct.add.executorAccountable') : t('acct.add.executorMachineOnly')}
                 </Pick>
               ))}
             </div>
             {onMachines.length ? (
               <Note className="text-xs">
-                {`${onMachines.join('、')} 暂不支持集中保管凭据：若要使用某台机器上已登录的本地执行器，请到`}
-                <Link to="/machines" className="mx-0.5">机器</Link>页启用。
+                {t('acct.add.onMachinesPrefix', { executors: onMachines.join(t('acct.listSep')) })}
+                <Link to="/machines" className="mx-0.5">{t('nav.machines')}</Link>
+                {t('acct.add.onMachinesSuffix')}
               </Note>
             ) : null}
           </fieldset>
 
           {ways.length ? (
             <fieldset className="grid gap-2">
-              <legend className="mb-2 text-sm font-medium">怎么登录</legend>
+              <legend className="mb-2 text-sm font-medium">{t('acct.add.howToSignIn')}</legend>
               <div className="grid gap-2">
                 {ways.map((each, at) => (
                   <Pick
@@ -196,10 +203,10 @@ function Steps({ page, busy, seen, seenCodex, onCreate, onClose }: {
                     checked={way === each.way}
                     disabled={!each.available}
                     // The executor lists its ways best first: with more than one to pick from, that is said.
-                    title={<>{WAYS[each.way].title}{at === 0 && each.available && ways.length > 1 ? <Badge tone="running">推荐</Badge> : null}</>}
+                    title={<>{wayInfo[each.way].title}{at === 0 && each.available && ways.length > 1 ? <Badge tone="running">{t('acct.add.recommended')}</Badge> : null}</>}
                     onPick={() => setPicked(each.way)}
                   >
-                    {each.available ? WAYS[each.way].note : each.why ?? '这台主机现在做不了'}
+                    {each.available ? wayInfo[each.way].note : each.why ?? t('acct.add.hostUnavailable')}
                   </Pick>
                 ))}
               </div>
@@ -208,8 +215,8 @@ function Steps({ page, busy, seen, seenCodex, onCreate, onClose }: {
 
           {error ? <Problem role="alert">{error}</Problem> : null}
           <DialogActions>
-            <Button variant="ghost" onClick={onClose}>取消</Button>
-            <Button type="submit" variant="primary" disabled={!can}>{way === undefined ? '下一步' : WAYS[way].go}</Button>
+            <Button variant="ghost" onClick={onClose}>{t('common.cancel')}</Button>
+            <Button type="submit" variant="primary" disabled={!can}>{way === undefined ? t('acct.add.way.key.go') : wayInfo[way].go}</Button>
           </DialogActions>
         </form>
       ) : null}
@@ -257,8 +264,8 @@ function Steps({ page, busy, seen, seenCodex, onCreate, onClose }: {
             busy={busy || saving}
             page={page}
             problem={tierProblem}
-            cancelLabel="上一步"
-            secret={WAYS[step].secret}
+            cancelLabel={t('acct.action.prevStep')}
+            secret={wayInfo[step].secret}
             onEdit={(field, value) => {
               setForm((current) => ({ ...current, [field]: value }));
               // A row changed: what the last save found wrong was about the row as it was typed.

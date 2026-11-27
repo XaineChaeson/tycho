@@ -8,6 +8,7 @@ import { CopyButton } from '@/components/bits';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent } from '@/components/ui/dialog';
+import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
 type ResolvedTheme = 'light' | 'dark';
@@ -75,6 +76,7 @@ function PanZoomLightbox({
   actions?: ReactNode;
   children: ReactNode;
 }) {
+  const { t } = useI18n();
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
@@ -151,8 +153,8 @@ function PanZoomLightbox({
                   variant="ghost"
                   size="icon-sm"
                   className="size-6 min-h-0"
-                  aria-label="缩小"
-                  title="缩小"
+                  aria-label={t('proj.preview.zoomOut')}
+                  title={t('proj.preview.zoomOut')}
                   onClick={() => setScale((prev) => clampZoom(prev - ZOOM_STEP))}
                 >
                   <ZoomOut className="size-3.5" aria-hidden="true" />
@@ -164,8 +166,8 @@ function PanZoomLightbox({
                   variant="ghost"
                   size="icon-sm"
                   className="size-6 min-h-0"
-                  aria-label="放大"
-                  title="放大"
+                  aria-label={t('proj.preview.zoomIn')}
+                  title={t('proj.preview.zoomIn')}
                   onClick={() => setScale((prev) => clampZoom(prev + ZOOM_STEP))}
                 >
                   <ZoomIn className="size-3.5" aria-hidden="true" />
@@ -174,19 +176,19 @@ function PanZoomLightbox({
                   variant="ghost"
                   size="sm"
                   className="h-6 min-h-0 px-1.5 text-2xs"
-                  aria-label="重置缩放"
-                  title="重置缩放与位置"
+                  aria-label={t('proj.preview.resetZoomAria')}
+                  title={t('proj.preview.resetZoomTitle')}
                   onClick={resetView}
                 >
                   <RotateCcw className="size-3" aria-hidden="true" />
-                  重置
+                  {t('proj.preview.reset')}
                 </Button>
               </div>
               {actions}
               <DialogPrimitive.Close asChild>
-                <Button variant="ghost" size="sm" aria-label="关闭预览">
+                <Button variant="ghost" size="sm" aria-label={t('proj.preview.close')}>
                   <X className="size-3.5" aria-hidden="true" />
-                  关闭预览
+                  {t('proj.preview.close')}
                 </Button>
               </DialogPrimitive.Close>
             </div>
@@ -213,7 +215,7 @@ function PanZoomLightbox({
               {children}
             </div>
             <span className="pointer-events-none absolute right-3 bottom-2.5 rounded-md border border-border/70 bg-raised/85 px-2 py-0.5 text-2xs text-muted-foreground">
-              滚轮缩放 · 拖拽平移 · 双击放大/复位
+              {t('proj.preview.panZoomHint')}
             </span>
           </div>
         </DialogPrimitive.Content>
@@ -230,7 +232,8 @@ export interface ImageLightboxProps {
 }
 
 export function ImageLightbox({ src, alt, open, onOpenChange }: ImageLightboxProps) {
-  const label = alt?.trim() || '图片预览';
+  const { t } = useI18n();
+  const label = alt?.trim() || t('proj.preview.imageFallbackTitle');
 
   return (
     <PanZoomLightbox
@@ -242,7 +245,7 @@ export function ImageLightbox({ src, alt, open, onOpenChange }: ImageLightboxPro
         <Button variant="ghost" size="sm" asChild>
           <a href={src} download>
             <Download className="size-3.5" aria-hidden="true" />
-            下载原图
+            {t('proj.preview.downloadOriginal')}
           </a>
         </Button>
       )}
@@ -276,10 +279,11 @@ export interface MermaidBlockProps {
 }
 
 export function MermaidBlock({ code }: MermaidBlockProps) {
+  const { t } = useI18n();
   const theme = useResolvedTheme();
   const baseId = useId().replace(/[^a-zA-Z0-9_-]/g, '');
   const [svg, setSvg] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<'empty' | 'render' | null>(null);
   const [showSource, setShowSource] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
@@ -299,12 +303,12 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
     const trimmed = code.trim();
     if (!trimmed) {
       setSvg(null);
-      setError('Mermaid 图表内容为空。');
+      setErrorKind('empty');
       return;
     }
 
     const renderId = `tycho-mermaid-${baseId}-${++mermaidRenderSeq}`;
-    setError(null);
+    setErrorKind(null);
 
     void enqueueMermaidRender(async () => {
       try {
@@ -319,10 +323,10 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
         if (!cancelled) {
           if (rendered.svg && rendered.svg.includes('<svg')) {
             setSvg(rendered.svg);
-            setError(null);
+            setErrorKind(null);
           } else {
             setSvg(null);
-            setError('无法渲染 Mermaid 图表，已回退为源码显示。');
+            setErrorKind('render');
           }
         }
       } catch {
@@ -333,7 +337,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
         }
         if (!cancelled) {
           setSvg(null);
-          setError('无法渲染 Mermaid 图表，已回退为源码显示。');
+          setErrorKind('render');
         }
       }
     });
@@ -343,13 +347,19 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
     };
   }, [baseId, code, theme]);
 
+  const error = errorKind === 'empty'
+    ? t('proj.preview.mermaidEmpty')
+    : errorKind === 'render'
+      ? t('proj.preview.mermaidError')
+      : null;
+
   return (
     <div
       data-slot="mermaid-block"
       className="my-3 overflow-hidden rounded-xl border border-border bg-raised shadow-card"
     >
       <div className="flex items-center justify-between gap-2 border-b border-border/70 bg-muted/60 px-3 py-1.5 text-xs">
-        <span className="font-medium text-muted-foreground">Mermaid 图表</span>
+        <span className="font-medium text-muted-foreground">{t('proj.preview.mermaidTitle')}</span>
         <div className="flex items-center gap-1">
           {svg && !error ? (
             <Button
@@ -359,7 +369,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
               onClick={() => setLightboxOpen(true)}
             >
               <Maximize2 className="size-3" aria-hidden="true" />
-              全屏缩放
+              {t('proj.preview.fullscreenZoom')}
             </Button>
           ) : null}
           <Button
@@ -368,9 +378,9 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
             className="h-6 min-h-0 px-2 text-xs"
             onClick={() => setShowSource((prev) => !prev)}
           >
-            {showSource ? '查看图表' : '查看源码'}
+            {showSource ? t('proj.preview.viewDiagram') : t('proj.preview.viewSource')}
           </Button>
-          <CopyButton value={code} label="复制源码" />
+          <CopyButton value={code} label={t('proj.preview.copySource')} />
         </div>
       </div>
 
@@ -390,8 +400,8 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
           <div
             role="button"
             tabIndex={0}
-            aria-label="点击全屏缩放查看 Mermaid 图表"
-            title="点击全屏缩放查看"
+            aria-label={t('proj.preview.mermaidClickAria')}
+            title={t('proj.preview.mermaidClickTitle')}
             onClick={() => setLightboxOpen(true)}
             onKeyDown={(event) => {
               if (event.key === 'Enter' || event.key === ' ') {
@@ -406,12 +416,12 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
           <PanZoomLightbox
             open={lightboxOpen}
             onOpenChange={setLightboxOpen}
-            title="Mermaid 图表"
+            title={t('proj.preview.mermaidTitle')}
             slot="mermaid-lightbox"
             actions={(
               <Button variant="ghost" size="sm" onClick={downloadSvg}>
                 <Download className="size-3.5" aria-hidden="true" />
-                下载 SVG
+                {t('proj.preview.downloadSvg')}
               </Button>
             )}
           >
@@ -424,7 +434,7 @@ export function MermaidBlock({ code }: MermaidBlockProps) {
         </>
       ) : (
         <div className="px-4 py-6 text-center text-xs text-muted-foreground" role="status">
-          正在渲染图表…
+          {t('proj.preview.mermaidRendering')}
         </div>
       )}
     </div>
@@ -459,6 +469,7 @@ export function ArtifactFrame({
   mime,
   mode = 'inline',
 }: ArtifactFrameProps) {
+  const { t } = useI18n();
   const theme = useResolvedTheme();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -470,8 +481,8 @@ export function ArtifactFrame({
   const previewPath = `/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileId)}/preview`;
   const downloadPath = `/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(fileId)}/raw?download=1`;
   const src = `${previewPath}?theme=${srcTheme}`;
-  const displayTitle = title?.trim() || '交互式预览';
-  const iframeTitle = title?.trim() || '交互式产物预览';
+  const displayTitle = title?.trim() || t('proj.preview.artifactTitle');
+  const iframeTitle = title?.trim() || t('proj.preview.artifactIframeTitle');
   const formatLabel = artifactFormatLabel(mime, title);
 
   const postTheme = useCallback((nextTheme: ResolvedTheme) => {
@@ -521,12 +532,12 @@ export function ArtifactFrame({
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="sm" className="h-7 min-h-0 px-2 text-xs" onClick={handleRefresh}>
               <RefreshCw className="size-3.5" aria-hidden="true" />
-              刷新
+              {t('common.refresh')}
             </Button>
             <Button variant="ghost" size="sm" className="h-7 min-h-0 px-2 text-xs" asChild>
               <a href={downloadPath} download>
                 <Download className="size-3.5" aria-hidden="true" />
-                下载
+                {t('proj.files.download')}
               </a>
             </Button>
           </div>
@@ -562,16 +573,16 @@ export function ArtifactFrame({
           <div className="flex flex-none items-center gap-1">
             <Button variant="ghost" size="sm" className="h-6 min-h-0 px-2 text-xs" onClick={handleRefresh}>
               <RefreshCw className="size-3" aria-hidden="true" />
-              刷新
+              {t('common.refresh')}
             </Button>
             <Button variant="ghost" size="sm" className="h-6 min-h-0 px-2 text-xs" onClick={() => setSheetOpen(true)}>
               <Maximize2 className="size-3" aria-hidden="true" />
-              展开查看
+              {t('proj.preview.expandView')}
             </Button>
             <Button variant="ghost" size="sm" className="h-6 min-h-0 px-2 text-xs" asChild>
               <a href={downloadPath} download>
                 <Download className="size-3" aria-hidden="true" />
-                下载
+                {t('proj.files.download')}
               </a>
             </Button>
           </div>

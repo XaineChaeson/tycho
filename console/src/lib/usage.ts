@@ -2,19 +2,20 @@
 // ask for, and how the cells add up under the dimension the owner picked. Everything here is
 // a sum of what the service sent; nothing is estimated, and what has no figure is counted as
 // such rather than as zero.
-import { tierLabel } from '@shared/tiers.ts';
+import { getActiveLocale, t } from '@shared/i18n.ts';
+import { tierDisplayLabel } from '@shared/labels.ts';
 import { USAGE_SOURCE_TEXT, type UnitCell, type UsageCell, type UsageFigures, type UsageNames, type UsageReport } from '@shared/usage.ts';
 
 export type Dimension = 'project' | 'account' | 'model' | 'role' | 'tier' | 'login';
 export type Metric = 'tokens' | 'cost';
 
 export const DIMENSIONS: readonly { value: Dimension; label: string }[] = [
-  { value: 'project', label: '项目' },
-  { value: 'account', label: '账号' },
-  { value: 'model', label: '模型' },
-  { value: 'role', label: '职能' },
-  { value: 'tier', label: '档位' },
-  { value: 'login', label: '登录' },
+  { value: 'project', get label() { return t('acct.usage.dim.project'); } },
+  { value: 'account', get label() { return t('acct.usage.dim.account'); } },
+  { value: 'model', get label() { return t('acct.usage.dim.model'); } },
+  { value: 'role', get label() { return t('acct.usage.dim.role'); } },
+  { value: 'tier', get label() { return t('acct.usage.dim.tier'); } },
+  { value: 'login', get label() { return t('acct.usage.dim.login'); } },
 ];
 
 export const RANGES = [7, 30, 90] as const;
@@ -95,29 +96,29 @@ export function keyOf(cell: Cell, dimension: Dimension, names?: UsageNames): str
 export function labelOf(key: string, dimension: Dimension, names: UsageNames): string {
   if (key === '@quota') return USAGE_SOURCE_TEXT.quota;
   if (key === '@router') return USAGE_SOURCE_TEXT.router;
-  if (key === '@deleted') return '已删除的项目';
-  if (key === '@other') return '其他';
+  if (key === '@deleted') return t('acct.usage.deletedProject');
+  if (key === '@other') return t('acct.usage.other');
   switch (dimension) {
     case 'project':
-      return key === '@none' ? '不属于项目' : names.projects[key] ?? '已删除的项目';
+      return key === '@none' ? t('acct.usage.noProject') : names.projects[key] ?? t('acct.usage.deletedProject');
     case 'account': {
-      if (key === '@host') return '主机本机的登录';
+      if (key === '@host') return t('acct.usage.hostLogin');
       if (key.startsWith('@exec:')) {
         const exec = key.slice('@exec:'.length);
-        return `${EXECUTOR_ACCOUNT_NAMES[exec] ?? exec}（单机聚合）`;
+        return t('acct.usage.singleMachineRollup', { name: EXECUTOR_ACCOUNT_NAMES[exec] ?? exec });
       }
-      return names.logins[key] ?? '已删除的账号';
+      return names.logins[key] ?? t('acct.usage.deletedAccount');
     }
     case 'role':
-      return key === '@none' ? '没有记职能' : names.roles[key] ?? key;
+      return key === '@none' ? t('acct.usage.noRole') : names.roles[key] ?? key;
     case 'tier':
-      return key === '@none' ? '没有记档位' : tierLabel(key);
+      return key === '@none' ? t('acct.usage.noTier') : tierDisplayLabel(key);
     case 'login':
-      return key === '@host' ? '主机本机的登录' : names.logins[key] ?? '已删除的登录';
+      return key === '@host' ? t('acct.usage.hostLogin') : names.logins[key] ?? t('acct.usage.deletedLogin');
     case 'model': {
       const [basis, model] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)];
-      if (model === '@unknown') return '执行器没说是哪个模型';
-      return basis === 'tier' ? `${model}（按档位）` : model;
+      if (model === '@unknown') return t('acct.usage.unknownModel');
+      return basis === 'tier' ? t('acct.usage.modelByTier', { model }) : model;
     }
   }
 }
@@ -210,25 +211,46 @@ export function niceMax(value: number): number {
   return 10 * power;
 }
 
-const COMPACT = new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 });
-const PLAIN = new Intl.NumberFormat('zh-CN');
+const compactFormatters = new Map<string, Intl.NumberFormat>();
+const plainFormatters = new Map<string, Intl.NumberFormat>();
 
-export const formatTokens = (value: number): string => (value < 10_000 ? PLAIN.format(value) : COMPACT.format(value));
+function numberFormatter(compact: boolean): Intl.NumberFormat {
+  const locale = getActiveLocale();
+  const cache = compact ? compactFormatters : plainFormatters;
+  let fmt = cache.get(locale);
+  if (!fmt) {
+    try {
+      fmt = compact
+        ? new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 1 })
+        : new Intl.NumberFormat(locale);
+    } catch {
+      fmt = compact
+        ? new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 })
+        : new Intl.NumberFormat('en');
+    }
+    cache.set(locale, fmt);
+  }
+  return fmt;
+}
+
+export const formatTokens = (value: number): string => (value < 10_000 ? numberFormatter(false).format(value) : numberFormatter(true).format(value));
 
 export function formatUsd(value: number): string {
   if (value === 0) return '$0';
   if (value < 0.01) return '<$0.01';
-  return `$${value >= 1000 ? PLAIN.format(Math.round(value)) : value.toFixed(2)}`;
+  return `$${value >= 1000 ? numberFormatter(false).format(Math.round(value)) : value.toFixed(2)}`;
 }
 
 export function formatDuration(ms: number): string {
   const minutes = Math.round(ms / 60_000);
-  if (minutes < 1) return ms > 0 ? '不到 1 分钟' : '0';
-  if (minutes < 60) return `${minutes} 分钟`;
+  if (minutes < 1) return ms > 0 ? t('acct.usage.durUnderMin') : '0';
+  if (minutes < 60) return t('acct.usage.durMin', { minutes });
   const hours = Math.floor(minutes / 60);
-  return minutes % 60 === 0 ? `${hours} 小时` : `${hours} 小时 ${minutes % 60} 分`;
+  return minutes % 60 === 0
+    ? t('acct.usage.durHour', { hours })
+    : t('acct.usage.durHourMin', { hours, minutes: minutes % 60 });
 }
 
 // A day as the tooltip says it, and shorter under the axis, where a phone has little room.
-export const dayLabel = (day: string): string => `${Number(day.slice(5, 7))}月${Number(day.slice(8, 10))}日`;
+export const dayLabel = (day: string): string => t('acct.usage.dayLabel', { month: Number(day.slice(5, 7)), day: Number(day.slice(8, 10)) });
 export const axisLabel = (day: string): string => `${Number(day.slice(5, 7))}/${Number(day.slice(8, 10))}`;
