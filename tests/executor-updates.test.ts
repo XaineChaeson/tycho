@@ -351,14 +351,23 @@ test('runExecutorUpdate retries direct connection when proxied npm stalls and su
   assert.equal(attempts[1]!.env?.HTTPS_PROXY, '');
   assert.equal(attempts[1]!.env?.NO_PROXY, '*');
 
+  const claudeAttempts: { argv: string[]; timeoutMs: number; env?: Record<string, string> }[] = [];
   const claudeFail = await runExecutorUpdate({
     executor: 'claude',
     installedPath: 'C:\\Users\\Xaine\\AppData\\Local\\Claude-Data\\claude_abc\\claude-code\\2.1.321\\claude.exe',
     platform: 'win32',
-    env: { USERPROFILE: 'C:\\Users\\Xaine' },
-    run: async () => ({ stdout: 'Updating...', stderr: '', code: null, failure: 'claude update 超过 300000 毫秒没有回答' }),
+    env: { USERPROFILE: 'C:\\Users\\Xaine', HTTPS_PROXY: 'http://127.0.0.1:7890' },
+    run: async (argv, timeoutMs, extraEnv) => {
+      claudeAttempts.push({ argv, timeoutMs, env: extraEnv });
+      return { stdout: 'Updating...', stderr: '', code: null, failure: 'claude install 超过 90000 毫秒没有回答' };
+    },
   });
   assert.equal(claudeFail.ok, false);
+  assert.equal(claudeFail.method, 'claude-install-repair');
+  assert.deepEqual(claudeAttempts[0]!.argv, ['claude', 'install', 'latest', '--force']);
+  assert.equal(claudeAttempts.length, 2, 'proxied claude install timeout retries once directly');
+  assert.equal(claudeAttempts[0]!.timeoutMs, 90_000);
+  assert.equal(claudeAttempts[1]!.env?.HTTPS_PROXY, '');
   assert.match(claudeFail.error ?? '', /Claude-Data/);
 });
 

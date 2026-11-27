@@ -265,6 +265,19 @@ test('excludeDirs 只排除目录本身，不误杀子目录下的用户级 CLI�
     ...winFake,
   });
   assert.equal(winFound.path, 'C:\\Users\\u\\.local\\bin\\claude.exe');
+
+  // Windows Task Scheduler launches services with cwd = C:\Windows\System32: never exclude
+  // OS system directories as implicit cwd so powershell.exe / cmd.exe stay launchable.
+  const psPath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+  const sysFake = disk([psPath]);
+  const sysLaunched = launchOf([psPath, '-NoProfile'], {
+    PATH: 'C:\\Windows\\System32',
+    SystemRoot: 'C:\\Windows',
+  }, 'win32', {
+    cwd: 'C:\\Windows\\System32',
+    ...sysFake,
+  });
+  assert.equal(sysLaunched.command, psPath);
 });
 
 test('查找用的环境：Windows 会合并注册表系统/用户 PATH；登录 shell 打印的东西只认标记之后的那份', async () => {

@@ -198,6 +198,13 @@ export function resolveExecutorUpdaterPlan(
           ephemeralNpmCache: true,
         };
       }
+      if (p.includes('/claude-data/')) {
+        // Claude Desktop bundles its own claude.exe under Claude-Data where `claude update`
+        // reports installMethod='unknown' / broken ~/.local/bin/claude.exe and can stall.
+        // Repairing via `claude install latest --force` installs the standalone native binary
+        // into ~/.local/bin/claude (checked first by adapters/claude.ts).
+        return { kind: 'run', method: 'claude-install-repair', argv: ['claude', 'install', 'latest', '--force'] };
+      }
       return { kind: 'run', method: 'claude-builtin', argv: ['claude', 'update'] };
     }
     case 'gemini': {
@@ -450,7 +457,7 @@ export async function runExecutorUpdate(options: RunExecutorUpdateOptions): Prom
       npm_config_fetch_retry_maxtimeout: '5000',
       NODE_USE_ENV_PROXY: '',
     };
-  } else if (plan.method === 'claude-builtin' || plan.method === 'claude-install') {
+  } else if (plan.method === 'claude-builtin' || plan.method === 'claude-install' || plan.method === 'claude-install-repair') {
     baseExtraEnv = { ...(baseExtraEnv ?? {}), NONINTERACTIVE: '1' };
   }
 
@@ -490,6 +497,7 @@ export async function runExecutorUpdate(options: RunExecutorUpdateOptions): Prom
       plan.ephemeralNpmCache === true
       || plan.method === 'claude-builtin'
       || plan.method === 'claude-install'
+      || plan.method === 'claude-install-repair'
       || plan.method === 'agy-builtin'
       || plan.method === 'agy-install'
     );
@@ -500,7 +508,7 @@ export async function runExecutorUpdate(options: RunExecutorUpdateOptions): Prom
     const deadlineMs = Date.now() + timeoutMs;
     const remainingMs = (): number => Math.max(5_000, deadlineMs - Date.now());
     let activeEnv = baseExtraEnv;
-    const firstTimeoutMs = canProxyFallback && plan.ephemeralNpmCache
+    const firstTimeoutMs = canProxyFallback
       ? Math.min(remainingMs(), PROXIED_NPM_FIRST_TRY_TIMEOUT_MS)
       : remainingMs();
     let answer: CommandAnswer = await run(argv, firstTimeoutMs, activeEnv, options.signal);
@@ -533,8 +541,9 @@ export async function runExecutorUpdate(options: RunExecutorUpdateOptions): Prom
     }
 
     const output = trimOutputTail(answer.stdout, answer.stderr);
-    const claudeDesktopHint = plan.method === 'claude-builtin' && normPath(options.installedPath).includes('/claude-data/')
-      ? '（检测到该 claude 位于 Claude Desktop 内置目录 Claude-Data，网络较慢或目录受控时可改由 Claude Desktop 自动更新，或执行 claude install 修复独立 CLI）'
+    const claudeDesktopHint = (plan.method === 'claude-builtin' || plan.method === 'claude-install-repair')
+      && normPath(options.installedPath).includes('/claude-data/')
+      ? '（检测到该 claude 位于 Claude Desktop 内置目录 Claude-Data，网络较慢或目录受控时可改由 Claude Desktop 自动更新，或手动执行 claude install 修复独立 CLI）'
       : '';
     if (answer.failure !== undefined || answer.code === null) {
       return {

@@ -70,7 +70,31 @@ export function roundDirs(dataDir: string, taskDir?: string): string[] {
 const DIRECT = new Set(['.exe', '.com']);
 const MAX_WIN_CMD_LINE = 8000;
 const POSIX_ANCHOR_DIRS = ['/usr', '/usr/local', '/opt', '/bin', '/sbin', '/nix', '/Applications', '/Library'];
+const POSIX_SYSTEM_DIRS = new Set(['/bin', '/sbin', '/usr/bin', '/usr/sbin']);
 const WIN_ANCHOR_VARS = ['USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)', 'PROGRAMDATA', 'SYSTEMROOT'];
+
+// Service managers often launch a node client with an OS system directory as its working
+// directory (notably Windows Task Scheduler defaults to `C:\Windows\System32`). Never
+// exclude OS system directories as implicit `cwd`s, or built-in Windows programs such as
+// `powershell.exe`, `cmd.exe`, and `curl.exe` become unreachable.
+function isSystemDir(dir: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): boolean {
+  if (platform === 'win32') {
+    if (!fullyQualified(dir)) return false;
+    const fold = (value: string): string => win32.normalize(value).replace(/[\\/]+$/, '').toLowerCase();
+    const target = fold(dir);
+    const envs = platform === process.platform ? [env, process.env] : [env];
+    const roots = envs.flatMap((source) =>
+      ['SYSTEMROOT', 'WINDIR']
+        .map((name) => envOf(source, name, 'win32'))
+        .filter((each): each is string => each !== undefined && fullyQualified(each))
+        .map(fold),
+    );
+    return roots.some((root) => target === root || target.startsWith(`${root}\\`));
+  }
+  if (!posix.isAbsolute(dir)) return false;
+  const target = posix.normalize(dir).replace(/\/+$/, '') || '/';
+  return POSIX_SYSTEM_DIRS.has(target);
+}
 
 // A process launched by systemd --user, Task Scheduler, or a login shell often inherits `$HOME`,
 // `/` or `C:\Users\<user>` as its working directory. Recursively excluding such a broad root
@@ -114,6 +138,7 @@ export function launchOf(argv: string[], env: NodeJS.ProcessEnv, platform: NodeJ
     ...(platform === process.platform ? [process.cwd()] : []),
   ];
   for (const dir of implicitCwds) {
+    if (isSystemDir(dir, env, platform)) continue;
     if (isBroadRoot(dir, env, platform)) excludeDirs.push(dir);
     else exclude.push(dir);
   }

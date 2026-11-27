@@ -23,6 +23,29 @@ test('the actual doubled-backslash Windows receipt and absolute native paths pro
   assert.equal(projected([REAL_REF], TASK, 'another-run')[0]?.kind, 'invalid');
 });
 
+test('relative ../artifacts/ refs from brief instructions normalize cleanly while rejecting traversal', () => {
+  const valid = [
+    ['../artifacts/codex-md-gateway-audit.md', 'codex-md-gateway-audit.md'],
+    ['../artifacts/nested/report.md', 'nested/report.md'],
+    ['..\\artifacts\\codex-md-gateway-audit.md', 'codex-md-gateway-audit.md'],
+    ['./artifacts/report.md', 'report.md'],
+    ['artifacts/report.md', 'report.md'],
+  ] as const;
+  for (const [ref, name] of valid) {
+    assert.deepEqual(projected([ref]), [{ ref, name }], ref);
+  }
+  const invalid = [
+    '../artifacts/../secret.md',
+    '../artifacts/',
+    '../../artifacts/report.md',
+    '../other/report.md',
+    '..\\artifacts\\..\\secret.md',
+  ];
+  for (const ref of invalid) {
+    assert.equal(projected([ref])[0]?.kind, 'invalid', ref);
+  }
+});
+
 test('absolute references accept nested subpaths under this run artifacts/ and reject arbitrary basename, traversal, foreign round, URL, device or UNC', () => {
   const tail = `tasks/${TASK}/runs/${RUN}/artifacts/report.md`;
   // Nested subpaths under this run's artifacts/ are allowed.

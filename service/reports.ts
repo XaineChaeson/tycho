@@ -95,9 +95,14 @@ function decodeUtf8Slice(buf: Buffer, trimStart: boolean, trimEnd: boolean): { t
 function reportFile(run: Pick<RunRow, 'id' | 'task_id'>, ref: string): ReportFile | null {
   const prefix = 'runs/' + run.id + '/artifacts/';
   if (/^runs\/[^/]+\/artifacts\//.test(ref) && !ref.startsWith(prefix)) return null;
-  let name = ref.startsWith(prefix) ? ref.slice(prefix.length)
-    : ref.startsWith('artifacts/') ? ref.slice('artifacts/'.length)
-    : ref.startsWith('./artifacts/') ? ref.slice('./artifacts/'.length)
+  // Briefs tell Workers to place deliverables under `../artifacts/` (relative to snapshot/).
+  // Strip that exact leading prefix (including Windows backslash form) while keeping strict
+  // traversal rejection on everything after it.
+  const rel = /^(?:\.\.?[\\/])?artifacts[\\/]/.test(ref) ? ref.replace(/\\/g, '/') : ref;
+  let name = rel.startsWith(prefix) ? rel.slice(prefix.length)
+    : rel.startsWith('artifacts/') ? rel.slice('artifacts/'.length)
+    : rel.startsWith('./artifacts/') ? rel.slice('./artifacts/'.length)
+    : rel.startsWith('../artifacts/') ? rel.slice('../artifacts/'.length)
     : ref;
   if (!artifactSubpathIsUsable(name)) {
     // An absolute receipt is only a hint naming this Run's artifact. Never open it:
