@@ -83,7 +83,13 @@ function ToolGroup({ tools, id }: { tools: ToolRow[]; id: string }) {
   const current = tools.findLast((row) => row.status === 'running');
   const status = groupStatus(tools);
   const running = status === 'running';
-  const Icon = tools.every((row) => row.call.category === 'read') ? BookOpen : Search;
+  const Icon = tools.every((row) => row.call.category === 'read')
+    ? BookOpen
+    : tools.every((row) => row.call.category === 'read' || row.call.category === 'search')
+      ? Search
+      : tools.every((row) => row.call.category === 'edit')
+        ? Pencil
+        : Terminal;
   const summary = groupSummary(tools);
   const stepHint = running
     ? `正在执行 · 共 ${tools.length} 个步骤`
@@ -160,7 +166,7 @@ export function FileChanges({ changes, id }: { changes: FileChange[]; id: string
 }
 
 // The rows of a round's process, in the order it did them.
-export function SiteRows({ site, id }: { site: Site; id: string }) {
+export function SiteRows({ site, id, foldTrailingTextAt = -1 }: { site: Site; id: string; foldTrailingTextAt?: number }) {
   return (
     <>
       <Diagnostics list={site.diagnostics} id={id} />
@@ -168,6 +174,15 @@ export function SiteRows({ site, id }: { site: Site; id: string }) {
         const key = `${id}:${index}`;
         switch (row.kind) {
           case 'text':
+            if (index === foldTrailingTextAt) {
+              return (
+                <Details key={key} id={`raw-final:${key}`} summaryClassName="min-h-7 text-xs" title="查看原始末条输出">
+                  <div className="mb-2 ml-[22px]">
+                    <Markdown text={row.text} className="py-1" />
+                  </div>
+                </Details>
+              );
+            }
             return <Markdown key={key} text={row.text} className="py-1" />;
           case 'thinking':
             return (

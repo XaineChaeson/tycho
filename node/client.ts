@@ -1013,13 +1013,26 @@ export function createClient(options: ClientOptions) {
           const freshReport = await look();
           const afterStatus = freshReport.executors.find((each) => each.executor === executor) ?? null;
           const afterVersion = afterStatus?.version ?? null;
+          if (!beforeStatus?.installed && !afterStatus?.installed) {
+            return {
+              ok: false,
+              executor,
+              method: outcome.method,
+              before_version: beforeVersion,
+              after_version: afterVersion,
+              updated: false,
+              error: `安装命令已结束但仍未检测到 ${executor}（请展开日志确认网络、代理或安装目录）`,
+              ...(outcome.output ? { output: outcome.output } : {}),
+              report: freshReport,
+            } satisfies NodeUpdateExecutorResult;
+          }
           return {
             ok: true,
             executor,
             method: outcome.method,
             before_version: beforeVersion,
             after_version: afterVersion,
-            updated: afterVersion !== null && afterVersion !== beforeVersion,
+            updated: afterStatus?.installed === true && (!beforeStatus?.installed || (afterVersion !== null && afterVersion !== beforeVersion)),
             ...(outcome.output ? { output: outcome.output } : {}),
             report: freshReport,
           } satisfies NodeUpdateExecutorResult;

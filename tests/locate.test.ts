@@ -282,9 +282,21 @@ test('查找用的环境：Windows 会合并注册表系统/用户 PATH；登录
   assert.deepEqual(parseLookupEnv(printed), { PATH: '/opt/tools/bin:/usr/bin' });
   assert.equal(parseLookupEnv('no marker at all'), undefined);
   // A login shell that cannot be started falls back to the client's own, and says so.
-  const failed = await readLookupEnv({ platform: 'linux', inherited: own, spawn: (() => { throw new Error('没有 bash'); }) as unknown as typeof spawn });
+  const spawned: string[] = [];
+  const failed = await readLookupEnv({
+    platform: 'linux',
+    inherited: own,
+    spawn: ((cmd: string) => { spawned.push(cmd); throw new Error('没有 bash'); }) as unknown as typeof spawn,
+  });
   assert.equal(failed.env, own);
   assert.match(failed.problem!, /读不到登录 shell 的环境（没有 bash）/);
+  const darwinFailed = await readLookupEnv({
+    platform: 'darwin',
+    inherited: own,
+    spawn: ((cmd: string) => { spawned.push(cmd); throw new Error('没有 zsh'); }) as unknown as typeof spawn,
+  });
+  assert.equal(darwinFailed.env, own);
+  assert.deepEqual(spawned, ['bash', 'zsh']);
 });
 
 // A login shell whose profile hangs, stood in for by a Node that never exits, in a group of

@@ -115,11 +115,27 @@ function isNpmPath(p: string): boolean {
   );
 }
 
-// Determine how to update an executor CLI on this machine.
+function powershellExe(env: NodeJS.ProcessEnv): string {
+  const root = env.SystemRoot || env.SYSTEMROOT || env.windir || env.WINDIR;
+  if (root && /^[A-Za-z]:[\\/]/.test(root)) {
+    return win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  }
+  return 'powershell.exe';
+}
+
+function remoteInstallArgv(urlPs1: string, urlSh: string, env: NodeJS.ProcessEnv, platform: NodeJS.Platform): string[] {
+  if (platform === 'win32') {
+    return [powershellExe(env), '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', `irm ${urlPs1} | iex`];
+  }
+  return ['bash', '-c', `curl -fsSL ${urlSh} | bash`];
+}
+
+// Determine how to update (or install, when not yet present) an executor CLI on this machine.
 export function resolveExecutorUpdaterPlan(
   executor: string,
   installedPath: string | undefined,
   env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
 ): UpdaterPlan {
   const custom = loadCustomUpdater(executor, env);
   if (custom.error) return { kind: 'unsupported', reason: custom.error };
@@ -158,6 +174,13 @@ export function resolveExecutorUpdaterPlan(
       };
     }
     case 'claude': {
+      if (!p) {
+        return {
+          kind: 'run',
+          method: 'claude-install',
+          argv: remoteInstallArgv('https://claude.ai/install.ps1', 'https://claude.ai/install.sh', env, platform),
+        };
+      }
       if (isBrewPath(p)) {
         return { kind: 'run', method: 'brew', argv: ['brew', 'upgrade', 'claude-code'], extraEnv: { HOMEBREW_NO_INSTALL_CLEANUP: '0' } };
       }
@@ -178,7 +201,15 @@ export function resolveExecutorUpdaterPlan(
       return { kind: 'run', method: 'claude-builtin', argv: ['claude', 'update'] };
     }
     case 'gemini': {
-      // Tycho's gemini adapter drives the Antigravity CLI (`agy`), never `@google/gemini-cli`.
+      // Tycho's gemini adapter drives the standalone Antigravity CLI (`agy`), never `@google/gemini-cli`.
+      // Antigravity Desktop / IDE does not bundle `agy`, so an uninstalled machine uses the official installer.
+      if (!p) {
+        return {
+          kind: 'run',
+          method: 'agy-install',
+          argv: remoteInstallArgv('https://antigravity.google/cli/install.ps1', 'https://antigravity.google/cli/install.sh', env, platform),
+        };
+      }
       if (isBrewPath(p)) {
         return { kind: 'run', method: 'brew', argv: ['brew', 'upgrade', 'antigravity'], extraEnv: { HOMEBREW_NO_INSTALL_CLEANUP: '0' } };
       }
@@ -398,7 +429,7 @@ export async function runExecutorUpdate(options: RunExecutorUpdateOptions): Prom
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
   const fsDeps = options.fs ?? {};
-  const plan = resolveExecutorUpdaterPlan(options.executor, options.installedPath, env);
+  const plan = resolveExecutorUpdaterPlan(options.executor, options.installedPath, env, platform);
   if (plan.kind === 'disabled') return { ok: false, method: 'disabled', error: plan.reason };
   if (plan.kind === 'unsupported') return { ok: false, method: 'unsupported', error: plan.reason };
 
@@ -419,7 +450,7 @@ export async function runExecutorUpdate(options: RunExecutorUpdateOptions): Prom
       npm_config_fetch_retry_maxtimeout: '5000',
       NODE_USE_ENV_PROXY: '',
     };
-  } else if (plan.method === 'claude-builtin') {
+  } else if (plan.method === 'claude-builtin' || plan.method === 'claude-install') {
     baseExtraEnv = { ...(baseExtraEnv ?? {}), NONINTERACTIVE: '1' };
   }
 
@@ -455,7 +486,15 @@ export async function runExecutorUpdate(options: RunExecutorUpdateOptions): Prom
 
   const canProxyFallback = plan.method !== 'custom'
     && hasProxyEnv(env)
-    && (plan.ephemeralNpmCache === true || plan.method === 'claude-builtin' || plan.method === 'agy-builtin');
+    && (
+      plan.ephemeralNpmCache === true
+      || plan.method === 'claude-builtin'
+      || plan.method === 'claude-install'
+      || plan.method === 'agy-builtin'
+      || plan.method === 'agy-install'
+    );
+
+  const actionLabel = options.installedPath ? '更新' : '安装';
 
   try {
     const deadlineMs = Date.now() + timeoutMs;
@@ -501,7 +540,7 @@ export async function runExecutorUpdate(options: RunExecutorUpdateOptions): Prom
       return {
         ok: false,
         method: activeMethod,
-        error: `${answer.failure ?? `更新命令 ${argv[0]} 执行失败`}${claudeDesktopHint}`,
+        error: `${answer.failure ?? `${actionLabel}命令 ${argv[0]} 执行失败`}${claudeDesktopHint}`,
         ...(output ? { output } : {}),
       };
     }
@@ -512,7 +551,7 @@ export async function runExecutorUpdate(options: RunExecutorUpdateOptions): Prom
       return {
         ok: false,
         method: activeMethod,
-        error: `更新命令退出码 ${answer.code}（${activeMethod}）${permHint}${claudeDesktopHint}`,
+        error: `${actionLabel}命令退出码 ${answer.code}（${activeMethod}）${permHint}${claudeDesktopHint}`,
         ...(output ? { output } : {}),
       };
     }

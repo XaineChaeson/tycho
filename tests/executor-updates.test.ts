@@ -361,3 +361,60 @@ test('runExecutorUpdate retries direct connection when proxied npm stalls and su
   assert.equal(claudeFail.ok, false);
   assert.match(claudeFail.error ?? '', /Claude-Data/);
 });
+
+test('uninstalled gemini and claude resolve to official remote install commands per platform with proxy fallback', async () => {
+  const fakeHome = mkdtempSync(join(tmpdir(), 'tycho-install-plan-'));
+  try {
+    const winEnv = { USERPROFILE: fakeHome, SystemRoot: 'C:\\Windows' };
+    const unixEnv = { HOME: fakeHome };
+
+    const agyWin = resolveExecutorUpdaterPlan('gemini', undefined, winEnv, 'win32');
+    assert.equal(agyWin.kind, 'run');
+    if (agyWin.kind === 'run') {
+      assert.equal(agyWin.method, 'agy-install');
+      assert.equal(agyWin.argv[0], 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+      assert.match(agyWin.argv.join(' '), /antigravity\.google\/cli\/install\.ps1/);
+    }
+
+    const agyMac = resolveExecutorUpdaterPlan('gemini', undefined, unixEnv, 'darwin');
+    assert.equal(agyMac.kind, 'run');
+    if (agyMac.kind === 'run') {
+      assert.equal(agyMac.method, 'agy-install');
+      assert.deepEqual(agyMac.argv, ['bash', '-c', 'curl -fsSL https://antigravity.google/cli/install.sh | bash']);
+    }
+
+    const agyInstalled = resolveExecutorUpdaterPlan('gemini', '/Users/u/.local/bin/agy', unixEnv, 'darwin');
+    assert.equal(agyInstalled.kind, 'run');
+    if (agyInstalled.kind === 'run') {
+      assert.equal(agyInstalled.method, 'agy-builtin');
+      assert.deepEqual(agyInstalled.argv, ['agy', 'update']);
+    }
+
+    const claudeMac = resolveExecutorUpdaterPlan('claude', undefined, unixEnv, 'darwin');
+    assert.equal(claudeMac.kind, 'run');
+    if (claudeMac.kind === 'run') {
+      assert.equal(claudeMac.method, 'claude-install');
+      assert.deepEqual(claudeMac.argv, ['bash', '-c', 'curl -fsSL https://claude.ai/install.sh | bash']);
+    }
+
+    // Remote install retries directly when a configured proxy fails with a network error.
+    const installCalls: { argv: string[]; env?: Record<string, string> }[] = [];
+    const installRes = await runExecutorUpdate({
+      executor: 'gemini',
+      installedPath: undefined,
+      platform: 'darwin',
+      env: { HOME: fakeHome, HTTPS_PROXY: 'http://127.0.0.1:7890' },
+      run: async (argv, _ms, extraEnv) => {
+        installCalls.push({ argv, env: extraEnv });
+        if (installCalls.length === 1) return { stdout: '', stderr: 'curl: (7) Failed to connect: ECONNREFUSED', code: 7 };
+        return { stdout: 'Installed agy to ~/.local/bin/agy', stderr: '', code: 0 };
+      },
+    });
+    assert.equal(installRes.ok, true);
+    assert.equal(installRes.method, 'agy-install');
+    assert.equal(installCalls.length, 2);
+    assert.equal(installCalls[1]!.env?.HTTPS_PROXY, '');
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});

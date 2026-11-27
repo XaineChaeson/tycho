@@ -53,8 +53,6 @@ type Cancel = (timer: unknown) => void;
 const later: Schedule = (fn, delay) => setTimeout(fn, delay);
 const forget: Cancel = (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>);
 
-const GROUPED = new Set(['read', 'search']);
-
 function endTool(row: ToolRow, event: Extract<NormalizedEvent, { kind: 'tool.end' }>): void {
   row.status = event.isError ? 'failed' : 'completed';
   if (event.output) row.output = event.output;
@@ -63,6 +61,8 @@ function endTool(row: ToolRow, event: Extract<NormalizedEvent, { kind: 'tool.end
   if (event.changes) row.changes = event.changes;
 }
 
+// Consecutive non-failed tool calls of any kind fold into one compact progress capsule so
+// multi-step tool chains never bury Worker prose; failed calls stay outside with their reason.
 function group(rows: TimelineRow[]): TimelineRow[] {
   const result: TimelineRow[] = [];
   let run: ToolRow[] = [];
@@ -72,7 +72,7 @@ function group(rows: TimelineRow[]): TimelineRow[] {
     run = [];
   };
   for (const row of rows) {
-    if (row.kind === 'tool' && GROUPED.has(row.call.category) && row.status !== 'failed') run.push(row);
+    if (row.kind === 'tool' && row.status !== 'failed') run.push(row);
     else { flush(); result.push(row); }
   }
   flush();
@@ -169,16 +169,36 @@ export function projectSite(events: readonly NormalizedEvent[], ended = false): 
   };
 }
 
-// What a group of reads and searches comes to: calls apart from files, since one file
-// read twice is two reads of one file.
+// What a group of routine tool calls comes to: calls apart from files, since one file
+// read or edited twice is two calls on one file.
 export function groupSummary(tools: readonly ToolRow[]): string {
   const reads = tools.filter((row) => row.call.category === 'read');
   const files = new Set(reads.flatMap((row) => row.call.paths ?? [])).size;
-  const searches = tools.length - reads.length;
+  const searches = tools.filter((row) => row.call.category === 'search').length;
+  const edits = tools.filter((row) => row.call.category === 'edit');
+  const editFiles = new Set(edits.flatMap((row) => row.call.paths ?? [])).size;
+  const runs = tools.filter((row) => row.call.category === 'run').length;
+  const others = tools.length - reads.length - searches - edits.length - runs;
   const parts: string[] = [];
   if (reads.length) parts.push(files === reads.length ? `读取 ${files} 个文件` : files ? `读取 ${reads.length} 次，${files} 个文件` : `读取 ${reads.length} 次`);
   if (searches) parts.push(`搜索 ${searches} 次`);
+  if (edits.length) parts.push(editFiles === edits.length ? `修改 ${editFiles} 个文件` : editFiles ? `修改 ${edits.length} 次，${editFiles} 个文件` : `修改 ${edits.length} 次`);
+  if (runs) parts.push(`命令 ${runs} 次`);
+  if (others) parts.push(`工具 ${others} 次`);
   return parts.join('，');
+}
+
+// On an ended round that already has a structured receipt card below, the very last text
+// row is typically the raw final message containing the receipt fence. Keep it tucked away
+// while preserving every earlier progress narrative on the main timeline.
+export function trailingReceiptTextIndex(rows: readonly TimelineRow[], hasReceipt: boolean): number {
+  if (!hasReceipt || rows.length === 0) return -1;
+  return rows.at(-1)?.kind === 'text' ? rows.length - 1 : -1;
+}
+
+export function hasVisibleNarrative(rows: readonly TimelineRow[], hasReceipt: boolean): boolean {
+  const trailing = trailingReceiptTextIndex(rows, hasReceipt);
+  return rows.some((row, index) => row.kind === 'text' && index !== trailing);
 }
 
 // The one line the warnings and retries of a round fold into.
@@ -328,8 +348,22 @@ export function dispatchSummary(
   const section = (name: string): string | undefined => brief?.match(new RegExp(`## ${name}\\n\\n([\\s\\S]*?)(?=\\n## |$)`))?.[1]?.trim();
   const sameRevision = run.task_revision === task.revision;
   return {
-    goal: section('目标') || (sameRevision ? task.goal : null) || '该轮派发说明未记录目标摘要',
+    goal: section('目标') || section('被审目标') || (sameRevision ? task.goal : null) || '该轮派发说明未记录目标摘要',
     acceptance: section('验收标准') || (sameRevision ? task.acceptance : null) || '该轮派发说明未记录验收摘要',
     brief: brief ?? '快照没有 brief',
   };
+}
+
+// Plain single-line preview of a frozen dispatch goal for the collapsed disclosure row.
+export function goalPreview(markdown: string, maxChars = 120): string {
+  const plain = markdown
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^\s{0,3}(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+\.\s+)/gm, '')
+    .replace(/[*_`~]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (plain.length <= maxChars) return plain;
+  return `${plain.slice(0, maxChars - 1).trimEnd()}…`;
 }

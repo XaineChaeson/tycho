@@ -62,8 +62,22 @@ export const givenAll = (entries: readonly Entry[], named: readonly string[] = [
 
 const RULE = '以下为本任务适用的知识与技能（引用写 `编号@修订号`）；与任务目标或验收标准冲突时以验收标准为准。';
 const ON_DEMAND_RULE = '需要时读取本文件同目录下对应文件：';
+const MAX_CATALOG_TRIGGER_CHARS = 120;
 
-const catalogLine = (entry: Entry): string => `- ${entry.title}（${citation(entry.id, entry.revision)}）：${entry.when_to_use}。正文：本文件同目录的 \`${knowledgeFile(entry)}\``;
+// Keep on-demand knowledge and skill catalog lines compact so verbose multi-paragraph skill
+// descriptions never bloat every round's brief.md.
+function compactCatalogTrigger(raw: string): string {
+  const single = raw.replace(/\s+/g, ' ').trim();
+  if (single.length <= MAX_CATALOG_TRIGGER_CHARS) return single;
+  return `${single.slice(0, MAX_CATALOG_TRIGGER_CHARS - 1).trimEnd()}…`;
+}
+
+const catalogLine = (entry: Entry, omitted = false): string => {
+  const trigger = compactCatalogTrigger(entry.when_to_use);
+  return omitted
+    ? `- ${entry.title}（${citation(entry.id, entry.revision)}）：${trigger}（快照体积受限，正文未附带）`
+    : `- ${entry.title}（${citation(entry.id, entry.revision)}）：${trigger}。正文：本文件同目录的 \`${knowledgeFile(entry)}\``;
+};
 
 const SKILL_RULE = '需要时读取本文件同目录下对应技能文件：';
 
@@ -72,7 +86,7 @@ const SKILL_RULE = '需要时读取本文件同目录下对应技能文件：';
 // order the ledger selected them in); then the catalog of on-demand knowledge and the catalog of
 // skills, whose bodies the snapshot carries as files; then the skills the Task names (`named`),
 // in full. The limit on the brief is judged on exactly this text.
-export function briefSections(entries: readonly Entry[], projectName: string, named: readonly string[] = []): string {
+export function briefSections(entries: readonly Entry[], projectName: string, named: readonly string[] = [], omittedIds?: ReadonlySet<string>): string {
   if (entries.length === 0) return '';
   const resident = entries.filter(({ loading }) => loading === 'resident');
   const onDemand = entries.filter(({ kind, loading }) => kind === 'knowledge' && loading === 'on_demand');
@@ -80,8 +94,9 @@ export function briefSections(entries: readonly Entry[], projectName: string, na
   const listed = skills.filter(({ id }) => !named.includes(id));
   const chosen = skills.filter(({ id }) => named.includes(id));
   const part = (heading: string, list: readonly Entry[]): string => (list.length === 0 ? '' : `## ${heading}\n\n${list.map((entry) => entryText(entry)).join('\n')}\n`);
-  const catalog = onDemand.length === 0 ? '' : `## 按需知识\n\n${ON_DEMAND_RULE}\n\n${onDemand.map(catalogLine).join('\n')}\n\n`;
-  const skillCatalog = listed.length === 0 ? '' : `## 技能\n\n${SKILL_RULE}\n\n${listed.map(catalogLine).join('\n')}\n\n`;
+  const renderLine = (entry: Entry): string => catalogLine(entry, omittedIds?.has(entry.id) ?? false);
+  const catalog = onDemand.length === 0 ? '' : `## 按需知识\n\n${ON_DEMAND_RULE}\n\n${onDemand.map(renderLine).join('\n')}\n\n`;
+  const skillCatalog = listed.length === 0 ? '' : `## 技能\n\n${SKILL_RULE}\n\n${listed.map(renderLine).join('\n')}\n\n`;
   const namedPart = chosen.length === 0 ? '' : `## 指定技能\n\n${chosen.map((entry) => entryText(entry)).join('\n')}\n`;
   return `${RULE}\n\n${part('全局知识', resident.filter(({ project_ids }) => project_ids === null))}${part(`项目知识（${projectName}）`, resident.filter(({ project_ids }) => project_ids !== null))}${catalog}${skillCatalog}${namedPart}`;
 }
@@ -141,6 +156,7 @@ export function fitKnowledgeForRound(
   }
 
   const given = givenAll(working, named);
+  const omittedIds = new Set<string>();
   const carried = material?.files.reduce((sum, { text }) => sum + bytes(text), 0) ?? 0;
   let filesBytes = given.reduce((sum, each) => sum + (each.text === undefined ? 0 : bytes(each.text)), 0);
   if (filesBytes + carried > limits.snapshotBytes) {
@@ -157,6 +173,7 @@ export function fitKnowledgeForRound(
       if (size <= excess) {
         delete item.text;
         delete item.path;
+        omittedIds.add(item.id);
         filesBytes -= size;
       } else {
         const nextText = truncateUtf8(item.text!, size - excess, '\n\n…（已截断）');
@@ -168,6 +185,10 @@ export function fitKnowledgeForRound(
     if (trimmed.length > 0) {
       warnings.push(`快照知识文件超出上限，已截断或省略 ${trimmed.join('、')}`);
     }
+  }
+  // Re-render after snapshot fitting so omitted entries never leave dangling file paths in brief.md.
+  if (omittedIds.size > 0) {
+    sections = briefSections(working, projectName, named, omittedIds);
   }
 
   const warning = warnings.length > 0 ? warnings.join('；') : undefined;

@@ -678,7 +678,7 @@ test('a stopped task shows the follow-up composer and posts { note } to /continu
   await waitFor(() => expect(box).toHaveValue(''));
 });
 
-test('the dispatch note shows what that round was sent out with, and the whole brief on request', async () => {
+test('the dispatch note starts collapsed with a one-line preview and expands to the frozen brief on request', async () => {
   const brief = '## 目标\n\n历史目标\n\n## 验收标准\n\n历史验收\n\n## 范围\n\n只动这个目录';
   const snapshot = deferred();
   open('#/task/task', site({ runs: [aRun({ state: 'running' })], snapshots: { run: () => snapshot.promise } }));
@@ -686,9 +686,11 @@ test('the dispatch note shows what that round was sent out with, and the whole b
   expect(await screen.findByRole('status', { name: '正在读取快照' })).toBeInTheDocument();
   expect(screen.getByText('快照尚未加载')).toBeInTheDocument();
   snapshot.resolve({ snapshot: { brief } });
-  expect(await screen.findByText('历史目标')).toBeInTheDocument();
-  expect(screen.queryByRole('status', { name: '正在读取快照' })).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByRole('status', { name: '正在读取快照' })).not.toBeInTheDocument());
   const note = screen.getByRole('heading', { name: '派发说明 · 第 1 轮' }).closest('section')!;
+  const dispatchFold = screen.getByRole('heading', { name: '派发说明 · 第 1 轮' }).closest('details')!;
+  expect(dispatchFold).not.toHaveAttribute('open');
+  expect(within(note).getAllByText('历史目标').length).toBeGreaterThanOrEqual(1);
   expect(within(note).getByText(/ · 执行中$/)).toBeInTheDocument();
   expect(within(note).getByText('验收标准')).toBeInTheDocument();
   expect(within(note).getByText('历史验收')).toBeInTheDocument();
@@ -702,13 +704,13 @@ test('the dispatch note shows what that round was sent out with, and the whole b
 
 test('a round whose brief has no summary falls back to the Task only when it is the same revision', async () => {
   const other = open('#/task/task', site({ runs: [aRun({ state: 'running', task_revision: 1 })] }));
-  expect(await screen.findByText('该轮派发说明未记录目标摘要')).toBeInTheDocument();
+  expect((await screen.findAllByText('该轮派发说明未记录目标摘要')).length).toBeGreaterThanOrEqual(1);
   expect(screen.getByText('该轮派发说明未记录验收摘要')).toBeInTheDocument();
   other.unmount();
 
   open('#/task/task', site({ runs: [aRun({ state: 'running', task_revision: 2 })] }));
   const round = (await screen.findByRole('heading', { name: '派发说明 · 第 1 轮' })).closest('section')!;
-  expect(await within(round).findByText('目标')).toBeInTheDocument();
+  expect((await within(round).findAllByText('目标')).length).toBeGreaterThanOrEqual(1);
   expect(within(round).getByText('验收')).toBeInTheDocument();
 });
 
@@ -813,8 +815,8 @@ test('a noisy round reads quietly: warnings in one gray line, reads in one group
   expect(screen.getByRole('table')).toBeInTheDocument();
 });
 
-test('once a round has ended, its report comes first and its process is folded, failures counted on the fold', async () => {
-  open('#/task/task', site({
+test('ended round with mid-run prose keeps narrative visible while folding routine tool stretches and trailing receipt text; silent tool-only round folds whole process', async () => {
+  const first = open('#/task/task', site({
     task: aTask({ state: 'ready' }),
     runs: [ended({ receipt: { status: 'done', summary: '改好了', artifacts: [] } })],
     events: { run: { events: [
@@ -822,17 +824,41 @@ test('once a round has ended, its report comes first and its process is folded, 
       { kind: 'tool.start', id: 'w', category: 'edit', name: 'Write', title: 'src/a.ts', paths: ['src/a.ts'] },
       { kind: 'tool.end', id: 'w', isError: false, changes: [{ path: 'src/a.ts', op: 'add' }] },
       { kind: 'tool.end', id: 'f', isError: false, call: { category: 'edit', name: 'file_change', title: 'src/b.ts', paths: ['src/b.ts'] }, changes: [{ path: 'src/b.ts', op: 'update', patch: '@@ -1 +1 @@\n-a\n+b' }] },
+      { kind: 'text', text: '```receipt\n{"status":"done","summary":"改好了"}\n```' },
     ], first_index: 0, loaded: true } },
   }));
   expect(await screen.findByText('改好了')).toBeInTheDocument();
-  const fold = screen.getByText('过程记录 · 7 次工具调用，1 次失败').closest('details')!;
-  expect(fold).not.toHaveAttribute('open');
-  expect(within(fold).getByText('我先读取 brief。')).toBeInTheDocument();
-  // What it changed stands outside the fold, a patch only where one was given.
+  // Mid-run narrative stays directly visible on the main timeline rather than hidden under 过程记录.
+  expect(screen.getByText('我先读取 brief。').closest('details')).toBeNull();
+  expect(screen.getByText('读取 4 次，3 个文件')).toBeInTheDocument();
+  expect(screen.getByText('修改 2 个文件')).toBeInTheDocument();
+  // Trailing raw receipt output is folded so it does not duplicate the Report card below.
+  const rawFinal = screen.getByText('查看原始末条输出').closest('details')!;
+  expect(rawFinal).not.toHaveAttribute('open');
+  // What it changed stands outside the tool folds, a patch only where one was given.
   const changes = screen.getByRole('region', { name: '文件变化' });
-  expect(fold.contains(changes)).toBe(false);
   expect([...changes.querySelectorAll('li')].map((item) => [item.dataset.change, item.querySelector('.font-mono')!.textContent])).toEqual([['add', 'src/a.ts'], ['update', 'src/b.ts']]);
   expect(within(changes).getAllByText('查看改动')).toHaveLength(1);
+  first.unmount();
+
+  // When an ended round has no mid-run prose (only tool calls + final receipt), fold the whole process.
+  const silentEvents = NOISY.filter((event) => event.kind !== 'text');
+  open('#/task/task', site({
+    task: aTask({ state: 'ready' }),
+    runs: [ended({ receipt: { status: 'done', summary: '静默完成', artifacts: [] } })],
+    events: { run: { events: [
+      ...silentEvents,
+      { kind: 'tool.start', id: 'w', category: 'edit', name: 'Write', title: 'src/a.ts', paths: ['src/a.ts'] },
+      { kind: 'tool.end', id: 'w', isError: false, changes: [{ path: 'src/a.ts', op: 'add' }] },
+      { kind: 'tool.end', id: 'f', isError: false, call: { category: 'edit', name: 'file_change', title: 'src/b.ts', paths: ['src/b.ts'] }, changes: [{ path: 'src/b.ts', op: 'update', patch: '@@ -1 +1 @@\n-a\n+b' }] },
+      { kind: 'text', text: '```receipt\n{"status":"done","summary":"静默完成"}\n```' },
+    ], first_index: 0, loaded: true } },
+  }));
+  expect(await screen.findByText('静默完成')).toBeInTheDocument();
+  const fold = screen.getByText('过程记录 · 7 次工具调用，1 次失败').closest('details')!;
+  expect(fold).not.toHaveAttribute('open');
+  const silentChanges = screen.getByRole('region', { name: '文件变化' });
+  expect(fold.contains(silentChanges)).toBe(false);
 });
 
 test('a tool call still open when its Run ended reads as unfinished, never as running', async () => {
@@ -1858,14 +1884,14 @@ test('a finished round opened again is drawn at once from what was read; a round
     ],
     snapshots: { r1: { snapshot: { brief: '## 目标\n\n第一轮的目标' } } },
   }));
-  expect(await screen.findByText('第一轮的目标')).toBeInTheDocument();
+  expect((await screen.findAllByText('第一轮的目标')).length).toBeGreaterThanOrEqual(1);
   const count = (path: string): number => app.reads.filter((each) => each === path).length;
   const gone = count('/api/runs/r2/events');
   const stopped = count('/api/runs/r3/events');
   expect(gone).toBeGreaterThan(0);
   await go('#/roles');
   await go('#/task/task');
-  expect(screen.getByText('第一轮的目标')).toBeInTheDocument();
+  expect(screen.getAllByText('第一轮的目标').length).toBeGreaterThanOrEqual(1);
   expect(screen.queryByRole('status', { name: '正在读取快照' })).toBeNull();
   await waitFor(() => expect(count('/api/runs/r2/events')).toBeGreaterThan(gone));
   expect(count('/api/runs/r3/events')).toBeGreaterThan(stopped);

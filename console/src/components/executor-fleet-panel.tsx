@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowUpCircle, CheckCircle2, Clock, RefreshCw, ShieldCheck, SlidersHorizontal, Terminal, TriangleAlert } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_EXECUTOR_AUTO_UPDATE_POLICY,
   highestSemver,
@@ -22,7 +22,12 @@ import type { Machine } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 const EXECUTOR_ORDER = ['codex', 'claude', 'gemini', 'dsh'];
+const REMOTE_INSTALLABLE = new Set(['codex', 'claude', 'gemini']);
 const INTERVAL_OPTIONS = [6, 12, 24, 48, 72, 168];
+
+function canRemoteInstall(exec: string): boolean {
+  return REMOTE_INSTALLABLE.has(exec);
+}
 
 function shortVer(raw: string | null | undefined): string {
   if (!raw) return '—';
@@ -39,16 +44,21 @@ function shortPlatform(platform: string | null | undefined): string {
 }
 
 function stateBadge(job: ExecutorUpdateJobView) {
+  const installing = !job.before_version;
   switch (job.state) {
     case 'waiting_idle':
       return <Badge tone="waiting" className="text-[11px]"><Clock className="mr-1 size-3" />等空闲</Badge>;
     case 'updating':
-      return <Badge tone="plain" className="text-[11px]"><RefreshCw className="mr-1 size-3 animate-spin" />更新中</Badge>;
+      return <Badge tone="plain" className="text-[11px]"><RefreshCw className="mr-1 size-3 animate-spin" />{installing ? '安装中' : '更新中'}</Badge>;
     case 'succeeded':
       return (
         <Badge tone="success" className="text-[11px]">
           <CheckCircle2 className="mr-1 size-3" />
-          {job.updated ? `已升 ${shortVer(job.after_version)}` : '已是最新'}
+          {installing && job.after_version
+            ? `已装 ${shortVer(job.after_version)}`
+            : job.updated
+              ? `已升 ${shortVer(job.after_version)}`
+              : '已是最新'}
         </Badge>
       );
     case 'unsupported':
@@ -91,12 +101,27 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [policyOpen, setPolicyOpen] = useState(false);
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
+  const prevSucceededRef = useRef<string | null>(null);
+
+  // Refresh machines/accounts automatically when a background install or upgrade job succeeds
+  // so newly installed CLIs and updated version badges appear without manual reload.
+  useEffect(() => {
+    if (!fleet) return;
+    const key = fleet.jobs
+      .filter((j) => j.state === 'succeeded')
+      .map((j) => j.id)
+      .join(',');
+    if (prevSucceededRef.current !== null && key !== prevSucceededRef.current) {
+      void queryClient.invalidateQueries({ queryKey: accountsQuery.queryKey });
+    }
+    prevSucceededRef.current = key;
+  }, [fleet, queryClient]);
 
   const executors = useMemo(() => {
     const found = new Set<string>();
     for (const m of machines) {
       for (const e of m.node.executors?.executors ?? []) {
-        if (e.installed) found.add(e.executor);
+        if (e.installed || canRemoteInstall(e.executor)) found.add(e.executor);
       }
     }
     const list = [...found];
@@ -400,7 +425,46 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                       return (
                         <td key={exec} className="px-3 py-2 align-middle">
                           {!installed ? (
-                            <span className="text-faint">未安装</span>
+                            <div className="flex flex-wrap items-center justify-between gap-1.5">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span
+                                  className="text-faint"
+                                  title={
+                                    exec === 'gemini'
+                                      ? 'Antigravity 桌面端 / IDE 不内置 agy CLI，需单独安装独立 CLI（可点右侧「安装」一键远程安装）'
+                                      : undefined
+                                  }
+                                >
+                                  未安装
+                                </span>
+                                {job ? (
+                                  <button
+                                    type="button"
+                                    className="cursor-pointer"
+                                    title={job.error ?? job.output ?? '查看详情'}
+                                    onClick={() => setExpandedJobId((cur) => (cur === job.id ? null : job.id))}
+                                  >
+                                    {stateBadge(job)}
+                                  </button>
+                                ) : null}
+                              </div>
+                              {machine.node.connected && canRemoteInstall(exec) ? (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-6 px-1.5 text-[11px] text-primary hover:text-primary"
+                                  disabled={busyCell}
+                                  title={
+                                    exec === 'gemini'
+                                      ? `在 ${machine.id} 上一键安装 Antigravity CLI (agy)`
+                                      : `在 ${machine.id} 上一键安装 ${exec} CLI`
+                                  }
+                                  onClick={() => void handleRunUpdate(exec, [machine.id])}
+                                >
+                                  安装
+                                </Button>
+                              ) : null}
+                            </div>
                           ) : (
                             <div className="flex flex-wrap items-center justify-between gap-1.5">
                               <div className="flex flex-wrap items-center gap-1.5">
@@ -476,7 +540,7 @@ export function ExecutorFleetPanel({ machines }: { machines: Machine[] }) {
                       {job.method ? <span className="text-[11px] text-faint">via {job.method}</span> : null}
                       {job.before_version || job.after_version ? (
                         <span className="font-mono text-[11px] text-muted-foreground">
-                          {shortVer(job.before_version)} → {shortVer(job.after_version ?? job.before_version)}
+                          {job.before_version ? shortVer(job.before_version) : '未安装'} → {shortVer(job.after_version ?? job.before_version)}
                         </span>
                       ) : null}
                       {job.trigger === 'auto' ? <Badge tone="plain" className="text-[10px]">自动</Badge> : null}

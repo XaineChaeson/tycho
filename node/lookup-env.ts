@@ -115,8 +115,10 @@ export function readLookupEnv(options: LookupEnvOptions = {}): Promise<LookupEnv
     };
     let child: ReturnType<typeof spawn>;
     try {
-      // `$0` and `$1` are this Node and the line it runs: nothing is put into the shell's text.
-      child = (options.spawn ?? spawn)('bash', ['-l', '-c', 'exec "$0" -e "$1"', process.execPath, PRINT], {
+      // macOS defaults to zsh (~/.zprofile holds Homebrew and user PATH entries), while Linux
+      // uses bash. `$0` and `$1` work identically in both shells so nothing enters shell text.
+      const shell = platform === 'darwin' ? 'zsh' : 'bash';
+      child = (options.spawn ?? spawn)(shell, ['-l', '-c', 'exec "$0" -e "$1"', process.execPath, PRINT], {
         env: inherited, stdio: ['ignore', 'pipe', 'ignore'], detached: true,
       });
     } catch (error) {

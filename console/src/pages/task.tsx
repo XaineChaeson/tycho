@@ -46,7 +46,7 @@ import { Markdown } from '@/components/markdown';
 import { ReportArtifact } from '@/components/report-artifact';
 import { TrajectoryReplay } from '@/components/trajectory-replay';
 import { PAGE, projectFilesQuery, projectsQuery, rolesQuery, taskQuery, tasksQuery } from '@/lib/queries';
-import { dispatchSummary, projectSite } from '@/lib/timeline';
+import { dispatchSummary, goalPreview, hasVisibleNarrative, projectSite, trailingReceiptTextIndex } from '@/lib/timeline';
 import type { Artifact, DroppedRelease, KnowledgeTaskView, LandableInfo, ProjectFileSummary, Receipt, ReleaseResult, ReportDescriptor, Run, RunSnapshot, TaskAutomation, TaskInput, TaskPage as TaskPageData, TaskReleases, TaskReview, Trace } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
@@ -124,10 +124,10 @@ const shownArtifacts = (run: Run): ShownArtifact[] => {
 const exitTone = (run: Run): BadgeTone => (run.exit_kind === 'completed' ? 'success' : run.exit_kind === 'failed' || run.exit_kind === 'lost' || run.exit_kind === 'auth' ? 'failed' : run.state !== 'ended' ? 'running' : 'ended');
 const exitText = (run: Run): string => EXIT_TEXT[run.exit_kind ?? ''] ?? runStateLabels[run.state] ?? run.state;
 
-// One round: what it was sent out with, then what it did, in the order it did it — folded
-// once the round has ended, when its report is what to read — and the files it reports it
-// changed. With `reportsOnly` the events are left out and only what the round was told
-// and what it reported stays.
+// One round: a compact single-line dispatch disclosure (expandable on demand so long goals
+// never push the live stream below the fold), then what it did — mid-run narrative visible
+// with consecutive routine tool calls grouped into compact capsules — and the files it
+// reports it changed. With `reportsOnly` the events are left out.
 function RunSite({ data, run, streams, reportsOnly, sameAsFirst = false }: {
   data: TaskPageData;
   run: Run;
@@ -140,48 +140,67 @@ function RunSite({ data, run, streams, reportsOnly, sameAsFirst = false }: {
   const projectId = data.task.project_id ?? data.work.project_id ?? undefined;
   const ended = run.state === 'ended';
   const site = projectSite(streams.events(run.id), ended);
-  const steps = site.rows.length + site.diagnostics.length;
-  const process = <div className="flex min-w-0 flex-col gap-0.5"><SiteRows site={site} id={run.id} /></div>;
+  const steps = site.rows.reduce((sum, row) => sum + (row.kind === 'group' ? row.tools.length : 1), 0) + site.diagnostics.length;
+  const hasReceipt = Boolean(run.receipt);
+  const trailingText = ended ? trailingReceiptTextIndex(site.rows, hasReceipt) : -1;
+  const showLayered = !ended || hasVisibleNarrative(site.rows, hasReceipt);
+  const process = (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      <SiteRows site={site} id={run.id} foldTrailingTextAt={trailingText} />
+    </div>
+  );
   const history = streams.history(run.id);
+  const roundIndex = data.runs.indexOf(run) + 1;
+  const preview = sameAsFirst
+    ? '目标与验收标准同第 1 轮'
+    : snapshot
+      ? goalPreview(summary.goal)
+      : '正在读取快照…';
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex min-h-6 flex-wrap items-center gap-x-2.5 gap-y-1">
-        <h2 className={H}>{`派发说明 · 第 ${data.runs.indexOf(run) + 1} 轮`}</h2>
-        <Note className="text-xs"><Time at={run.created_at} suffix={` · ${runStateLabels[run.state]}`} /></Note>
-      </div>
-      <div className="rounded-xl bg-muted px-4 py-3.5">
-        {snapshot ? (
-          sameAsFirst ? (
-            <>
-              <Note className="text-xs">目标与验收标准同第 1 轮</Note>
-              <Details id={`brief:${run.id}`} title="查看完整派发说明" className="mt-1" summaryClassName="text-xs"><pre className={cn(PRE, 'bg-background')}>{summary.brief}</pre></Details>
-            </>
+      <Details
+        id={`dispatch:${run.id}`}
+        className="rounded-xl bg-muted px-3.5 py-1.5"
+        summaryClassName="min-h-8 gap-2 text-foreground"
+        title={(
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5">
+            <h2 className={cn(H, 'flex-none')}>{`派发说明 · 第 ${roundIndex} 轮`}</h2>
+            <Note className="flex-none text-xs"><Time at={run.created_at} suffix={` · ${runStateLabels[run.state]}`} /></Note>
+            {preview ? <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{preview}</span> : null}
+          </div>
+        )}
+      >
+        <div className="mt-2 border-t border-border/60 pt-2.5 pb-1.5 pl-5">
+          {snapshot ? (
+            sameAsFirst ? (
+              <Details id={`brief:${run.id}`} title="查看完整派发说明" summaryClassName="text-xs"><pre className={cn(PRE, 'bg-background')}>{summary.brief}</pre></Details>
+            ) : (
+              <>
+                <Markdown text={summary.goal} projectId={projectId} />
+                <p className="mt-3 mb-1 text-xs text-faint">验收标准</p>
+                <Markdown text={summary.acceptance} projectId={projectId} />
+                <Details id={`brief:${run.id}`} title="查看完整派发说明" className="mt-1" summaryClassName="text-xs"><pre className={cn(PRE, 'bg-background')}>{summary.brief}</pre></Details>
+              </>
+            )
           ) : (
             <>
-              <Markdown text={summary.goal} projectId={projectId} />
-              <p className="mt-3 mb-1 text-xs text-faint">验收标准</p>
-              <Markdown text={summary.acceptance} projectId={projectId} />
-              <Details id={`brief:${run.id}`} title="查看完整派发说明" className="mt-1" summaryClassName="text-xs"><pre className={cn(PRE, 'bg-background')}>{summary.brief}</pre></Details>
+              {/* About the height of what comes: the page does not move when it arrives. */}
+              <div role="status" aria-label="正在读取快照" className="flex flex-col gap-2 py-0.5">
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-4 w-1/2" />
+                <Skeleton className="mt-3 h-3 w-16" />
+                <Skeleton className="h-4 w-2/3" />
+              </div>
+              <Details id={`brief:${run.id}`} title="查看完整派发说明" className="mt-1" summaryClassName="text-xs"><p className="text-sm">快照尚未加载</p></Details>
             </>
-          )
-        ) : (
-          <>
-            {/* About the height of what comes: the page does not move when it arrives. */}
-            <div role="status" aria-label="正在读取快照" className="flex flex-col gap-2 py-0.5">
-              <Skeleton className="h-4 w-3/4" />
-              <Skeleton className="h-4 w-1/2" />
-              <Skeleton className="mt-3 h-3 w-16" />
-              <Skeleton className="h-4 w-2/3" />
-            </div>
-            <Details id={`brief:${run.id}`} title="查看完整派发说明" className="mt-1" summaryClassName="text-xs"><p className="text-sm">快照尚未加载</p></Details>
-          </>
-        )}
-      </div>
+          )}
+        </div>
+      </Details>
       {snapshot?.same_executor ? <Note className="text-xs text-waiting-foreground wrap-anywhere">{snapshot.same_executor.reason}</Note> : null}
       {history ? <Problem>{history}</Problem> : null}
       {reportsOnly
         ? (steps ? <Note>过程已收起（{steps} 条），关掉“只看汇报”就能看到。</Note> : null)
-        : ended && steps
+        : !showLayered && steps
           ? <Details id={`process:${run.id}`} title={processTitle(site)}><div className="pt-1 pl-[22px]">{process}</div></Details>
           : process}
       <FileChanges changes={site.changes} id={run.id} />

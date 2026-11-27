@@ -10,7 +10,18 @@
 // left without a row, a change claimed for a call that failed, and "思考中" on a round
 // that has stopped thinking.
 import { expect, test } from 'vitest';
-import { createRunEvents, createTimelineReader, diagnosticsSummary, dispatchSummary, groupSummary, projectSite, type ToolRow } from './timeline.ts';
+import {
+  createRunEvents,
+  createTimelineReader,
+  diagnosticsSummary,
+  dispatchSummary,
+  goalPreview,
+  groupSummary,
+  hasVisibleNarrative,
+  projectSite,
+  trailingReceiptTextIndex,
+  type ToolRow,
+} from './timeline.ts';
 import type { NormalizedEvent } from './types.ts';
 
 const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -66,7 +77,7 @@ test('a call reported only at its end has a row where it ended; one with nothing
   expect(rows.map((row) => row.kind === 'tool' ? [row.id, row.status, row.call.title] : row.kind)).toEqual(['text', ['f', 'completed', 'a.ts']]);
 });
 
-test('neighbouring reads and searches fold into a group; a failed one stays out, and a lone one is a line', () => {
+test('neighbouring non-failed tools fold into a group across categories; a failed one stays out, and a lone one is a line', () => {
   const { rows } = projectSite([
     call('r1', 'read', 'brief', ['brief.md']), done('r1'),
     call('r2', 'read', 'brief again', ['brief.md']), done('r2'),
@@ -76,12 +87,37 @@ test('neighbouring reads and searches fold into a group; a failed one stays out,
     call('r5', 'read', 'one', ['one.md']), done('r5'),
     call('x', 'run', 'npm test'), done('x'),
     call('r6', 'read', 'two', ['two.md']), done('r6'),
+    { kind: 'text', text: '准备改文件' },
+    call('e1', 'edit', 'a.ts', ['a.ts']), done('e1'),
   ], true);
   expect(rows.map((row) => (row.kind === 'group' ? row.tools.map((each) => each.id) : row.kind === 'tool' ? row.id : row.kind))).toEqual([
-    ['r1', 'r2', 'r3', 's1'], 'r4', 'r5', 'x', 'r6',
+    ['r1', 'r2', 'r3', 's1'], 'r4', ['r5', 'x', 'r6'], 'text', 'e1',
   ]);
   const group = rows[0]!;
   expect(group.kind === 'group' && groupSummary(group.tools)).toBe('读取 3 次，2 个文件，搜索 1 次');
+  const mixed = rows[2]!;
+  expect(mixed.kind === 'group' && groupSummary(mixed.tools)).toBe('读取 2 个文件，命令 1 次');
+});
+
+test('trailing receipt text and layered narrative detection keep mid-run prose visible while folding raw final receipt', () => {
+  const withMidText = projectSite([
+    { kind: 'text', text: '先查配置' },
+    call('r1', 'read', 'a', ['a.ts']), done('r1'),
+    call('r2', 'edit', 'a', ['a.ts']), done('r2'),
+    { kind: 'text', text: '```receipt\n{"status":"done","summary":"完成"}\n```' },
+  ], true).rows;
+  expect(trailingReceiptTextIndex(withMidText, true)).toBe(2);
+  expect(trailingReceiptTextIndex(withMidText, false)).toBe(-1);
+  expect(hasVisibleNarrative(withMidText, true)).toBe(true);
+
+  const toolsOnlyWithReceipt = projectSite([
+    call('r1', 'read', 'a', ['a.ts']), done('r1'),
+    call('r2', 'run', 'npm test'), done('r2'),
+    { kind: 'text', text: '```receipt\n{"status":"done","summary":"完成"}\n```' },
+  ], true).rows;
+  expect(trailingReceiptTextIndex(toolsOnlyWithReceipt, true)).toBe(1);
+  expect(hasVisibleNarrative(toolsOnlyWithReceipt, true)).toBe(false);
+  expect(hasVisibleNarrative(toolsOnlyWithReceipt, false)).toBe(true);
 });
 
 test('a group says calls and files apart, and a running group holds its current call', () => {
@@ -258,11 +294,14 @@ test('a closed log neither reads again nor reports', async () => {
   expect([timers.length, statuses.length]).toEqual([0, 0]);
 });
 
-test('dispatch fallback only uses Task fields for the recorded revision', () => {
+test('dispatch fallback only uses Task fields for the recorded revision and handles review headings and previews', () => {
   const task = { revision: 2, goal: '当前目标', acceptance: '当前验收' };
   expect(dispatchSummary(task, { task_revision: 2 }, { brief: '旧格式' })).toEqual({ goal: '当前目标', acceptance: '当前验收', brief: '旧格式' });
   expect(dispatchSummary(task, { task_revision: 1 }, { brief: '旧格式' }).goal).toBe('该轮派发说明未记录目标摘要');
   expect(dispatchSummary(task, { task_revision: 1 }, { brief: '## 目标\n\n历史目标\n## 验收标准\n\n历史验收' }).goal).toBe('历史目标');
+  expect(dispatchSummary(task, { task_revision: 1 }, { brief: '## 被审目标\n\n审阅目标\n## 验收标准\n\n审阅验收' }).goal).toBe('审阅目标');
+  expect(goalPreview('## **重点**\n- 检查 `cache.ts` 与 [文档](https://example.test)\n第二行')).toBe('重点 检查 cache.ts 与 文档 第二行');
+  expect(goalPreview('一'.repeat(150), 20)).toBe(`${'一'.repeat(19)}…`);
 });
 
 // Review (run-scene): "still thinking" and "retrying" are both about what the round is

@@ -164,7 +164,10 @@ test('the receipt example in every kind of brief parses as JSON', (t) => {
   for (const brief of [plain, gate]) {
     const example = /```receipt\n([\s\S]*?)\n```/.exec(brief)?.[1];
     assert.ok(example, '有回执示例');
-    assert.doesNotThrow(() => JSON.parse(example!), '回执示例能被 JSON.parse');
+    const parsed = JSON.parse(example!) as Record<string, unknown>;
+    assert.equal(parsed.status, 'done', '回执示例为合法可复制的最小 done 样例');
+    assert.equal('ask' in parsed, false, '最小回执示例不同时塞入互斥字段 ask');
+    assert.equal('later' in parsed, false, '最小回执示例不同时塞入互斥字段 later');
   }
 });
 

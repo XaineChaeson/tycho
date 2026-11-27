@@ -547,3 +547,43 @@ test('a knowledge task pinned to a login the knowledge logins no longer name sto
   assert.deepEqual([launched.length, task.state], [0, 'held']);
   assert.equal(task.reason, '账号 g1 不在知识任务用的登录里（设置“知识任务用哪些登录”）：改钉别的登录，或者取消钉住');
 });
+
+test('snapshotBytes fitting removes dead knowledge paths from brief.md and compacts multi-line catalog triggers', async (t) => {
+  const limits: KnowledgeLimits = { ...DEFAULT_KNOWLEDGE_LIMITS, snapshotBytes: 260 };
+  const { f, dispatcher, launched, queued, snapshotOf } = setup(t, { limits: () => limits });
+  const kept = publish(f.ledger, {
+    title: '短目录条目',
+    when_to_use: '第一段适用条件说明。\n\n第二段超长英文补充描述 '.concat('detail '.repeat(40)),
+    body: '短正文',
+    loading: 'on_demand',
+  });
+  const dropped = publish(f.ledger, {
+    title: '超大按需条目',
+    when_to_use: '查大表时',
+    body: '超'.repeat(120),
+    loading: 'on_demand',
+  });
+  const dropped2 = publish(f.ledger, {
+    title: '第二超大条目',
+    when_to_use: '查另一张表时',
+    body: '大'.repeat(120),
+    loading: 'on_demand',
+  });
+  queued();
+  await dispatcher.tick();
+  assert.equal(launched.length, 1);
+  const snap = snapshotOf(launched[0]!);
+  const filePaths = new Set(snapshotFiles(snap).map((file) => file.path));
+  assert.ok(filePaths.has(`knowledge/${kept.id}@1.md`), '未超限条目附带了正文文件');
+  const omittedId = !filePaths.has(`knowledge/${dropped.id}@1.md`) ? dropped.id : dropped2.id;
+  const omittedTitle = omittedId === dropped.id ? '超大按需条目' : '第二超大条目';
+  assert.equal(filePaths.has(`knowledge/${omittedId}@1.md`), false, '超限条目正文文件已省略');
+  // The brief must never point to a dropped file path that does not exist on disk.
+  assert.equal(snap.brief.includes(`knowledge/${omittedId}@1.md`), false, 'brief 不出现已省略文件的死链');
+  assert.match(snap.brief, new RegExp(`${omittedTitle}.*快照体积受限，正文未附带`));
+  // Long multi-line when_to_use descriptions drop trailing paragraphs and stay compact.
+  const keptLine = snap.brief.split('\n').find((line) => line.includes(kept.id))!;
+  assert.ok(keptLine, '目录包含短目录条目');
+  assert.equal(keptLine.includes('第二段超长英文补充描述'), false, '目录行丢弃了多余段落');
+  assert.ok(keptLine.length < 220, `目录行保持精简（当前 ${keptLine.length} 字）`);
+});
