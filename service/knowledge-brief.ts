@@ -28,8 +28,12 @@ export interface GivenKnowledge {
   roles: string[];
   // A skill (§1); absent for knowledge, and in every round from before skills.
   kind?: 'skill';
-  // A skill the Task names: its text is in the brief, in full, and it has no file.
+  // A skill the Task names: its text is in the brief, in full (or as a concise native pointer
+  // when already synced to the target machine), and it has no snapshot file.
   named?: true;
+  // Already mirrored and linked into the target machine's native executor skill directory,
+  // so no redundant snapshot copy or full-body inline dump is needed.
+  native_synced?: true;
   // On-demand knowledge and skills not named: where the file is in the snapshot directory,
   // and its text.
   path?: string;
@@ -56,9 +60,26 @@ export const namedOf = (entry: Entry): GivenKnowledge => {
   return { ...given, named: true };
 };
 
-// What a round is given of these entries, the skills the Task names among them in full.
-export const givenAll = (entries: readonly Entry[], named: readonly string[] = []): GivenKnowledge[] =>
-  entries.map((entry) => (entry.kind === 'skill' && entry.loading === 'on_demand' && named.includes(entry.id) ? namedOf(entry) : givenOf(entry)));
+const nativeSyncedOf = (entry: Entry, isNamed: boolean): GivenKnowledge => {
+  const { path: _path, text: _text, ...given } = givenOf(entry);
+  return { ...given, ...(isNamed ? { named: true as const } : {}), native_synced: true };
+};
+
+// What a round is given of these entries, the skills the Task names among them in full,
+// omitting redundant snapshot copies for skills already synced natively on the target machine.
+export const givenAll = (
+  entries: readonly Entry[],
+  named: readonly string[] = [],
+  nativeSyncedIds?: ReadonlySet<string>,
+): GivenKnowledge[] =>
+  entries.map((entry) => {
+    if (entry.kind === 'skill' && entry.loading === 'on_demand') {
+      const isNamed = named.includes(entry.id);
+      if (nativeSyncedIds?.has(entry.id)) return nativeSyncedOf(entry, isNamed);
+      if (isNamed) return namedOf(entry);
+    }
+    return givenOf(entry);
+  });
 
 const RULE = '以下为本任务适用的知识与技能（引用写 `编号@修订号`）；与任务目标或验收标准冲突时以验收标准为准。';
 const ON_DEMAND_RULE = '需要时读取本文件同目录下对应文件：';
@@ -84,21 +105,32 @@ const SKILL_RULE = '需要时读取本文件同目录下对应技能文件：';
 // The knowledge and skill sections of a round's brief, in the order §4.1 gives: resident
 // knowledge in full, global before this project's (for any role before for this role — the
 // order the ledger selected them in); then the catalog of on-demand knowledge and the catalog of
-// skills, whose bodies the snapshot carries as files; then the skills the Task names (`named`),
-// in full. The limit on the brief is judged on exactly this text.
-export function briefSections(entries: readonly Entry[], projectName: string, named: readonly string[] = [], omittedIds?: ReadonlySet<string>): string {
+// skills not already natively synced on the target machine; then the skills the Task names
+// (`named`), in full or as concise native pointers when synced.
+export function briefSections(
+  entries: readonly Entry[],
+  projectName: string,
+  named: readonly string[] = [],
+  omittedIds?: ReadonlySet<string>,
+  nativeSyncedIds?: ReadonlySet<string>,
+): string {
   if (entries.length === 0) return '';
   const resident = entries.filter(({ loading }) => loading === 'resident');
   const onDemand = entries.filter(({ kind, loading }) => kind === 'knowledge' && loading === 'on_demand');
   const skills = entries.filter(({ kind, loading }) => kind === 'skill' && loading === 'on_demand');
-  const listed = skills.filter(({ id }) => !named.includes(id));
+  const listed = skills.filter(({ id }) => !named.includes(id) && !(nativeSyncedIds?.has(id) ?? false));
   const chosen = skills.filter(({ id }) => named.includes(id));
   const part = (heading: string, list: readonly Entry[]): string => (list.length === 0 ? '' : `## ${heading}\n\n${list.map((entry) => entryText(entry)).join('\n')}\n`);
   const renderLine = (entry: Entry): string => catalogLine(entry, omittedIds?.has(entry.id) ?? false);
   const catalog = onDemand.length === 0 ? '' : `## 按需知识\n\n${ON_DEMAND_RULE}\n\n${onDemand.map(renderLine).join('\n')}\n\n`;
   const skillCatalog = listed.length === 0 ? '' : `## 技能\n\n${SKILL_RULE}\n\n${listed.map(renderLine).join('\n')}\n\n`;
-  const namedPart = chosen.length === 0 ? '' : `## 指定技能\n\n${chosen.map((entry) => entryText(entry)).join('\n')}\n`;
-  return `${RULE}\n\n${part('全局知识', resident.filter(({ project_ids }) => project_ids === null))}${part(`项目知识（${projectName}）`, resident.filter(({ project_ids }) => project_ids !== null))}${catalog}${skillCatalog}${namedPart}`;
+  const renderNamed = (entry: Entry): string =>
+    nativeSyncedIds?.has(entry.id)
+      ? `- ${entry.title}（${citation(entry.id, entry.revision)}）：本技能已同步至本机执行器技能目录，请直接按原生技能调用并遵循。\n`
+      : entryText(entry);
+  const namedPart = chosen.length === 0 ? '' : `## 指定技能\n\n${chosen.map(renderNamed).join('\n')}\n`;
+  const body = `${part('全局知识', resident.filter(({ project_ids }) => project_ids === null))}${part(`项目知识（${projectName}）`, resident.filter(({ project_ids }) => project_ids !== null))}${catalog}${skillCatalog}${namedPart}`;
+  return body === '' ? '' : `${RULE}\n\n${body}`;
 }
 
 function truncateUtf8(text: string, maxBytes: number, suffix = ''): string {
@@ -125,17 +157,21 @@ export function fitKnowledgeForRound(
   limits: KnowledgeLimits,
   material?: { kind: KnowledgeTask['kind']; files: readonly { text: string }[] },
   named: readonly string[] = [],
+  nativeSyncedIds?: ReadonlySet<string>,
 ): FittedKnowledge {
   if (entries.length === 0) return { sections: '', given: [] };
   const warnings: string[] = [];
 
   let working: Entry[] = entries.map((entry) => {
+    if (entry.kind === 'skill' && entry.loading === 'on_demand' && nativeSyncedIds?.has(entry.id)) {
+      return entry;
+    }
     if (bytes(entry.body) <= limits.entryBytes) return entry;
     warnings.push(`${citation(entry.id, entry.revision)} 正文超出单条上限，已截断`);
     return { ...entry, body: truncateUtf8(entry.body, limits.entryBytes, '\n\n…（已截断）') };
   });
 
-  let sections = briefSections(working, projectName, named);
+  let sections = briefSections(working, projectName, named, undefined, nativeSyncedIds);
   if (bytes(sections) > limits.briefBytes) {
     const downgraded: string[] = [];
     const residentIndices = working
@@ -146,7 +182,7 @@ export function fitKnowledgeForRound(
     for (const { idx, entry } of residentIndices) {
       mutable[idx] = { ...entry, loading: 'on_demand' };
       downgraded.push(citation(entry.id, entry.revision));
-      sections = briefSections(mutable, projectName, named);
+      sections = briefSections(mutable, projectName, named, undefined, nativeSyncedIds);
       if (bytes(sections) <= limits.briefBytes) break;
     }
     working = mutable;
@@ -155,7 +191,7 @@ export function fitKnowledgeForRound(
     }
   }
 
-  const given = givenAll(working, named);
+  const given = givenAll(working, named, nativeSyncedIds);
   const omittedIds = new Set<string>();
   const carried = material?.files.reduce((sum, { text }) => sum + bytes(text), 0) ?? 0;
   let filesBytes = given.reduce((sum, each) => sum + (each.text === undefined ? 0 : bytes(each.text)), 0);
@@ -188,7 +224,7 @@ export function fitKnowledgeForRound(
   }
   // Re-render after snapshot fitting so omitted entries never leave dangling file paths in brief.md.
   if (omittedIds.size > 0) {
-    sections = briefSections(working, projectName, named, omittedIds);
+    sections = briefSections(working, projectName, named, omittedIds, nativeSyncedIds);
   }
 
   const warning = warnings.length > 0 ? warnings.join('；') : undefined;

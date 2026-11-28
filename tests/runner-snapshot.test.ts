@@ -279,10 +279,11 @@ test('roundTurn emits single-line brief/followup prompts and snapshotFiles write
   const deltaPrompt = roundTurn(resumedSnap, 'r2').prompt;
   assert.equal(
     deltaPrompt,
-    `请读 ${MATERIALS_PLACEHOLDER}/followup.md 中的后续指令继续当前任务，完成后在最后一条消息末尾附 \`\`\`receipt\`\`\` 回执（如需回传文件放 ${ARTIFACTS_PLACEHOLDER}/；完整任务背景见 ${MATERIALS_PLACEHOLDER}/brief.md）。`,
+    `请读 ${MATERIALS_PLACEHOLDER}/followup.md 中的后续指令继续当前任务，完成后在最后一条消息末尾附 \`\`\`receipt\`\`\` 回执（如需回传文件放 ${ARTIFACTS_PLACEHOLDER}/）。`,
   );
   assert.equal(/[\r\n]/.test(deltaPrompt), false, 'CLI prompt must never embed newlines');
   assert.doesNotMatch(deltaPrompt, /把按钮改成蓝色/);
+  assert.doesNotMatch(deltaPrompt, /brief\.md/);
 
   const dir = mkdtempSync(join(tmpdir(), 'tycho-followup-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -301,7 +302,7 @@ test('roundTurn emits single-line brief/followup prompts and snapshotFiles write
   const deltaWithFiles = roundTurn(withFilesSnap, 'r3').prompt;
   assert.equal(
     deltaWithFiles,
-    `请读 ${MATERIALS_PLACEHOLDER}/followup.md 中的后续指令继续当前任务（新增附带文件位于 ${MATERIALS_PLACEHOLDER}/project-files/），完成后在最后一条消息末尾附 \`\`\`receipt\`\`\` 回执（如需回传文件放 ${ARTIFACTS_PLACEHOLDER}/；完整任务背景见 ${MATERIALS_PLACEHOLDER}/brief.md）。`,
+    `请读 ${MATERIALS_PLACEHOLDER}/followup.md 中的后续指令继续当前任务（新增附带文件位于 ${MATERIALS_PLACEHOLDER}/project-files/），完成后在最后一条消息末尾附 \`\`\`receipt\`\`\` 回执（如需回传文件放 ${ARTIFACTS_PLACEHOLDER}/）。`,
   );
   assert.equal(/[\r\n]/.test(deltaWithFiles), false);
   const dir2 = mkdtempSync(join(tmpdir(), 'tycho-followup-files-'));
@@ -335,4 +336,77 @@ test('roundTurn emits single-line brief/followup prompts and snapshotFiles write
   t.after(() => rmSync(dir3, { recursive: true, force: true }));
   writeSnapshot(noInputsSnap, dir3);
   assert.equal(readdirSync(dir3).includes('followup.md'), false);
+});
+
+test('prepareSnapshot deduplicates native-synced skills from brief.md and snapshot/skills while keeping audit revisions', (t) => {
+  const f = fixture(t);
+  const task = f.ledger.createTask({ projectId: f.projectId, title: 'dedup', goal: 'g', roleId: 'implement' }, USER);
+  const syncedNamed = {
+    id: 'dir-engineering-architect',
+    revision: 101,
+    kind: 'skill' as const,
+    title: 'engineering-architect',
+    when_to_use: 'architecture planning',
+    body: '# FULL ARCH BODY SHOULD NOT BE INLINED WHEN NATIVE SYNCED\n'.repeat(20),
+    project_ids: null,
+    loading: 'on_demand' as const,
+    roles: [],
+    proposal_id: '',
+    published_by: 'directory',
+    published_at: '',
+    reviewed_at: null,
+    created_at: '',
+    state: 'active' as const,
+    retired_at: null,
+    retired_by: null,
+    retired_reason: null,
+    replaced_by: null,
+  };
+  const syncedCatalog = {
+    ...syncedNamed,
+    id: 'dir-playwright',
+    revision: 202,
+    title: 'playwright',
+    body: '# PLAYWRIGHT BODY SHOULD NOT BE IN SNAPSHOT\n',
+  };
+  const unsyncedSkill = {
+    ...syncedNamed,
+    id: 'dir-fallback-only',
+    revision: 303,
+    title: 'fallback-only',
+    body: '# FALLBACK BODY MUST BE PRESENT\n',
+  };
+  const limits = { entryBytes: 16_384, briefBytes: 32_768, snapshotBytes: 65_536, evidenceBytes: 16_384 };
+  const snap = prepareSnapshot(task, LOGIN, EXECUTORS, {
+    timeoutMs: RUN_LIMIT_MS,
+    knowledge: {
+      entries: [syncedNamed, syncedCatalog, unsyncedSkill],
+      projectName: 'demo',
+      limits,
+      named: ['dir-engineering-architect'],
+      nativeSyncedSkillIds: new Set(['dir-engineering-architect', 'dir-playwright']),
+    },
+  });
+
+  // Named native-synced skill renders concise pointer instead of full body.
+  assert.match(snap.brief, /## 指定技能/);
+  assert.match(snap.brief, /engineering-architect（dir-engineering-architect@101）：本技能已同步至本机执行器技能目录/);
+  assert.doesNotMatch(snap.brief, /FULL ARCH BODY SHOULD NOT BE INLINED/);
+
+  // Un-named native-synced skill is omitted from brief catalog and snapshot files, while unsynced falls back.
+  assert.doesNotMatch(snap.brief, /dir-playwright@202/);
+  assert.match(snap.brief, /dir-fallback-only@303/);
+
+  // Audit metadata preserves all revisions, but only unsynced skill carries snapshot file payload.
+  const given = snap.knowledge ?? [];
+  assert.deepEqual(given.map((g) => [g.id, g.revision, g.native_synced ?? false, g.path !== undefined]), [
+    ['dir-engineering-architect', 101, true, false],
+    ['dir-playwright', 202, true, false],
+    ['dir-fallback-only', 303, false, true],
+  ]);
+
+  const dir = mkdtempSync(join(tmpdir(), 'tycho-native-skills-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeSnapshot(snap, dir);
+  assert.deepEqual(readdirSync(join(dir, 'skills')), ['dir-fallback-only@303.md']);
 });

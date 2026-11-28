@@ -12,6 +12,91 @@ export type { LoginTelemetry, UsageReport };
 // Whose use it was: a Worker round, a Router context's turn, or a login read directly.
 export type UsageOwner = { run_id: string } | { context_id: string } | { login_id: string };
 
+// `codex exec resume` reports session-cumulative totals on `turn.completed.usage` rather than
+// per-round deltas. Subtract the sum of previously recorded rounds on the same `(task_id,
+// session_ref, model)` when every reported counter is at or above that cumulative baseline.
+// If a newer CLI starts reporting true per-round deltas smaller than the prior sum, the check
+// fails open and keeps the reported figure intact without clamping to zero.
+export function normalizeRunUsage(
+  db: Db,
+  run: { id: string; task_id: string; created_at: string; snapshot_json: string },
+  usage: readonly Usage[],
+  tierModel?: string,
+): Usage[] {
+  if (usage.length === 0) return [];
+  let executor: string | undefined;
+  let resumedSessionRef: string | undefined;
+  try {
+    const snap = JSON.parse(run.snapshot_json) as {
+      executor?: unknown;
+      login?: { executor?: unknown };
+      session_ref?: unknown;
+    };
+    const rawExec = typeof snap.executor === 'string' ? snap.executor : typeof snap.login?.executor === 'string' ? snap.login.executor : undefined;
+    executor = rawExec?.trim() || undefined;
+    if (typeof snap.session_ref === 'string' && snap.session_ref.trim() !== '') {
+      resumedSessionRef = snap.session_ref.trim();
+    }
+  } catch {
+    return [...usage];
+  }
+  if (executor !== 'codex' || resumedSessionRef === undefined) return [...usage];
+
+  return usage.map((each) => {
+    const targetModel = each.model ?? tierModel ?? null;
+    const prior = db.get<{
+      cnt: number;
+      inp: number;
+      outp: number;
+      cache_r: number;
+      cache_w: number;
+      cost: number;
+      cost_cnt: number;
+    }>(
+      `SELECT COUNT(*) AS cnt,
+              COALESCE(SUM(u.input_tokens), 0) AS inp,
+              COALESCE(SUM(u.output_tokens), 0) AS outp,
+              COALESCE(SUM(u.cache_read_tokens), 0) AS cache_r,
+              COALESCE(SUM(u.cache_write_tokens), 0) AS cache_w,
+              COALESCE(SUM(u.list_cost_usd), 0) AS cost,
+              COUNT(u.list_cost_usd) AS cost_cnt
+         FROM usage u
+         JOIN run r ON r.id = u.run_id
+        WHERE r.task_id = ?
+          AND (r.created_at < ? OR (r.created_at = ? AND r.id < ?))
+          AND (r.session_ref = ? OR json_extract(r.snapshot_json, '$.session_ref') = ?)
+          AND COALESCE(u.model, '') = COALESCE(?, '')
+          AND u.input_tokens IS NOT NULL`,
+      run.task_id,
+      run.created_at,
+      run.created_at,
+      run.id,
+      resumedSessionRef,
+      resumedSessionRef,
+      targetModel,
+    );
+    if (!prior || prior.cnt === 0) return each;
+    const isCumulative =
+      each.inputTokens >= prior.inp &&
+      each.outputTokens >= prior.outp &&
+      each.cacheReadTokens >= prior.cache_r &&
+      each.cacheWriteTokens >= prior.cache_w;
+    if (!isCumulative) return each;
+    const nextCost =
+      each.listCostUsd !== undefined && prior.cost_cnt > 0 && each.listCostUsd >= prior.cost
+        ? each.listCostUsd - prior.cost
+        : each.listCostUsd;
+    return {
+      ...each,
+      inputTokens: each.inputTokens - prior.inp,
+      outputTokens: each.outputTokens - prior.outp,
+      cacheReadTokens: each.cacheReadTokens - prior.cache_r,
+      cacheWriteTokens: each.cacheWriteTokens - prior.cache_w,
+      ...(nextCost === undefined ? {} : { listCostUsd: nextCost }),
+    };
+  });
+}
+
 // One row per model. A model the executor did not name is the one the round's tier asked for,
 // when there is one; recorded as such, never as the executor's word.
 export function insertUsage(db: Db, owner: UsageOwner, at: string, usage: readonly Usage[], tierModel?: string): void {
@@ -107,7 +192,7 @@ const UNITS = `
      AND (run.started_at IS NOT NULL OR EXISTS (SELECT 1 FROM usage WHERE usage.run_id = run.id))
   UNION ALL
   SELECT 'router', usage.context_id || '@' || usage.at, usage.at, router_context.project_id, NULL, NULL, NULL, NULL,
-         router_context.login_id, router_context.login_name, 'claude', 0, 0, 0
+         router_context.login_id, router_context.login_name, COALESCE(json_extract(router_context.launch_json, '$.executor'), 'claude'), 0, 0, 0
     FROM usage JOIN router_context ON router_context.id = usage.context_id
    WHERE usage.at >= ?1 AND usage.at < ?2
    GROUP BY usage.context_id, usage.at
@@ -165,7 +250,7 @@ export function usageReport(db: Db, query: UsageQuery): UsageReport {
             COALESCE(task.project_id, router_context.project_id) AS project_id,
             ${RUN_ROLE} AS role_id, ${RUN_TIER} AS tier,
             COALESCE(run.login_id, router_context.login_id, usage.login_id) AS login_id,
-            CASE WHEN usage.run_id IS NOT NULL THEN ${RUN_EXECUTOR} WHEN usage.context_id IS NOT NULL THEN 'claude' END AS executor,
+            CASE WHEN usage.run_id IS NOT NULL THEN ${RUN_EXECUTOR} WHEN usage.context_id IS NOT NULL THEN COALESCE(json_extract(router_context.launch_json, '$.executor'), 'claude') END AS executor,
             usage.model, usage.model_basis, COUNT(DISTINCT ${UNIT_OF_USAGE}) AS units, ${FIGURES}
        FROM usage
        LEFT JOIN run ON run.id = usage.run_id

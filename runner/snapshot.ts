@@ -802,7 +802,7 @@ function roundPrompt(snapshot: Snapshot): string {
     ? `（新增附带文件位于 ${MATERIALS_PLACEHOLDER}/project-files/）`
     : '';
   if (pending.length > 0 && !snapshot.resumed_definition_changed) {
-    return `请读 ${MATERIALS_PLACEHOLDER}/followup.md 中的后续指令继续当前任务${extras}，完成后在最后一条消息末尾附 \`\`\`receipt\`\`\` 回执（如需回传文件放 ${ARTIFACTS_PLACEHOLDER}/；完整任务背景见 ${MATERIALS_PLACEHOLDER}/brief.md）。`;
+    return `请读 ${MATERIALS_PLACEHOLDER}/followup.md 中的后续指令继续当前任务${extras}，完成后在最后一条消息末尾附 \`\`\`receipt\`\`\` 回执（如需回传文件放 ${ARTIFACTS_PLACEHOLDER}/）。`;
   }
   if (pending.length > 0 && snapshot.resumed_definition_changed) {
     return `任务定义已更新，请结合 ${MATERIALS_PLACEHOLDER}/brief.md 与 ${MATERIALS_PLACEHOLDER}/followup.md 中的新指令继续完成${extras}，末尾附 \`\`\`receipt\`\`\` 回执（如需回传文件放 ${ARTIFACTS_PLACEHOLDER}/）。`;
@@ -840,7 +840,13 @@ export function prepareSnapshot(
   executors: Executors,
   options: { history?: unknown[]; sessionRef?: string; resumedDefinitionChanged?: boolean; timeoutMs: number; modelIdleTimeoutMs?: number; checkSite?: CheckSite; source?: SnapshotSource; role?: RoleConfig;
     permission?: PermissionId;
-    knowledge?: { entries: readonly Entry[]; projectName: string; limits: KnowledgeLimits; named?: readonly string[] };
+    knowledge?: {
+      entries: readonly Entry[];
+      projectName: string;
+      limits: KnowledgeLimits;
+      named?: readonly string[];
+      nativeSyncedSkillIds?: ReadonlySet<string>;
+    };
     knowledgeTask?: KnowledgeTaskMaterial;
     spawn?: boolean;
     executorReport?: ReportedStatus | null;
@@ -874,7 +880,14 @@ export function prepareSnapshot(
     }
   }
   const fitted = options.knowledge
-    ? fitKnowledgeForRound(entries, options.knowledge.projectName, options.knowledge.limits, options.knowledgeTask, activeNamed)
+    ? fitKnowledgeForRound(
+        entries,
+        options.knowledge.projectName,
+        options.knowledge.limits,
+        options.knowledgeTask,
+        activeNamed,
+        options.knowledge.nativeSyncedSkillIds,
+      )
     : undefined;
   const missingSkillsNote = missingNamed.length === 0
     ? ''

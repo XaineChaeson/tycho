@@ -64,7 +64,7 @@ test('机器连上就按装了的执行器写入口，全局常驻知识变了�
   const client = createClient({
     dataDir: dir('node-data'), origin: base, token: claimed.state === 'approved' ? claimed.token : '', facts: factsOf(identityOf(dir('node-data')), 'entry-node'), log: () => {},
     executors: { questions: questionsFrom({ claude: claudeAdapter, codex: codexAdapter }), run },
-    entry: { env: nodeEnv },
+    entry: { env: nodeEnv, home: dir('node-home') },
   });
   void client.run(stop.signal).catch(() => {});
 

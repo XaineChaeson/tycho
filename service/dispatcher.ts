@@ -28,7 +28,9 @@ import { isDirectorySkillId } from '../shared/skill-catalog.ts';
 import { effectiveRouteOfLogin, slotForLogin, type TierDispatchSlots } from '../shared/dispatch-slots.ts';
 import { isTierId, type TierId } from '../shared/tiers.ts';
 import type { PlacedBy } from '../shared/tasks.ts';
-import type { NodeEntryReport } from '../shared/node-protocol.ts';
+import type { NodeEntryReport, NodeSkillsReport } from '../shared/node-protocol.ts';
+
+const NATIVE_SKILL_EXECUTORS = new Set(['codex', 'claude', 'gemini']);
 
 const TASK_PROJECT_FILES_LIMIT = 20;
 const TASK_PROJECT_FILES_BYTES_LIMIT = 10 * 1024 * 1024;
@@ -85,6 +87,7 @@ export interface DispatcherOptions {
   // Absent: nothing reported anywhere, and no read-only Task is placed.
   reported?: Reported;
   reportedEntry?: (machineId: string) => NodeEntryReport | null;
+  reportedSkills?: (machineId: string) => NodeSkillsReport | null;
   externalEntryEnabled?: () => boolean;
   // Whether a machine's own login of this executor is being made on it right now (service/
   // sign-ins.ts): that login takes no new work until the sign-in is over. Not a refusal of the
@@ -294,6 +297,18 @@ export function createDispatcher(options: DispatcherOptions) {
         }
       }
     }
+    const nativeSyncedSkillIds = new Set<string>();
+    if (NATIVE_SKILL_EXECUTORS.has(login.executor)) {
+      const synced = options.reportedSkills?.(machine.id)?.synced;
+      if (synced && synced.length > 0) {
+        const syncedSlugs = new Set(synced.map((slug) => (typeof slug === 'string' ? slug : '')));
+        for (const entry of knowledge) {
+          if (entry.kind === 'skill' && entry.loading === 'on_demand' && isDirectorySkillId(entry.id) && syncedSlugs.has(entry.id.slice(4))) {
+            nativeSyncedSkillIds.add(entry.id);
+          }
+        }
+      }
+    }
     return prepareSnapshot(task, login, executors, {
       history: runs.map(historyEntry),
       ...(sessionRef ? { sessionRef } : {}),
@@ -308,7 +323,13 @@ export function createDispatcher(options: DispatcherOptions) {
       // on, and its own configuration there, which the snapshot records.
       executorReport: reportOf(machine, login.executor),
       entryReport: options.reportedEntry?.(machine.id),
-      knowledge: { entries: knowledge, projectName: project?.name ?? '', limits: options.knowledgeLimits(), named: namedSkillsOf(task) },
+      knowledge: {
+        entries: knowledge,
+        projectName: project?.name ?? '',
+        limits: options.knowledgeLimits(),
+        named: namedSkillsOf(task),
+        ...(nativeSyncedSkillIds.size > 0 ? { nativeSyncedSkillIds } : {}),
+      },
       // The platform's way of spawning a machine, to a Task that has had a quota for one.
       spawn: ledger.hadInvite(task.id),
       // A gate or curation round is handed its material as files of its snapshot (§3, §5.3).

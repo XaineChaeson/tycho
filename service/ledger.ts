@@ -23,7 +23,7 @@ import { accountLabelOf, accountNameProblem, ACCOUNT_NAME_MAX_CHARS, LOGIN_ALIAS
 import type { NodeFacts, NodeSourceHead } from '../shared/node-protocol.ts';
 import { accessOf, sameConfig, loginConfig, machineConfig, inRange, machineAllowed } from '../runner/snapshot.ts';
 import type { Executors, ModelInfo, Provider, Tier, Usage } from '../adapters/types.ts';
-import { insertUsage, keepDroppedRuns, recentLoginTelemetry, usageReport, type LoginTelemetry, type UsageOwner, type UsageQuery, type UsageReport } from './usage.ts';
+import { insertUsage, keepDroppedRuns, normalizeRunUsage, recentLoginTelemetry, usageReport, type LoginTelemetry, type UsageOwner, type UsageQuery, type UsageReport } from './usage.ts';
 import { competenceReport, type CompetenceQuery } from './competence.ts';
 import type { CompetenceReport } from '../shared/competence.ts';
 import type { Ctx, DbHooks } from './db.ts';
@@ -1277,7 +1277,11 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
   }
   function materializePublished(): void {
     if (skillsDir === null || (options.readOnly ?? false)) return;
-    syncManagedSkills(skillsDir, knowledge.listEntries({ includeRetired: true }), (entryId, err) => {
+    // Only materialize ledger `skill` entries into `<dataDir>/skills/`; plain `knowledge`
+    // entries belong in brief/knowledge snapshots and global entry projections, not native
+    // executor skill directories.
+    const skillEntries = knowledge.listEntries({ includeRetired: true }).filter((entry) => entry.kind === 'skill');
+    syncManagedSkills(skillsDir, skillEntries, (entryId, err) => {
       (options.log ?? console.error)(`将条目 ${entryId} 物化到 skills 目录失败：${err instanceof Error ? err.message : String(err)}`);
     });
   }
@@ -1290,6 +1294,7 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
       onCommit(materializePublished);
     },
   });
+  materializePublished();
 
   function loadTask(id: string): TaskRow {
     const task = db.get<TaskRow>(`${TASK_SELECT} WHERE task.id = ?`, id);
@@ -5730,7 +5735,9 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
           // used was used all the same: a result that comes after the round was settled without
           // one (lost, then its machine came back) is the only report of it, kept at its end.
           if (opts.usage && opts.usage.length > 0 && !db.get('SELECT 1 FROM usage WHERE run_id = ?', runId)) {
-            insertUsage(db, { run_id: runId }, run.ended_at ?? nowIso(), opts.usage, tierModelOf(run.snapshot_json));
+            const tierModel = tierModelOf(run.snapshot_json);
+            const normalized = normalizeRunUsage(db, run, opts.usage, tierModel);
+            insertUsage(db, { run_id: runId }, run.ended_at ?? nowIso(), normalized, tierModel);
           }
           if (run.exit_kind === 'completed' && successfulInput !== null && run.settlement_digest === successfulInput) {
             return { late: true, reason: 'run_ended' };
@@ -5886,7 +5893,11 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
         );
         const receiptUsed = late === undefined && receiptWasUsed(exitCode, effectiveReceipt, stopIntent, opts);
         if (receiptUsed && opts.finalReply !== undefined && (plainProse || hasFinalMessageReport(effectiveReceipt))) saveRunReport(run, opts.finalReply, 'settlement');
-        if (opts.usage && opts.usage.length > 0) insertUsage(db, { run_id: runId }, endedAt, opts.usage, tierModelOf(run.snapshot_json));
+        if (opts.usage && opts.usage.length > 0) {
+          const tierModel = tierModelOf(run.snapshot_json);
+          const normalized = normalizeRunUsage(db, run, opts.usage, tierModel);
+          insertUsage(db, { run_id: runId }, endedAt, normalized, tierModel);
+        }
         // Only adopted receipts may apply destroyed_machines or propose knowledge —
         // stale, interrupted, or rejected runs must not mutate ephemeral machine state.
         if (receiptUsed) {

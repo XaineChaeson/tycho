@@ -498,7 +498,7 @@ export function createTools({ ledger, dataDir, github, runner, readReport, login
     description: TIERS.map((tier) => `${tier.id}（${tier.label}）`).join(' / '),
   };
   const ROLE_ID = described('可选：职能 id（见 list_roles，默认 implement）');
-  const SKILL_IDS: Schema = { type: 'array', items: STRING, description: '可选：指定随任务说明附带全文的技能编号列表；空数组清空' };
+  const SKILL_IDS: Schema = { type: 'array', items: STRING, description: '可选：点名本任务必须遵循的技能编号列表（已同步至目标机的技能只附轻量调用提示，不重复贴全文；空数组清空）' };
   const TIER_OVERRIDE: Schema = {
     ...object({ tier: TIER, reason: described('可选：覆盖原因') }, ['tier']),
     description: '可选：覆盖职能默认档位',
@@ -986,7 +986,7 @@ export function createTools({ ledger, dataDir, github, runner, readReport, login
       inputSchema: object(
         {
           task_id: STRING,
-          note: described('发给该任务线程的后续指令'),
+          note: described('发给该任务线程的增量后续指令（执行者已保留原会话与通用约束，只写本轮新决策、改动点或验收差异，勿重复首轮背景与环境规范）'),
           title: described('可选：阶段推进时更新任务标题（保留原会话不重置上下文）'),
           file_ids: { type: 'array', items: STRING, description: `可选：追加附带本项目文件（含新上传的截图/文档，最多 ${TASK_PROJECT_FILES_LIMIT} 个、总计 ${Math.floor(TASK_PROJECT_FILES_BYTES_LIMIT / (1024 * 1024))} MiB）写入续接快照 project-files/ 目录` },
           expected_revision: { type: 'integer', description: '可选：乐观锁修订号' },

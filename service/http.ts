@@ -3349,7 +3349,7 @@ export function createHttp(options: HttpOptions) {
       try {
         const registry = ledger.skillRegistry();
         const entryMachines = ledger.entryMachines();
-        const activeIds = ledger.listEntries().map((each) => each.id).sort();
+        const activeIds = ledger.listEntries().filter((each) => each.kind === 'skill').map((each) => each.id).sort();
         const skillsDir = ledger.skillsDirPath();
         const cacheKey = JSON.stringify([skillsDir, registry, entryMachines, activeIds]);
         const nowMs = options.now?.() ?? Date.now();
@@ -3516,7 +3516,7 @@ export function createHttp(options: HttpOptions) {
       skillsDir: ledger.skillsDirPath(),
       registry: ledger.skillRegistry(),
       entryMachines: ledger.entryMachines(),
-      activeLedgerIds: new Set(ledger.listEntries().map((each) => each.id)),
+      activeLedgerIds: new Set(ledger.listEntries().filter((each) => each.kind === 'skill').map((each) => each.id)),
       machineId: node.id,
       slug,
     });

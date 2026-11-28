@@ -223,10 +223,25 @@ export function writeCodexAuthHome(targetHome: string, authJson: string): void {
   try { chmodSync(authPath, 0o600); } catch { /* Windows mode bits ignored */ }
 }
 
-function normalizedConfigToml(text: string): string {
-  // Ensure a machine config that opted into OS keyring never overrides the leased auth.json.
-  if (!/^\s*cli_auth_credentials_store\s*=/m.test(text)) return text;
-  return text.replace(/^\s*cli_auth_credentials_store\s*=.*$/gm, 'cli_auth_credentials_store = "file"');
+export function normalizedConfigToml(text: string): string {
+  // Strip top-level `service_tier` (e.g. desktop `service_tier = "ultrafast"` / `"fast"`) so
+  // unattended background workers never silently inherit high-multiplier desktop speed tiers.
+  // Explicit tier overrides still apply via `-c service_tier=...` on the CLI.
+  // Also ensure a machine config that opted into OS keyring never overrides the leased auth.json.
+  const lines = text.split(/\r?\n/);
+  let inSection = false;
+  const out: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^\[/.test(trimmed)) inSection = true;
+    if (!inSection && /^\s*service_tier\s*=/.test(line)) continue;
+    if (/^\s*cli_auth_credentials_store\s*=/.test(line)) {
+      out.push('cli_auth_credentials_store = "file"');
+      continue;
+    }
+    out.push(line);
+  }
+  return out.join('\n');
 }
 
 function linkOrCopyDir(sourceDir: string, targetDir: string): void {

@@ -174,3 +174,77 @@ test('a deleted project keeps the rounds it counted and the time they took, incl
   });
   assert.equal(f.peek('SELECT 1 FROM usage WHERE run_id IS NOT NULL').length, 0);
 });
+
+test('resumed Codex rounds record per-round deltas from session-cumulative totals and fail open on non-cumulative reports', (t) => {
+  const f = fixture(t);
+  const task = f.queuedTask();
+  const codexLogin = { ...f.login, executor: 'codex' };
+  const makeSnap = (sessionRef?: string) => JSON.stringify({
+    brief: 'b',
+    executor: 'codex',
+    tier: 'decide',
+    tier_value: { kind: 'content', text: 'model=gpt-6.2-astra\n' },
+    timeout_ms: 60_000,
+    ...(sessionRef ? { session_ref: sessionRef } : {}),
+  });
+
+  // Round 1: cold start
+  const r1 = f.ledger.createRun(task.id, codexLogin, { actor: 'test' });
+  f.force('UPDATE run SET snapshot_json = ? WHERE id = ?', makeSnap(), r1.id);
+  f.ledger.settleRun(r1.id, 0, DONE, {
+    sessionRef: 'codex-thread-1',
+    usage: [{ inputTokens: 350_000, outputTokens: 38_000, cacheReadTokens: 19_000_000, cacheWriteTokens: 0 }],
+  });
+
+  // Round 2: resumed, Codex CLI reports cumulative totals (R1 + small delta)
+  f.ledger.continueTask(task.id, 'round 2', undefined, USER);
+  const r2 = f.ledger.createRun(task.id, codexLogin, { actor: 'test' });
+  f.force('UPDATE run SET snapshot_json = ? WHERE id = ?', makeSnap('codex-thread-1'), r2.id);
+  f.ledger.settleRun(r2.id, 0, DONE, {
+    sessionRef: 'codex-thread-1',
+    usage: [{ inputTokens: 410_000, outputTokens: 39_100, cacheReadTokens: 19_300_000, cacheWriteTokens: 0 }],
+  });
+
+  // Round 3: resumed again, Codex CLI reports cumulative totals (R1 + R2 + R3)
+  f.ledger.continueTask(task.id, 'round 3', undefined, USER);
+  const r3 = f.ledger.createRun(task.id, codexLogin, { actor: 'test' });
+  f.force('UPDATE run SET snapshot_json = ? WHERE id = ?', makeSnap('codex-thread-1'), r3.id);
+  f.ledger.settleRun(r3.id, 0, DONE, {
+    sessionRef: 'codex-thread-1',
+    usage: [{ inputTokens: 450_000, outputTokens: 48_100, cacheReadTokens: 23_300_000, cacheWriteTokens: 0 }],
+  });
+
+  // Round 4: future CLI reports true per-round delta (smaller than prior cumulative sum) -> kept as-is, never clamped to 0
+  f.ledger.continueTask(task.id, 'round 4', undefined, USER);
+  const r4 = f.ledger.createRun(task.id, codexLogin, { actor: 'test' });
+  f.force('UPDATE run SET snapshot_json = ? WHERE id = ?', makeSnap('codex-thread-1'), r4.id);
+  f.ledger.settleRun(r4.id, 0, DONE, {
+    sessionRef: 'codex-thread-1',
+    usage: [{ inputTokens: 12_000, outputTokens: 2_500, cacheReadTokens: 500_000, cacheWriteTokens: 0 }],
+  });
+
+  const rows = f.peek<{ run_id: string; input_tokens: number; output_tokens: number; cache_read_tokens: number }>(
+    'SELECT run_id, input_tokens, output_tokens, cache_read_tokens FROM usage ORDER BY rowid ASC',
+  );
+  assert.deepEqual(rows.map((r) => ({ ...r })), [
+    { run_id: r1.id, input_tokens: 350_000, output_tokens: 38_000, cache_read_tokens: 19_000_000 },
+    { run_id: r2.id, input_tokens: 60_000, output_tokens: 1_100, cache_read_tokens: 300_000 },
+    { run_id: r3.id, input_tokens: 40_000, output_tokens: 9_000, cache_read_tokens: 4_000_000 },
+    { run_id: r4.id, input_tokens: 12_000, output_tokens: 2_500, cache_read_tokens: 500_000 },
+  ]);
+
+  // Router usage attributes executor from launch_json instead of hardcoding claude.
+  const ctx = f.ledger.openContext({
+    projectId: f.projectId,
+    segmentId: f.ledger.ensureSegment(f.projectId).id,
+    marker: 'm-gemini',
+    launch: { executor: 'gemini' },
+    knowledge: [],
+  });
+  f.ledger.recordUsage({ context_id: ctx.id }, [figures('gemini-4-neon', 50)]);
+  const report = f.ledger.usageReport(DAY);
+  const routerUnit = report.units.find((cell) => cell.source === 'router');
+  assert.equal(routerUnit?.executor, 'gemini');
+  const routerUsage = report.usage.find((cell) => cell.source === 'router');
+  assert.equal(routerUsage?.executor, 'gemini');
+});

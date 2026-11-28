@@ -589,4 +589,44 @@ describe('buildEffectiveContext', () => {
     assert.ok(overReport.budget.over_limit !== null);
     assert.equal(overReport.budget.over_limit, expectedOver);
   });
+
+  test('ledger materializePublished only materializes kind=skill entries and prunes stale kind=knowledge skill dirs on startup', async (t) => {
+    const { openLedger } = await import('../service/ledger.ts');
+    const { create, OWNER, OWNER_SAYS } = await import('./knowledge-helpers.ts');
+    const root = makeTempDir(t);
+    const dbPath = join(root, 'ledger.db');
+    const skillsDir = join(root, 'skills');
+    mkdirSync(skillsDir, { recursive: true });
+
+    // Seed a legacy materialized directory belonging to a `kind='knowledge'` ledger entry.
+    let kId: string;
+    let sId: string;
+    const ledger1 = openLedger(dbPath);
+    try {
+      ledger1.propose(create({ title: 'Plain Project Knowledge', loading: 'resident' }), OWNER_SAYS, OWNER);
+      ledger1.propose(create({ title: 'Managed Release Skill', loading: 'on_demand' }, { kind: 'skill' }), OWNER_SAYS, OWNER);
+      const entries = ledger1.listEntries();
+      kId = entries.find((e) => e.kind === 'knowledge')!.id;
+      sId = entries.find((e) => e.kind === 'skill')!.id;
+      assert.deepEqual(readdirSync(skillsDir), ['managed-release-skill'], 'plain knowledge must never be materialized as SKILL.md');
+    } finally {
+      ledger1.close();
+    }
+
+    // Simulate a pre-upgrade stale managed directory for the knowledge entry and re-open ledger.
+    mkdirSync(join(skillsDir, 'stale-knowledge'), { recursive: true });
+    writeFileSync(
+      join(skillsDir, 'stale-knowledge', 'SKILL.md'),
+      `---\nname: "Plain Project Knowledge"\ndescription: "x"\n---\n<!-- tycho-ledger: ${kId}@1 -->\n\nBody\n`,
+      'utf8',
+    );
+
+    const ledger2 = openLedger(dbPath);
+    try {
+      assert.deepEqual(readdirSync(skillsDir), ['managed-release-skill'], 'startup sync must prune stale managed knowledge dirs while keeping managed skill dirs');
+      assert.match(readFileSync(join(skillsDir, 'managed-release-skill', 'SKILL.md'), 'utf8'), new RegExp(`tycho-ledger: ${sId}@1`));
+    } finally {
+      ledger2.close();
+    }
+  });
 });

@@ -1313,6 +1313,7 @@ export async function startService(options: ServiceOptions) {
       modelIdleTimeoutMs: () => settings.get('run.modelIdleTimeoutMs'),
       knowledgeLimits: () => knowledgeLimits(settings),
       reportedEntry: nodes.reportedEntry,
+      reportedSkills: nodes.reportedSkills,
       outputReady,
       externalEntryEnabled,
       log,

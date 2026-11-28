@@ -13,6 +13,7 @@ import {
   encodeCodexOAuth,
   encodeCodexOAuthLease,
   formatCodexAuthFile,
+  normalizedConfigToml,
   parseCodexAuthFile,
 } from '../adapters/codex-auth.ts';
 import { codexAdapter } from '../adapters/codex.ts';
@@ -426,4 +427,38 @@ test('Worker prepareCredential strips Tycho global knowledge projection from iso
   const scratchCoexist = join(f.dir, 'scratch-coexist');
   codexAdapter.prepareCredential!({ variable: 'CODEX_API_KEY', credential: lease, scratchDir: scratchCoexist, baseExecutorDir: baseCoexist });
   assert.equal(readFileSync(join(scratchCoexist, 'codex-home', 'AGENTS.md'), 'utf8'), '# My Personal Rule\n');
+});
+
+test('normalizedConfigToml and prepareCredential strip top-level desktop service_tier while keeping keyring rewrite and sections', (t) => {
+  const f = fixture(t);
+  const raw = [
+    'model = "gpt-6.2-astra"',
+    'model_reasoning_effort = "max"',
+    'service_tier = "ultrafast"',
+    'cli_auth_credentials_store = "keyring"',
+    'sandbox_mode = "danger-full-access"',
+    '',
+    '[desktop]',
+    'service_tier = "keep-nested"',
+    'followUpQueueMode = "steer"',
+    '',
+    '[plugins."browser@openai-bundled"]',
+    'enabled = true',
+  ].join('\r\n');
+  const cleaned = normalizedConfigToml(raw);
+  assert.doesNotMatch(cleaned, /^service_tier\s*=\s*"ultrafast"/m);
+  assert.match(cleaned, /^cli_auth_credentials_store = "file"$/m);
+  assert.match(cleaned, /\[desktop\]\nservice_tier = "keep-nested"/);
+  assert.match(cleaned, /\[plugins\."browser@openai-bundled"\]\nenabled = true/);
+
+  const baseDir = join(f.dir, 'base-service-tier');
+  mkdirSync(baseDir, { recursive: true });
+  writeFileSync(join(baseDir, 'config.toml'), raw, 'utf8');
+  const scratchDir = join(f.dir, 'scratch-service-tier');
+  const lease = encodeCodexOAuthLease(makeBundle({ expSec: 1_800_003_600, tag: 'st' }));
+  codexAdapter.prepareCredential!({ variable: 'CODEX_API_KEY', credential: lease, scratchDir, baseExecutorDir: baseDir });
+  const written = readFileSync(join(scratchDir, 'codex-home', 'config.toml'), 'utf8');
+  assert.doesNotMatch(written, /ultrafast/);
+  assert.match(written, /cli_auth_credentials_store = "file"/);
+  assert.match(written, /\[plugins\."browser@openai-bundled"\]/);
 });
