@@ -777,6 +777,10 @@ export interface Project {
   home?: ProjectHome | null;
   id: string;
   name: string;
+  // Optional single-group category for organizing projects in the sidebar and projects directory.
+  category?: string | null;
+  // True when pinned to the top of the project list.
+  pinned?: boolean;
   // Its code sources in order of preference; the first is the default (shared/sources.ts).
   // Empty is a project whose work runs in an empty task directory.
   sources: SourceView[];

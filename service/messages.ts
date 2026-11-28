@@ -129,6 +129,10 @@ export interface ProjectRow {
   // Null account inherits the service default. Null tier uses the selected executor's default.
   router_account: string | null;
   router_tier: string | null;
+  // Optional single-group category for organizing projects in the sidebar and projects directory.
+  category: string | null;
+  // 1 when pinned to the top of the project list.
+  pinned: number;
 }
 
 // What a project's messages and Tasks are held back by while it is put away: one condition,

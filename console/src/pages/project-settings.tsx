@@ -7,7 +7,7 @@
 // edited directly in place.
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, BookOpen, FolderGit2, MessageSquare, RotateCcw, Server, ShieldCheck } from 'lucide-react';
-import { useEffect, useState, type ComponentType, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ComponentType, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { loginName } from '@shared/logins.ts';
 import { sameDispatchSlotsConfig, type DispatchSlotsConfig, type TierDispatchSlots } from '@shared/dispatch-slots.ts';
@@ -31,7 +31,7 @@ import { useChange } from '@/hooks/use-change';
 import { useProjectFlag } from '@/hooks/use-project-flag';
 import { messageOf, put } from '@/lib/api';
 import { useI18n, type TranslationParams } from '@/lib/i18n';
-import { changed, draftOf, machinesGoneText, machinesMoved, projectBody, sameNames, withName, withoutName, withProject, type ProjectDraft } from '@/lib/projects';
+import { changed, draftOf, machinesGoneText, machinesMoved, projectBody, projectCategories, sameNames, withName, withoutName, withProject, type ProjectDraft } from '@/lib/projects';
 import { accountsQuery, projectsQuery } from '@/lib/queries';
 import { loginChoices } from '@/lib/logins';
 import type { AccountsAndMachines, Project } from '@/lib/types';
@@ -120,7 +120,10 @@ function dirtyTabsOf(
   }
   const baseline = draftOf(project);
   return {
-    basic: draft.name.trim() !== baseline.name || sourcesChanged(baseline.sources, draft.sources),
+    basic: draft.name.trim() !== baseline.name
+      || draft.category.trim() !== baseline.category.trim()
+      || draft.pinned !== baseline.pinned
+      || sourcesChanged(baseline.sources, draft.sources),
     router: baseline.router?.account !== draft.router?.account
       || baseline.router?.tier !== draft.router?.tier
       || !sameGrantSet(baseline.grants, draft.grants),
@@ -221,7 +224,10 @@ function LoginChoice({ login, checked, busy, readOnly = false, onToggle }: { log
 
 export function ProjectSettings({ project }: { project: Project }) {
   const { t } = useI18n();
+  const categoryListId = useId();
   const { data: options } = useQuery(accountsQuery);
+  const { data: allProjects } = useQuery(projectsQuery);
+  const existingCategories = projectCategories(allProjects ?? []);
   const navigate = useNavigate();
   const change = useChange<Project[]>({ mutationKey: CHANGE, queryKey: projectsQuery.queryKey, reread: true });
   // Null until something is edited: the page then shows the project as the service has it,
@@ -421,6 +427,40 @@ export function ProjectSettings({ project }: { project: Project }) {
             hint={t('proj.settings.nameHint')}
           >
             <Input aria-label={t('proj.form.nameLabel')} value={shown.name} disabled={saving} onChange={(event) => edit({ name: event.target.value })} />
+          </Setting>
+
+          <Setting
+            label={t('proj.settings.categorySectionAria', { name: project.name })}
+            title={t('proj.settings.categoryTitle')}
+            hint={t('proj.settings.categoryHint')}
+          >
+            <div className="grid gap-3">
+              <div>
+                <Input
+                  aria-label={t('proj.form.categoryLabel')}
+                  list={existingCategories.length > 0 ? categoryListId : undefined}
+                  placeholder={t('proj.form.categoryPlaceholder')}
+                  maxLength={40}
+                  value={shown.category}
+                  disabled={saving}
+                  onChange={(event) => edit({ category: event.target.value })}
+                />
+                {existingCategories.length > 0 ? (
+                  <datalist id={categoryListId}>
+                    {existingCategories.map((cat) => <option key={cat} value={cat} />)}
+                  </datalist>
+                ) : null}
+              </div>
+              <Choice>
+                <Switch
+                  aria-label={t('proj.settings.pinnedLabel')}
+                  checked={shown.pinned}
+                  disabled={saving}
+                  onCheckedChange={(pinned) => edit({ pinned })}
+                />
+                {t('proj.settings.pinnedLabel')}
+              </Choice>
+            </div>
           </Setting>
 
           <Setting

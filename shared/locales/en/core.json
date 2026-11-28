@@ -545,5 +545,20 @@
   "quote.collapse": "Collapse",
   "quote.trayFull": "Quote limit reached (max {max})",
   "tsk.release.packageChanged": "A newer release package was registered; review its version and digest and confirm again.",
-  "project.routerRestartScope": "Restarts the global Router host process (affects all projects' Router sessions)"
+  "project.routerRestartScope": "Restarts the global Router host process (affects all projects' Router sessions)",
+  "core.palette.endedWorkHistory": "Ended work history",
+  "core.palette.kwEndedWork": "history ended work archive",
+  "core.home.browseHistory": "Browse work history",
+  "nav.pinnedProjects": "Pinned",
+  "nav.uncategorizedProjects": "Uncategorized",
+  "nav.projectActions": "Quick actions for {name}",
+  "nav.pinProject": "Pin project",
+  "nav.unpinProject": "Unpin project",
+  "nav.moveCategory": "Move to group",
+  "nav.clearCategory": "Remove from group (Uncategorized)",
+  "nav.newCategoryAction": "New group…",
+  "nav.newCategoryTitle": "Assign project group",
+  "nav.newCategoryDesc": "Assign a single group name for \"{name}\"; leave blank for Uncategorized.",
+  "nav.categoryPlaceholder": "e.g. Core Engineering, Infra, Personal",
+  "nav.groupWaitingBadge": "{count} waiting"
 }

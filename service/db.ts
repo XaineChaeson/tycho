@@ -14,7 +14,7 @@ import { ulid } from './ids.ts';
 import { bindProjectHomeGuard } from './project-home-guard.ts';
 import { PROJECT_HOME_KEY_PREFIX, type ProjectHome, type ProjectOwnership } from './project-home.ts';
 
-export const SCHEMA_VERSION = 48;
+export const SCHEMA_VERSION = 49;
 // 42 adds admitted Router calls and links their committed business changes.
 // 41 is code sources (docs/design/code-sources.md; shared/sources.ts SOURCES_LEDGER_VERSION):
 // a project's repo/code_dir columns become an ordered sources list, and a Task is pinned to the
@@ -93,7 +93,9 @@ CREATE TABLE IF NOT EXISTS project (
   sources_json TEXT NOT NULL DEFAULT '[]',
   router_account TEXT,
   router_tier TEXT CHECK (router_tier IS NULL OR router_tier IN ('operate', 'execute', 'decide')),
-  dispatch_order_json TEXT
+  dispatch_order_json TEXT,
+  category TEXT,
+  pinned INTEGER NOT NULL DEFAULT 0
 );
 
 -- A knowledge gate or curation Task belongs to no project (docs/design/knowledge-and-skills.md §3).
@@ -2521,6 +2523,16 @@ DELETE FROM trigger_rule WHERE source = 'webhook';`);
       conn.exec('ALTER TABLE task ADD COLUMN machine_id TEXT');
     }
   },
+  48: (conn) => {
+    const hasColumn = (table: string, name: string): boolean =>
+      (conn.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((col) => col.name === name);
+    if (!hasColumn('project', 'category')) {
+      conn.exec('ALTER TABLE project ADD COLUMN category TEXT');
+    }
+    if (!hasColumn('project', 'pinned')) {
+      conn.exec('ALTER TABLE project ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
+    }
+  },
 };
 
 // The tables a ledger of each version cannot be without: what tells one from a file that
@@ -2628,6 +2640,9 @@ const LEDGER_TABLES: Record<number, readonly string[]> = {
     'knowledge', 'knowledge_proposal', 'knowledge_revision', 'knowledge_evidence', 'knowledge_client', 'router_segment', 'router_context', 'front_desk', 'push',
     'trigger_rule', 'trigger_fire', 'trigger_cursor', 'inbound_source', 'inbound_key', 'usage', 'work_cleanup', 'machine_login_refusal', 'router_call', 'router_exchange', 'router_template', 'inbound_receipt_reply', 'project_file', 'project_files_cleanup', 'im_group_binding', 'im_group_context'],
   48: [...V4_TABLES.filter((table) => table !== 'router_session' && table !== 'decision'), 'account', 'machine', 'machine_login', 'login_state', 'machine_invite', 'machine_material', 'role',
+    'knowledge', 'knowledge_proposal', 'knowledge_revision', 'knowledge_evidence', 'knowledge_client', 'router_segment', 'router_context', 'front_desk', 'push',
+    'trigger_rule', 'trigger_fire', 'trigger_cursor', 'inbound_source', 'inbound_key', 'usage', 'work_cleanup', 'machine_login_refusal', 'router_call', 'router_exchange', 'router_template', 'inbound_receipt_reply', 'project_file', 'project_files_cleanup', 'im_group_binding', 'im_group_context'],
+  49: [...V4_TABLES.filter((table) => table !== 'router_session' && table !== 'decision'), 'account', 'machine', 'machine_login', 'login_state', 'machine_invite', 'machine_material', 'role',
     'knowledge', 'knowledge_proposal', 'knowledge_revision', 'knowledge_evidence', 'knowledge_client', 'router_segment', 'router_context', 'front_desk', 'push',
     'trigger_rule', 'trigger_fire', 'trigger_cursor', 'inbound_source', 'inbound_key', 'usage', 'work_cleanup', 'machine_login_refusal', 'router_call', 'router_exchange', 'router_template', 'inbound_receipt_reply', 'project_file', 'project_files_cleanup', 'im_group_binding', 'im_group_context'],
 };

@@ -31,11 +31,11 @@ test('the side column leads to every place, and the one in view is marked', asyn
   const { user } = open('#/');
   await home();
   const links = (name: string) => within(screen.getByRole('navigation', { name })).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href'), link.getAttribute('aria-current')]);
-  expect(links('视图')).toEqual([['总览', '#/', 'page'], ['工作', '#/work', null], ['用量', '#/usage', null]]);
+  expect(links('视图')).toEqual([['总览', '#/', 'page'], ['用量', '#/usage', null]]);
   expect(links('配置')).toEqual([['知识', '#/knowledge', null], ['职能', '#/roles', null], ['账号', '#/accounts', null], ['机器', '#/machines', null], ['入站来源', '#/inbound', null], ['设置', '#/settings', null]]);
-  await user.click(within(screen.getByRole('navigation', { name: '视图' })).getByRole('link', { name: '工作' }));
-  expect(await screen.findByRole('heading', { level: 1, name: '工作' })).toBeInTheDocument();
-  expect(links('视图')).toEqual([['总览', '#/', null], ['工作', '#/work', 'page'], ['用量', '#/usage', null]]);
+  await user.click(within(screen.getByRole('navigation', { name: '视图' })).getByRole('link', { name: '用量' }));
+  expect(await screen.findByRole('heading', { level: 1, name: '用量' })).toBeInTheDocument();
+  expect(links('视图')).toEqual([['总览', '#/', null], ['用量', '#/usage', 'page']]);
 });
 
 test('the number beside 总览 is what waits for the owner: every task on a question, a stop or an acceptance, the ones under a work included', async () => {
@@ -125,7 +125,7 @@ test('Ctrl K opens one box that goes to any page, project or work', async () => 
   fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
   const palette = await screen.findByRole('dialog', { name: '搜索或跳转' });
   const options = () => within(palette).getAllByRole('option').map((option) => option.textContent);
-  await waitFor(() => expect(options()).toEqual(expect.arrayContaining(['总览', '工作', '知识', '职能', '账号', '机器', '入站来源', '设置', '新建项目'])));
+  await waitFor(() => expect(options()).toEqual(expect.arrayContaining(['总览', '历史工作档案', '用量', '知识', '职能', '账号', '机器', '入站来源', '设置', '新建项目'])));
   expect(options().some((text) => text?.startsWith('试跑'))).toBe(true);
   expect(options().some((text) => text?.startsWith('工作 w1'))).toBe(true);
   await user.type(within(palette).getByRole('combobox', { name: '搜索或跳转' }), '机器');
@@ -315,7 +315,7 @@ test('on a phone the menu takes the focus when it opens, shuts on Escape, and gi
   expect(menu).toHaveFocus();
   // Shut by choosing a page: what had the focus is gone from view, so the button has it.
   await user.click(menu);
-  await user.click(within(side()).getByRole('link', { name: '工作' }));
+  await user.click(within(side()).getByRole('link', { name: '用量' }));
   expect(side()).toHaveAttribute('data-open', 'false');
   await waitFor(() => expect(screen.getByRole('button', { name: '菜单' })).toHaveFocus());
   // Escape with the menu shut moves nothing.
@@ -567,4 +567,44 @@ test('sidebar shows only resumable completed threads when a project has no activ
   const schemeGroup = within(side()).getByRole('radiogroup', { name: '深浅色' });
   expect(schemeGroup.className).toContain('flex-nowrap');
   expect(schemeGroup.className).toContain('flex-none');
+});
+
+test('sidebar groups categorized projects into collapsible folders, keeps pinned on top, and surfaces waiting counts when folded', async () => {
+  localStorage.removeItem('tycho:sidebar-collapsed-categories:v1');
+  const calls: { method: string; path: string; body?: unknown }[] = [];
+  let list = [
+    project('p-pin', '核心置顶', { pinned: true, category: '基础设施' }),
+    project('p-infra', '集群告警', { category: '基础设施', waiting: 3 }),
+    project('p-misc', '日常杂项'),
+  ];
+  const { user } = open('#/', (call) => {
+    if (call.method === 'GET' && call.path === '/api/projects') return { projects: list };
+    if (call.method === 'PUT' && call.path === '/api/projects/p-misc') {
+      calls.push({ method: call.method, path: call.path, body: call.body });
+      list = list.map((each) => (each.id === 'p-misc' ? { ...each, ...(call.body as object) } : each));
+      return { project: list.find((each) => each.id === 'p-misc') };
+    }
+    return undefined;
+  });
+
+  const nav = await within(side()).findByRole('navigation', { name: '项目' });
+  const links = () => within(nav).getAllByRole('link').map((link) => link.getAttribute('href'));
+  await waitFor(() => expect(links()).toEqual(['#/projects', '#/projects/p-pin', '#/projects/p-infra', '#/projects/p-misc']));
+
+  // Collapse the 基础设施 category and verify the aggregate waiting badge is surfaced on the summary.
+  const infraSummary = within(nav).getByText('基础设施').closest('summary')!;
+  const infraDetails = infraSummary.closest('details')!;
+  expect(infraDetails).toHaveAttribute('open');
+  await user.click(infraSummary);
+  await waitFor(() => expect(infraDetails).not.toHaveAttribute('open'));
+  expect(within(infraSummary).getByLabelText('3 件待处理')).toHaveTextContent('3');
+
+  // Navigating to a project inside a collapsed group auto-reveals that folder.
+  await go('#/projects/p-infra');
+  await waitFor(() => expect(infraDetails).toHaveAttribute('open'));
+
+  // Quick menu allows moving an uncategorized project directly into an existing group.
+  await user.click(within(nav).getByRole('button', { name: '日常杂项 快捷操作' }));
+  await user.click(await screen.findByRole('menuitem', { name: '基础设施' }));
+  await waitFor(() => expect(calls).toEqual([{ method: 'PUT', path: '/api/projects/p-misc', body: { category: '基础设施' } }]));
 });

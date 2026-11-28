@@ -251,8 +251,11 @@ export function Palette({ open, onOpenChange, onNewProject }: { open: boolean; o
               {shown.length ? (
                 <CommandGroup heading={t('nav.projects')}>
                   {shown.map((project) => (
-                    <CommandItem key={project.id} value={`${t('core.palette.kwProject')} ${project.name} ${project.id}`} onSelect={go(`/projects/${encodeURIComponent(project.id)}`)}>
+                    <CommandItem key={project.id} value={`${t('core.palette.kwProject')} ${project.name} ${project.category ?? ''} ${project.id}`} onSelect={go(`/projects/${encodeURIComponent(project.id)}`)}>
                       <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                      {project.category ? (
+                        <span className="max-w-[28%] flex-none truncate rounded bg-muted px-1.5 py-0.5 text-2xs text-muted-foreground">{project.category}</span>
+                      ) : null}
                       <span className="text-xs text-faint">{t('nav.projectState', { paused: '', moving: project.moving, waiting: project.waiting })}</span>
                     </CommandItem>
                   ))}
@@ -261,8 +264,9 @@ export function Palette({ open, onOpenChange, onNewProject }: { open: boolean; o
               <CommandGroup heading={t('core.palette.pagesGroup')}>
                 {PLACES.map(({ to, titleKey, icon: Icon }) => {
                   const label = t(titleKey);
+                  const extra = to.startsWith('/work') ? ` ${t('core.palette.kwEndedWork')}` : '';
                   return (
-                    <CommandItem key={to} value={`${t('core.palette.kwPage')} ${label}`} onSelect={go(to)}><Icon aria-hidden="true" />{label}</CommandItem>
+                    <CommandItem key={to} value={`${t('core.palette.kwPage')} ${label}${extra}`} onSelect={go(to)}><Icon aria-hidden="true" />{label}</CommandItem>
                   );
                 })}
               </CommandGroup>

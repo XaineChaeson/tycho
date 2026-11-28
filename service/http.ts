@@ -2264,7 +2264,7 @@ export function createHttp(options: HttpOptions) {
 
   // A project as the console shows it: what it may run on, and how much of its work is
   // moving or waiting for the owner. The counts are of top-level work, as the overview's are.
-  function projectView({ id, name, spawn_machines, logins_json, login_mode, paused_at, archived_at, grants_json, router_account, router_tier }: ProjectRow) {
+  function projectView({ id, name, spawn_machines, logins_json, login_mode, paused_at, archived_at, grants_json, router_account, router_tier, category, pinned }: ProjectRow) {
     const own = ledger.listTasks({ projectId: id });
     const summarize = workSummaries(own, ledger.listApprovalCards());
     const topWorks = own
@@ -2277,6 +2277,8 @@ export function createHttp(options: HttpOptions) {
     return {
       id,
       name,
+      category: category ?? null,
+      pinned: pinned === 1,
       // Where its code comes from, in order, the first being the default; and the sources still
       // waiting for the owner to pick the machine the migration could not name.
       sources: sources.sources,
@@ -2343,11 +2345,15 @@ export function createHttp(options: HttpOptions) {
     const sources = body.sources;
     if (body.machines !== undefined && (!Array.isArray(body.machines) || body.machines.some((each: unknown) => typeof each !== 'string'))) throw new InputError('允许的机器要是一个登记号的清单');
     if (body.spawn_machines !== undefined && typeof body.spawn_machines !== 'boolean') throw new InputError('“允许派生机器”要是开或关');
+    if (body.category !== undefined && body.category !== null && typeof body.category !== 'string') throw new InputError('项目分类要是文字或 null');
+    if (body.pinned !== undefined && typeof body.pinned !== 'boolean') throw new InputError('置顶状态要是开或关');
     requireSteady('建项目');
     const id = ledger.createProject({
       name: body.name, loginMode: 'all', ...(sources === undefined ? {} : { sources }),
       ...(body.machines === undefined ? {} : { machines: body.machines as string[] }),
       ...(body.spawn_machines === true ? { spawnMachines: true } : {}),
+      ...(body.category !== undefined ? { category: body.category as string | null } : {}),
+      ...(body.pinned === true ? { pinned: true } : {}),
     }, { actor: CONSOLE_ACTOR });
     sendJson(response, 201, { project: await shownProject(ledger.getProject(id)) });
   }
@@ -2720,6 +2726,8 @@ export function createHttp(options: HttpOptions) {
     if (body.spawn_machines !== undefined && typeof body.spawn_machines !== 'boolean') throw new InputError('“允许派生机器”要是开或关');
     if (body.grants !== undefined && (!Array.isArray(body.grants) || !body.grants.every((each) => typeof each === 'string'))) throw new InputError('授权要是一组名字：grants');
     if (body.name !== undefined && typeof body.name !== 'string') throw new InputError('项目名要是文字');
+    if (body.category !== undefined && body.category !== null && typeof body.category !== 'string') throw new InputError('项目分类要是文字或 null');
+    if (body.pinned !== undefined && typeof body.pinned !== 'boolean') throw new InputError('置顶状态要是开或关');
     let router: { account: string | null; tier: string | null } | undefined;
     if (body.router !== undefined) {
       const raw = body.router;
@@ -2785,6 +2793,8 @@ export function createHttp(options: HttpOptions) {
     // called, so the tool and the console cannot come to different conclusions about it.
     ledger.transaction(() => {
       if (typeof body.name === 'string') ledger.setProjectName(id, body.name, { actor: CONSOLE_ACTOR });
+      if (Object.hasOwn(body, 'category') && body.category !== undefined) ledger.setProjectCategory(id, body.category as string | null, { actor: CONSOLE_ACTOR });
+      if (typeof body.pinned === 'boolean') ledger.setProjectPinned(id, body.pinned, { actor: CONSOLE_ACTOR });
       if (logins || loginMode) ledger.setProjectLogins(id, logins, { actor: CONSOLE_ACTOR }, loginMode);
       if (dispatchSlots !== undefined) ledger.setProjectDispatchSlots(id, dispatchSlots, { actor: CONSOLE_ACTOR });
       else if (dispatchOrder !== undefined) ledger.setProjectDispatchOrder(id, dispatchOrder, { actor: CONSOLE_ACTOR });
@@ -2796,6 +2806,16 @@ export function createHttp(options: HttpOptions) {
     });
     if (router) session.kick();
     sendJson(response, 200, { project: await shownProject(ledger.getProject(id)) });
+  }
+
+  async function renameProjectCategory(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const body = await readJson(request);
+    if (typeof body.from !== 'string' || body.from.trim() === '') throw new InputError('要说明原分类名：from');
+    if (body.to !== undefined && body.to !== null && typeof body.to !== 'string') throw new InputError('目标分类名要是文字或 null');
+    requireSteady('修改项目分类');
+    const updated = ledger.renameProjectCategory(body.from, (body.to ?? null) as string | null, { actor: CONSOLE_ACTOR });
+    const projects = await Promise.all(ledger.listProjects().map(shownProject));
+    sendJson(response, 200, { updated, projects });
   }
 
   function accountId(encoded: string): string {
@@ -4482,6 +4502,7 @@ export function createHttp(options: HttpOptions) {
     },
     { method: 'GET', path: '/api/projects', outside: true, handle: async ({ response }) => sendJson(response, 200, { projects: await Promise.all(ledger.listProjects().map(shownProject)) }) },
     { method: 'POST', path: '/api/projects', outside: true, handle: ({ request, response }) => createProject(request, response) },
+    { method: 'POST', path: '/api/projects/categories/rename', outside: true, handle: ({ request, response }) => renameProjectCategory(request, response) },
     {
       method: 'GET', path: '/api/projects/:id/history-evidence', outside: true, handle: ({ response, params: [id], url }) => {
         ledger.getProject(id!);

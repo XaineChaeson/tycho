@@ -208,6 +208,7 @@ test('what the internet can reach is this list: a route joins it by a decision, 
     'GET /api/projects',
     // Making a project, and its conversation (project-sessions §5, §1).
     'POST /api/projects',
+    'POST /api/projects/categories/rename',
     'GET /api/projects/:id/conversation',
     'GET /api/projects/:id/files',
     'POST /api/projects/:id/files',

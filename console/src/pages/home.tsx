@@ -3,7 +3,7 @@
 // project; beside it, what is moving and what just ended; and under that the few things
 // about the service itself that are the owner's to look after.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Activity, CircleCheck, CircleHelp, PackageCheck, Pause, Play } from 'lucide-react';
+import { Activity, CircleCheck, CircleHelp, History, PackageCheck, Pause, Play } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
 import { ACTION_TEXT, eventHeadline, exitKindLabels as EXIT_TEXT, missingLoginText, restoreHeadline, runStateLabels, runTime, taskLine } from '@shared/labels.ts';
@@ -698,7 +698,20 @@ export function HomePage() {
   const { data: projects } = useQuery(projectsQuery);
   const waiting = useQuery({ queryKey: [PAGE, 'unassigned'], queryFn: async () => (await api<{ messages: Message[] }>('/api/messages/unassigned')).messages });
   return (
-    <Page title={t('home.title')} width="wide" loading={isPending} failure={error?.message}>
+    <Page
+      title={t('home.title')}
+      width="wide"
+      loading={isPending}
+      failure={error?.message}
+      actions={(
+        <Button variant="ghost" size="sm" asChild>
+          <Link to="/work?show=ended" className="no-underline">
+            <History aria-hidden="true" />
+            <span>{t('core.home.browseHistory')}</span>
+          </Link>
+        </Button>
+      )}
+    >
       {overview ? (
         <HomeBody
           overview={overview}

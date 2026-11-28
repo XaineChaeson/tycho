@@ -645,3 +645,36 @@ test('deleting a project cleans up pending outbox rows referencing its deleted r
   assert.equal(remaining.includes('del-assign'), false);
   assert.equal(remaining.includes('keep-md'), true, '其他项目的待发通知不受影响');
 });
+
+test('project single-category grouping, pinning, validation, and atomic category rename/dissolve persist cleanly', (t) => {
+  const f = fixture(t);
+  const p1 = f.ledger.createProject({ name: '网关', category: '  基础设施  ', pinned: true }, USER);
+  const p2 = f.ledger.createProject({ name: '监控', category: '基础设施' }, USER);
+  const p3 = f.ledger.createProject({ name: '杂项' }, USER);
+
+  assert.equal(f.ledger.getProject(p1).category, '基础设施');
+  assert.equal(f.ledger.getProject(p1).pinned, 1);
+  assert.equal(f.ledger.getProject(p2).category, '基础设施');
+  assert.equal(f.ledger.getProject(p2).pinned, 0);
+  assert.equal(f.ledger.getProject(p3).category, null);
+
+  // Validation rejects control chars and overly long category names.
+  assert.throws(() => f.ledger.setProjectCategory(p3, 'a\nb', USER), InputError);
+  assert.throws(() => f.ledger.setProjectCategory(p3, 'a'.repeat(41), USER), InputError);
+
+  // Atomic rename updates every project in that category.
+  assert.equal(f.ledger.renameProjectCategory('基础设施', '集群运维', USER), 2);
+  assert.equal(f.ledger.getProject(p1).category, '集群运维');
+  assert.equal(f.ledger.getProject(p2).category, '集群运维');
+
+  // Dissolving clears matching projects back to null without deleting them.
+  assert.equal(f.ledger.renameProjectCategory('集群运维', null, USER), 2);
+  assert.equal(f.ledger.getProject(p1).category, null);
+  assert.equal(f.ledger.getProject(p2).category, null);
+
+  // Toggling pin records only when changed.
+  f.ledger.setProjectPinned(p1, false, USER);
+  f.ledger.setProjectPinned(p1, false, USER);
+  assert.equal(f.ledger.getProject(p1).pinned, 0);
+  assert.equal(f.peek(`SELECT 1 FROM change WHERE action = 'project.pin'`).length, 1);
+});

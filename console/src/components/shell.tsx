@@ -2,14 +2,14 @@
 // the banners that say the service is not in its normal state, and one place for an
 // action's failure.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Languages, Monitor, Moon, Pause, Plus, Search, Settings2, Sun, X } from 'lucide-react';
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Check, ChevronRight, Ellipsis, FolderInput, FolderPlus, Languages, Monitor, Moon, Pause, Pin, PinOff, Plus, Search, Settings2, Sun, X } from 'lucide-react';
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router';
 import { bannerNotes, PROJECT_PAUSED_LABEL, restoreHeadline, WORK_GROUPS, workGroup, type BannerNote } from '@shared/labels.ts';
 import { formatTime, fullTime } from '@shared/time.ts';
 import { AccountQuotaPopover } from '@/components/account-quota-popover';
 import { Admit } from '@/components/admit';
-import { Dot, HashLink, ProjectMark, StatusDot } from '@/components/bits';
+import { Dot, Field, HashLink, Problem, ProjectMark, StatusDot } from '@/components/bits';
 import { DeviceLogin } from '@/components/device-login';
 import { ConsoleVersionNotice } from '@/components/console-version-notice';
 import { Health, LastHeard } from '@/components/health';
@@ -20,12 +20,14 @@ import { Palette } from '@/components/palette';
 import { formatAssignmentSummary } from '@/components/task-identity-strip';
 import { ThemeSkinPicker } from '@/components/theme-skin-picker';
 import { Button } from '@/components/ui/button';
-import { Menu, MenuContent, MenuItem, MenuTrigger, Tooltip } from '@/components/ui/menu';
+import { Dialog, DialogActions, DialogContent } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger, Tooltip } from '@/components/ui/menu';
 import { Segmented } from '@/components/ui/segmented';
 import { messageOf, post, put } from '@/lib/api';
 import { syncDirectoryLocalePacks, useI18n } from '@/lib/i18n';
 import { useLive, useLiveState } from '@/lib/live-context';
-import { activeProjects, archivedProjectIds } from '@/lib/projects';
+import { activeProjects, archivedProjectIds, groupActiveProjects, projectCategories, withProject } from '@/lib/projects';
 import { PAGE, overviewQuery, projectsQuery, stateQuery, tasksQuery } from '@/lib/queries';
 import { readTheme, saveTheme, syncDirectoryThemePacks, THEME_CHOICES, type ThemeChoice } from '@/lib/theme';
 import type { Project, ServiceState, Task } from '@/lib/types';
@@ -150,9 +152,32 @@ function PlaceLink({ place: { to, titleKey, icon: Icon }, count, countLabel, sub
   );
 }
 
+const COLLAPSED_CATEGORIES_STORAGE_KEY = 'tycho:sidebar-collapsed-categories:v1';
+const UNCATEGORIZED_KEY = '__uncategorized__';
+
+function readCollapsedCategories(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_CATEGORIES_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((each): each is string => typeof each === 'string'));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedCategories(next: ReadonlySet<string>): void {
+  try {
+    localStorage.setItem(COLLAPSED_CATEGORIES_STORAGE_KEY, JSON.stringify([...next]));
+  } catch {
+    // Ignore storage quota or private-mode errors.
+  }
+}
+
 // A project in the side column: its name, and at a glance whether something of it waits
 // for the owner (amber, with how many) or is moving (blue); a paused one is muted, with a mark.
-function ProjectLink({ project, onNavigate }: { project: Project; onNavigate: () => void }) {
+function ProjectLink({ project, onNavigate, showPin }: { project: Project; onNavigate: () => void; showPin?: boolean }) {
   const { t } = useI18n();
   const paused = project.paused_at != null;
   const state = t('nav.projectState', {
@@ -161,14 +186,146 @@ function ProjectLink({ project, onNavigate }: { project: Project; onNavigate: ()
     waiting: project.waiting,
   });
   return (
-    <NavLink to={`/projects/${encodeURIComponent(project.id)}`} onClick={onNavigate} title={state} className={SIDE_ITEM}>
+    <NavLink to={`/projects/${encodeURIComponent(project.id)}`} onClick={onNavigate} title={state} className={cn(SIDE_ITEM, 'flex-1')}>
       <ProjectMark name={project.name} className="-ml-0.5" />
       <span className={cn('min-w-0 flex-1 truncate', paused && 'text-muted-foreground')}>{project.name}</span>
+      {showPin && project.pinned ? <Pin aria-hidden="true" className="size-3 flex-none text-faint" /> : null}
       {paused ? <Pause aria-label={PROJECT_PAUSED_LABEL} className="size-3.5 flex-none text-muted-foreground" /> : null}
       {project.moving ? <Dot tone="running" className="size-1.5" /> : null}
       {project.waiting ? <span className="rounded-full bg-waiting-soft px-1.5 text-xs leading-[18px] font-semibold text-waiting-foreground tabular-nums">{project.waiting}</span> : null}
       <span className="sr-only">{state}</span>
     </NavLink>
+  );
+}
+
+function ProjectQuickMenu({
+  project,
+  categories,
+  onPatch,
+  onOpenNewCategory,
+}: {
+  project: Project;
+  categories: readonly string[];
+  onPatch: (project: Project, body: Record<string, unknown>) => Promise<void>;
+  onOpenNewCategory: (project: Project) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <Menu>
+      <MenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t('nav.projectActions', { name: project.name })}
+          className="size-6 min-h-6 min-w-6 flex-none text-muted-foreground opacity-0 transition-opacity duration-100 group-hover/proj:opacity-100 group-focus-within/proj:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+        >
+          <Ellipsis className="size-3.5" aria-hidden="true" />
+        </Button>
+      </MenuTrigger>
+      <MenuContent align="end" side="right" className="min-w-48">
+        <MenuItem onSelect={() => void onPatch(project, { pinned: !project.pinned })}>
+          {project.pinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+          <span>{project.pinned ? t('nav.unpinProject') : t('nav.pinProject')}</span>
+        </MenuItem>
+        <MenuSeparator />
+        <MenuLabel>{t('nav.moveCategory')}</MenuLabel>
+        {categories.map((cat) => {
+          const active = project.category === cat;
+          return (
+            <MenuItem key={cat} onSelect={() => void onPatch(project, { category: cat })}>
+              <Check className={cn('size-3.5 flex-none', active ? 'opacity-100 text-primary' : 'opacity-0')} aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">{cat}</span>
+            </MenuItem>
+          );
+        })}
+        {project.category ? (
+          <MenuItem onSelect={() => void onPatch(project, { category: null })}>
+            <FolderInput aria-hidden="true" />
+            <span>{t('nav.clearCategory')}</span>
+          </MenuItem>
+        ) : null}
+        <MenuItem onSelect={() => onOpenNewCategory(project)}>
+          <FolderPlus aria-hidden="true" />
+          <span>{t('nav.newCategoryAction')}</span>
+        </MenuItem>
+      </MenuContent>
+    </Menu>
+  );
+}
+
+function AssignCategoryDialog({
+  project,
+  categories,
+  onClose,
+  onSave,
+}: {
+  project: Project | null;
+  categories: readonly string[];
+  onClose: () => void;
+  onSave: (project: Project, category: string | null) => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const listId = useId();
+  const [value, setValue] = useState(project?.category ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setValue(project?.category ?? '');
+    setError(null);
+    setSaving(false);
+  }, [project]);
+
+  async function submit(): Promise<void> {
+    if (!project) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = value.trim() === '' ? null : value.trim();
+      await onSave(project, next);
+      onClose();
+    } catch (err) {
+      setError(messageOf(err));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={project !== null} onOpenChange={(open) => { if (!open && !saving) onClose(); }}>
+      {project ? (
+        <DialogContent
+          title={t('nav.newCategoryTitle')}
+          description={t('nav.newCategoryDesc', { name: project.name })}
+        >
+          <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+            <Field label={t('proj.form.categoryLabel')} htmlFor="assign-project-category">
+              <Input
+                id="assign-project-category"
+                aria-label={t('proj.form.categoryLabel')}
+                autoFocus
+                maxLength={40}
+                list={categories.length > 0 ? listId : undefined}
+                placeholder={t('nav.categoryPlaceholder')}
+                value={value}
+                disabled={saving}
+                onChange={(event) => setValue(event.target.value)}
+              />
+              {categories.length > 0 ? (
+                <datalist id={listId}>
+                  {categories.map((cat) => <option key={cat} value={cat} />)}
+                </datalist>
+              ) : null}
+            </Field>
+            {error ? <Problem role="alert">{error}</Problem> : null}
+            <DialogActions>
+              <Button type="button" variant="ghost" disabled={saving} onClick={onClose}>{t('common.cancel')}</Button>
+              <Button type="submit" variant="primary" disabled={saving}>{saving ? t('proj.settings.saving') : t('common.save')}</Button>
+            </DialogActions>
+          </form>
+        </DialogContent>
+      ) : null}
+    </Dialog>
   );
 }
 
@@ -342,12 +499,17 @@ export function Shell() {
       if (service.locale !== locale) setLocale(service.locale);
     }
   }, [service?.locale, locale, setLocale]);
+  const client = useQueryClient();
   // Only the ones in sight: an archived project is in its own list on the projects page.
   const shownProjects = activeProjects(projects ?? []);
+  const groupedProjects = useMemo(() => groupActiveProjects(projects ?? []), [projects]);
+  const allCategories = useMemo(() => projectCategories(projects ?? []), [projects]);
   const archivedCount = (projects ?? []).filter((project) => project.archived_at != null).length;
   const [menu, setMenu] = useState(false);
   const [palette, setPalette] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [assigningCategoryFor, setAssigningCategoryFor] = useState<Project | null>(null);
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(readCollapsedCategories);
   const menuButton = useRef<HTMLButtonElement>(null);
   const side = useRef<HTMLElement>(null);
   const wasOpen = useRef(false);
@@ -423,6 +585,120 @@ export function Shell() {
   const activeThreadId = useMemo(() => new URLSearchParams(location.search).get('thread'), [location.search]);
   const shut = (): void => setMenu(false);
 
+  const patchProject = async (target: Project, body: Record<string, unknown>): Promise<void> => {
+    try {
+      const { project: saved } = await put<{ project: Project }>(`/api/projects/${encodeURIComponent(target.id)}`, body);
+      client.setQueryData<Project[]>(projectsQuery.queryKey, (prev) => withProject(prev ?? [], saved));
+      void client.invalidateQueries({ queryKey: projectsQuery.queryKey });
+    } catch (err) {
+      live.showError(messageOf(err));
+      throw err;
+    }
+  };
+
+  const setCategoryExpanded = (groupKey: string, open: boolean): void => {
+    setCollapsedCategories((prev) => {
+      const currentlyOpen = !prev.has(groupKey);
+      if (currentlyOpen === open) return prev;
+      const next = new Set(prev);
+      if (open) next.delete(groupKey);
+      else next.add(groupKey);
+      saveCollapsedCategories(next);
+      return next;
+    });
+  };
+
+  const isProjectRoute = (projectId: string): boolean => {
+    const projectBase = `/projects/${encodeURIComponent(projectId)}`;
+    return location.pathname === projectBase || location.pathname.startsWith(`${projectBase}/`);
+  };
+
+  const renderProjectEntry = (project: Project, showPin = false) => {
+    const projectBase = `/projects/${encodeURIComponent(project.id)}`;
+    const isCurrentProject = isProjectRoute(project.id);
+    const threads = isCurrentProject ? projectSidebarThreads(listing?.tasks, project.id) : [];
+    return (
+      <Fragment key={project.id}>
+        <div className="group/proj flex min-w-0 items-center gap-0.5">
+          <ProjectLink project={project} onNavigate={shut} showPin={showPin} />
+          <ProjectQuickMenu
+            project={project}
+            categories={allCategories}
+            onPatch={patchProject}
+            onOpenNewCategory={(target) => { shut(); setAssigningCategoryFor(target); }}
+          />
+        </div>
+        {threads.length > 0 ? (
+          <div className="ml-4 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-0.5 border-l border-border/70 py-0.5 pl-2">
+            {threads.map((task) => {
+              const active = activeThreadId === task.id;
+              const identity = formatAssignmentSummary(task.assignment, { showLiveLabel: true });
+              const tooltip = identity ? `${task.title} · ${identity}` : task.title;
+              return (
+                <Link
+                  key={task.id}
+                  to={`${projectBase}?thread=${encodeURIComponent(task.id)}`}
+                  onClick={shut}
+                  aria-current={active ? 'true' : undefined}
+                  title={tooltip}
+                  className={cn(
+                    'flex min-h-7 min-w-0 max-w-full items-center gap-1.5 overflow-hidden rounded-md px-1.5 text-xs text-muted-foreground no-underline transition-colors duration-100',
+                    'hover:bg-hover hover:text-foreground focus-visible:-outline-offset-2',
+                    active && 'bg-raised font-medium text-foreground shadow-card',
+                  )}
+                >
+                  <StatusDot state={task.summary?.dot ?? task.state} className="size-3.5" />
+                  <span className="min-w-0 flex-1 truncate">{task.title}</span>
+                </Link>
+              );
+            })}
+          </div>
+        ) : null}
+      </Fragment>
+    );
+  };
+
+  const renderCategoryFolder = (groupKey: string, label: string, list: readonly Project[]) => {
+    const hasCurrent = list.some((project) => isProjectRoute(project.id));
+    const isOpen = hasCurrent || !collapsedCategories.has(groupKey);
+    const groupWaiting = list.reduce((sum, project) => sum + project.waiting, 0);
+    const groupMoving = list.some((project) => project.moving > 0);
+    return (
+      <details
+        key={groupKey}
+        open={isOpen}
+        onToggle={(event) => {
+          const nextOpen = event.currentTarget.open;
+          if (!nextOpen && hasCurrent) return;
+          setCategoryExpanded(groupKey, nextOpen);
+        }}
+        className="group/cat grid min-w-0 grid-cols-[minmax(0,1fr)]"
+      >
+        <summary className="flex min-h-7 cursor-pointer list-none items-center gap-1 rounded-md px-1.5 text-xs font-medium text-muted-foreground select-none hover:bg-hover hover:text-foreground focus-visible:-outline-offset-2 [&::-webkit-details-marker]:hidden">
+          <ChevronRight
+            aria-hidden="true"
+            className="size-3.5 flex-none text-faint motion-safe:transition-transform duration-150 group-open/cat:rotate-90"
+          />
+          <span className="min-w-0 flex-1 truncate">{label}</span>
+          {!isOpen && groupMoving ? <Dot tone="running" className="size-1.5" /> : null}
+          {!isOpen && groupWaiting > 0 ? (
+            <span
+              aria-label={t('nav.groupWaitingBadge', { count: groupWaiting })}
+              className="rounded-full bg-waiting-soft px-1.5 text-2xs leading-4 font-semibold text-waiting-foreground tabular-nums"
+            >
+              {groupWaiting}
+            </span>
+          ) : (
+            <span className="text-2xs text-faint tabular-nums">{list.length}</span>
+          )}
+        </summary>
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px pt-0.5 pl-1.5">
+          {list.map((project) => renderProjectEntry(project))}
+        </div>
+      </details>
+    );
+  };
+
   return (
     <div
       className="flex h-(--app-height,100dvh)"
@@ -461,42 +737,26 @@ export function Shell() {
                 <Button variant="ghost" size="icon-sm" aria-label={t('nav.newProject')} className="size-6 min-h-0" onClick={() => { shut(); setCreating(true); }}><Plus className="size-3.5" /></Button>
               </Tooltip>
             </div>
-            {shownProjects.map((project) => {
-              const projectBase = `/projects/${encodeURIComponent(project.id)}`;
-              const isCurrentProject = location.pathname === projectBase || location.pathname.startsWith(`${projectBase}/`);
-              const threads = isCurrentProject ? projectSidebarThreads(listing?.tasks, project.id) : [];
-              return (
-                <Fragment key={project.id}>
-                  <ProjectLink project={project} onNavigate={shut} />
-                  {threads.length > 0 ? (
-                    <div className="ml-4 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-0.5 border-l border-border/70 py-0.5 pl-2">
-                      {threads.map((task) => {
-                        const active = activeThreadId === task.id;
-                        const identity = formatAssignmentSummary(task.assignment, { showLiveLabel: true });
-                        const tooltip = identity ? `${task.title} · ${identity}` : task.title;
-                        return (
-                          <Link
-                            key={task.id}
-                            to={`${projectBase}?thread=${encodeURIComponent(task.id)}`}
-                            onClick={shut}
-                            aria-current={active ? 'true' : undefined}
-                            title={tooltip}
-                            className={cn(
-                              'flex min-h-7 min-w-0 max-w-full items-center gap-1.5 overflow-hidden rounded-md px-1.5 text-xs text-muted-foreground no-underline transition-colors duration-100',
-                              'hover:bg-hover hover:text-foreground focus-visible:-outline-offset-2',
-                              active && 'bg-raised font-medium text-foreground shadow-card',
-                            )}
-                          >
-                            <StatusDot state={task.summary?.dot ?? task.state} className="size-3.5" />
-                            <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                          </Link>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </Fragment>
-              );
-            })}
+            {groupedProjects.hasOrganization ? (
+              <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-1.5">
+                {groupedProjects.pinned.length > 0 ? (
+                  <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px">
+                    {groupedProjects.pinned.map((project) => renderProjectEntry(project, true))}
+                  </div>
+                ) : null}
+                {groupedProjects.groups.map(({ category, projects: list }) =>
+                  renderCategoryFolder(`cat:${category}`, category, list))}
+                {groupedProjects.uncategorized.length > 0 ? (
+                  groupedProjects.groups.length > 0
+                    ? renderCategoryFolder(UNCATEGORIZED_KEY, t('nav.uncategorizedProjects'), groupedProjects.uncategorized)
+                    : (
+                      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px">
+                        {groupedProjects.uncategorized.map((project) => renderProjectEntry(project))}
+                      </div>
+                    )
+                ) : null}
+              </div>
+            ) : shownProjects.map((project) => renderProjectEntry(project))}
             {archivedCount > 0 && shownProjects.length > 0 ? (
               <Link
                 to="/projects#archived"
@@ -583,6 +843,12 @@ export function Shell() {
 
       <Palette open={palette} onOpenChange={setPalette} onNewProject={() => setCreating(true)} />
       <NewProjectDialog open={creating} onOpenChange={setCreating} />
+      <AssignCategoryDialog
+        project={assigningCategoryFor}
+        categories={allCategories}
+        onClose={() => setAssigningCategoryFor(null)}
+        onSave={async (target, category) => { await patchProject(target, { category }); }}
+      />
     </div>
   );
 }

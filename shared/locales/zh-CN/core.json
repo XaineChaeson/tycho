@@ -545,5 +545,20 @@
   "quote.collapse": "收起",
   "quote.trayFull": "引用已达上限（最多 {max} 条）",
   "tsk.release.packageChanged": "新发布包已登记，请核对新版本与摘要后重新确认。",
-  "project.routerRestartScope": "重启全局负责人进程（将影响全部项目的负责人连接）"
+  "project.routerRestartScope": "重启全局负责人进程（将影响全部项目的负责人连接）",
+  "core.palette.endedWorkHistory": "历史工作档案",
+  "core.palette.kwEndedWork": "历史 已结束 工作 归档",
+  "core.home.browseHistory": "查看历史工作",
+  "nav.pinnedProjects": "置顶",
+  "nav.uncategorizedProjects": "未分类",
+  "nav.projectActions": "{name} 快捷操作",
+  "nav.pinProject": "置顶项目",
+  "nav.unpinProject": "取消置顶",
+  "nav.moveCategory": "移动分组",
+  "nav.clearCategory": "移出分组（未分类）",
+  "nav.newCategoryAction": "新建分组…",
+  "nav.newCategoryTitle": "设置项目分组",
+  "nav.newCategoryDesc": "为「{name}」指定单一分组名；留空即归入未分类。",
+  "nav.categoryPlaceholder": "例如：核心研发、集群运维、日常杂项",
+  "nav.groupWaitingBadge": "{count} 件待处理"
 }

@@ -31,7 +31,7 @@ const account = (id: string) => ({ id, name: id, executor: 'claude', credential:
 const repo = (id: string, url: string) => ({ id, kind: 'repo', url, default: false, label: `仓库 ${url}` });
 const folder = (id: string, machine: string, path: string) => ({ id, kind: 'folder', machine_uid: machine, path, default: false, label: `${machine} 上的 ${path}` });
 const project = (over: object = {}) => ({
-  id: 'p1', name: '试跑',
+  id: 'p1', name: '试跑', category: null as string | null, pinned: false,
   sources: [{ ...repo('s1', 'https://example.com/app.git'), default: true }, folder('s2', 'uid-h1', '/work/app')],
   login_mode: 'selected', logins: ['t2', 't1'], machines: [{ uid: 'uid-h1', name: 'h1' }], spawn_machines: false, moving: 2, waiting: 1, pool: ['t2', 't1'] as string[], ...over,
 });
@@ -1195,4 +1195,75 @@ test('project triggers support toggling group broadcast, pinning bound groups, a
     broadcast_groups: true,
     broadcast_group_ids: ['g1', 'g2'],
   });
+});
+
+test('projects page filters by single category, pins inline, renames groups via API, and project settings saves category & pin', async () => {
+  const calls: Call[] = [];
+  let list = [
+    project({ id: 'p1', name: '集群告警', category: '基础设施', pinned: false }),
+    project({ id: 'p2', name: '养生助手', category: '生活', pinned: false }),
+    project({ id: 'p3', name: '未分组项目', category: null, pinned: false }),
+  ];
+  const { user } = open('#/projects', (call) => {
+    if (call.method === 'GET' && call.path === '/api/projects') return { projects: list };
+    if (call.method === 'PUT' && call.path.startsWith('/api/projects/')) {
+      calls.push(call);
+      const id = call.path.split('/').pop()!;
+      list = list.map((each) => (each.id === id ? { ...each, ...(call.body as object) } : each));
+      return { project: list.find((each) => each.id === id) };
+    }
+    if (call.method === 'POST' && call.path === '/api/projects/categories/rename') {
+      calls.push(call);
+      const { from, to } = call.body as { from: string; to: string | null };
+      list = list.map((each) => (each.category === from ? { ...each, category: to } : each));
+      return { updated: 1, projects: list };
+    }
+    return listed(list)(call);
+  });
+
+  // Category filter pills narrow the visible list cleanly.
+  const filterGroup = await screen.findByRole('group', { name: '按分组筛选项目' });
+  await user.click(within(filterGroup).getByRole('button', { name: /基础设施/ }));
+  expect(screen.getByRole('link', { name: '项目 集群告警' })).toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: '项目 养生助手' })).toBeNull();
+  await user.click(within(filterGroup).getByRole('button', { name: /全部/ }));
+
+  // Inline pin action sends PUT { pinned: true }.
+  const infraList = screen.getByRole('list', { name: '基础设施' });
+  await user.click(within(infraList).getByRole('button', { name: '置顶项目' }));
+  await waitFor(() => expect(calls).toContainEqual({ method: 'PUT', path: '/api/projects/p1', body: { pinned: true } }));
+
+  // Manage groups dialog renames a category across all projects.
+  await user.click(screen.getByRole('button', { name: '管理分组' }));
+  const dialog = await screen.findByRole('dialog', { name: '管理项目分组' });
+  const lifeRow = within(dialog).getByText('生活').closest('li')!;
+  await user.click(within(lifeRow).getByRole('button', { name: '重命名' }));
+  const input = within(lifeRow).getByRole('textbox', { name: '新分组名称' });
+  await user.clear(input);
+  await user.type(input, '个人生活');
+  await user.click(within(lifeRow).getByRole('button', { name: '保存' }));
+  await waitFor(() => expect(calls).toContainEqual({
+    method: 'POST',
+    path: '/api/projects/categories/rename',
+    body: { from: '生活', to: '个人生活' },
+  }));
+});
+
+test('project settings basic tab saves category and pinned changes cleanly', async () => {
+  const calls: Call[] = [];
+  let current = project({ category: null, pinned: false });
+  const { user } = open(SETTINGS, (call) => {
+    if (call.method === 'PUT' && call.path === '/api/projects/p1') {
+      calls.push(call);
+      current = { ...current, ...(call.body as object) };
+      return { project: current };
+    }
+    return listed([current])(call);
+  });
+
+  const one = await card();
+  await user.type(within(one).getByRole('textbox', { name: '分组（可选）' }), '核心研发');
+  await user.click(within(one).getByRole('switch', { name: '置顶到项目列表顶部' }));
+  await user.click(save(one));
+  await waitFor(() => expect(calls).toEqual([{ method: 'PUT', path: '/api/projects/p1', body: { category: '核心研发', pinned: true } }]));
 });

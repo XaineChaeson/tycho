@@ -1,7 +1,7 @@
 // The console's places, in the order the owner most often goes to them: what waits and
 // what moves first, then what is set up once and looked at now and then. The side column
 // and the palette both read this list; a project is a place too, and is listed by name.
-import { BookOpen, ChartColumn, Inbox, KeyRound, ListChecks, Radio, Server, Settings, Shapes, type LucideIcon } from 'lucide-react';
+import { BookOpen, ChartColumn, History, Inbox, KeyRound, Radio, Server, Settings, Shapes, type LucideIcon } from 'lucide-react';
 import { t } from '@shared/i18n.ts';
 import type { MessageKey } from '@/lib/i18n';
 
@@ -20,7 +20,6 @@ function place(to: string, titleKey: MessageKey, icon: LucideIcon): Place {
 
 export const WORK_PLACES: readonly Place[] = [
   place('/', 'nav.overview', Inbox),
-  place('/work', 'nav.work', ListChecks),
   place('/usage', 'nav.usage', ChartColumn),
 ];
 
@@ -33,4 +32,10 @@ export const SETUP_PLACES: readonly Place[] = [
   place('/settings', 'nav.settings', Settings),
 ];
 
-export const PLACES: readonly Place[] = [...WORK_PLACES, ...SETUP_PLACES];
+// Secondary destinations omitted from the persistent sidebar to keep top-level nav compact,
+// while remaining 1 keystroke away in the Ctrl+K command palette.
+export const SECONDARY_PLACES: readonly Place[] = [
+  place('/work?show=ended', 'core.palette.endedWorkHistory', History),
+];
+
+export const PLACES: readonly Place[] = [...WORK_PLACES, ...SECONDARY_PLACES, ...SETUP_PLACES];

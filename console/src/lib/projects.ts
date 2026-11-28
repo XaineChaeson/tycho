@@ -40,6 +40,9 @@ const draftSource = (source: Source): DraftSource => (source.kind === 'repo'
 export interface ProjectDraft {
   // A name is only shown; saving a changed one is one field of the same save.
   name: string;
+  // Optional single-group category; blank clears back to uncategorized.
+  category: string;
+  pinned: boolean;
   // The ordered code sources; the first is the project's default. Empty is a project whose
   // work runs in an empty task directory.
   sources: DraftSource[];
@@ -60,6 +63,8 @@ export interface ProjectDraft {
 
 export const draftOf = (project: Project): ProjectDraft => ({
   name: project.name,
+  category: project.category ?? '',
+  pinned: Boolean(project.pinned),
   sources: project.sources.map(draftSource),
   loginMode: project.login_mode,
   logins: [...project.logins],
@@ -94,10 +99,17 @@ const sourcesMoved = (project: Project, draft: ProjectDraft): boolean => {
 const routerMoved = (project: Project, draft: ProjectDraft): boolean =>
   project.router?.account !== draft.router?.account || project.router?.tier !== draft.router?.tier;
 
+const normalizedCategory = (raw: string | null | undefined): string | null => {
+  const trimmed = (raw ?? '').trim();
+  return trimmed === '' ? null : trimmed;
+};
+
 // Nothing to save when nothing moved, the code sources included. What is sent is what the
 // service reads back; an empty source list clears them all, exactly as the ledger holds it.
 export const changed = (project: Project, draft: ProjectDraft): boolean =>
   draft.name.trim() !== project.name
+  || normalizedCategory(draft.category) !== normalizedCategory(project.category)
+  || draft.pinned !== Boolean(project.pinned)
   || sourcesMoved(project, draft) || draft.loginMode !== project.login_mode || !sameNames(project.logins, draft.logins)
   || machinesMoved(project, draft)
   || draft.spawnMachines !== project.spawn_machines
@@ -118,8 +130,12 @@ const sourceBody = (source: DraftSource): Record<string, unknown> => (source.kin
 // only when it was flipped, so a save of the lists records no change to it.
 export const projectBody = (project: Project, draft: ProjectDraft): Record<string, unknown> => {
   const listMoved = !sameNames(project.logins, draft.logins);
+  const nextCategory = normalizedCategory(draft.category);
+  const prevCategory = normalizedCategory(project.category);
   return {
     ...(draft.name.trim() === project.name ? {} : { name: draft.name.trim() }),
+    ...(nextCategory === prevCategory ? {} : { category: nextCategory }),
+    ...(draft.pinned === Boolean(project.pinned) ? {} : { pinned: draft.pinned }),
     ...(listMoved || draft.loginMode !== project.login_mode ? { login_mode: draft.loginMode } : {}),
     ...(listMoved ? { logins: draft.logins } : {}),
     ...(machinesMoved(project, draft) ? { machines: draft.machines } : {}),
@@ -139,22 +155,74 @@ export const withProject = (projects: readonly Project[], saved: Project): Proje
 export const activeProjects = <T extends Pick<Project, 'archived_at'>>(projects: readonly T[]): T[] =>
   projects.filter(({ archived_at }) => archived_at == null);
 
+export const projectCategories = (projects: readonly Pick<Project, 'category' | 'archived_at'>[]): string[] => {
+  const seen = new Set<string>();
+  for (const project of projects) {
+    if (project.archived_at != null) continue;
+    const cat = normalizedCategory(project.category);
+    if (cat !== null) seen.add(cat);
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+};
+
+export interface GroupedProjects<T> {
+  pinned: T[];
+  groups: { category: string; projects: T[] }[];
+  uncategorized: T[];
+  hasOrganization: boolean;
+}
+
+export function groupActiveProjects<T extends Pick<Project, 'archived_at' | 'category' | 'pinned'>>(projects: readonly T[]): GroupedProjects<T> {
+  const open = activeProjects(projects);
+  const pinned: T[] = [];
+  const byCategory = new Map<string, T[]>();
+  const uncategorized: T[] = [];
+  for (const project of open) {
+    if (project.pinned) {
+      pinned.push(project);
+      continue;
+    }
+    const cat = normalizedCategory(project.category);
+    if (cat === null) {
+      uncategorized.push(project);
+    } else {
+      const list = byCategory.get(cat);
+      if (list) list.push(project);
+      else byCategory.set(cat, [project]);
+    }
+  }
+  const groups = [...byCategory.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+    .map(([category, list]) => ({ category, projects: list }));
+  return {
+    pinned,
+    groups,
+    uncategorized,
+    hasOrganization: pinned.length > 0 || groups.length > 0,
+  };
+}
+
 // What "新建项目" sends (docs/design/project-sessions.md §5): a name, and the code sources for a
 // project that has any; what is under "高级" only when it was set.
 export interface NewProjectDraft {
   name: string;
+  category?: string;
   sources: DraftSource[];
   // By registration (machine.uid).
   machines: string[];
   spawnMachines: boolean;
 }
 
-export const newProjectBody = (draft: NewProjectDraft): Record<string, unknown> => ({
-  name: draft.name.trim(),
-  ...(draft.sources.length === 0 ? {} : { sources: draft.sources.map(sourceBody) }),
-  ...(draft.machines.length === 0 ? {} : { machines: draft.machines }),
-  ...(draft.spawnMachines ? { spawn_machines: true } : {}),
-});
+export const newProjectBody = (draft: NewProjectDraft): Record<string, unknown> => {
+  const category = normalizedCategory(draft.category);
+  return {
+    name: draft.name.trim(),
+    ...(category === null ? {} : { category }),
+    ...(draft.sources.length === 0 ? {} : { sources: draft.sources.map(sourceBody) }),
+    ...(draft.machines.length === 0 ? {} : { machines: draft.machines }),
+    ...(draft.spawnMachines ? { spawn_machines: true } : {}),
+  };
+};
 
 // A project's machine list that names machines deleted since: they match nothing, so a list
 // of only them lets the project run nowhere, which is not what an empty list means.

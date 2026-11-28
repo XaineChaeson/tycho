@@ -939,6 +939,19 @@ function projectNameOf(name: string): string {
   return name.trim();
 }
 
+const PROJECT_CATEGORY_MAX_CHARS = 40;
+
+function projectCategoryOf(raw: string | null | undefined): string | null {
+  if (raw === null || raw === undefined) return null;
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  if (/[\x00-\x1f\x7f]/.test(trimmed)) throw new InputError('项目分类不能含换行或控制字符');
+  if ([...trimmed].length > PROJECT_CATEGORY_MAX_CHARS) {
+    throw new InputError(`项目分类不能超过 ${PROJECT_CATEGORY_MAX_CHARS} 个字符`);
+  }
+  return trimmed;
+}
+
 // What deleting a project would take, as the ledger reads it (project-sessions, "项目的生命周期"):
 // the rows that go, the shared rows that stay with this project taken out of their scope, and
 // the no-project knowledge tasks it leaves pointless — those given up, those whose material
@@ -3708,17 +3721,19 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
 
     // `sources`: where its code comes from, in order, the first being the default
     // (docs/design/code-sources.md §1); empty for a project with no code.
-    createProject(fields: { name: string; sources?: unknown; logins?: string[]; loginMode?: LoginMode; machines?: string[]; spawnMachines?: boolean }, ctx: Ctx) {
+    createProject(fields: { name: string; sources?: unknown; logins?: string[]; loginMode?: LoginMode; machines?: string[]; spawnMachines?: boolean; category?: string | null; pinned?: boolean }, ctx: Ctx) {
       const id = ulid();
       const create = (ownership?: ProjectOwnership): void => write(() => {
         const name = projectNameOf(fields.name);
+        const category = projectCategoryOf(fields.category);
+        const pinned = fields.pinned ? 1 : 0;
         const logins = [...new Set(fields.logins ?? [])];
         const mode = fields.loginMode ?? 'selected';
         if (mode !== 'all' && mode !== 'selected') throw new InputError(`登录方式只能是 all 或 selected：${String(mode)}`);
         const sources = parseSourceInput(fields.sources ?? [], []);
         if (ownership) db.installProjectOwnership(id, ownership);
         db.run(
-          'INSERT INTO project (id, created_at, name, logins_json, machines_json, spawn_machines, login_mode, sources_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          'INSERT INTO project (id, created_at, name, logins_json, machines_json, spawn_machines, login_mode, sources_json, category, pinned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
           id,
           nowIso(),
           name,
@@ -3727,6 +3742,8 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
           fields.spawnMachines ? 1 : 0,
           mode,
           JSON.stringify(sources),
+          category,
+          pinned,
         );
         writeChange(db, 'project.create', ctx, {}, { project_id: id });
       });
@@ -7485,6 +7502,45 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
         db.run('UPDATE project SET name = ? WHERE id = ?', to, projectId);
         writeChange(db, 'project.rename', ctx, {}, { project_id: projectId, from: project.name, to });
         return { ...project, name: to };
+      });
+    },
+
+    setProjectCategory(projectId: string, category: string | null, ctx: Ctx): ProjectRow {
+      return write(() => {
+        const project = db.get<ProjectRow>('SELECT * FROM project WHERE id = ?', projectId);
+        if (!project) throw new InputError(`项目不存在：${projectId}`);
+        const to = projectCategoryOf(category);
+        const prev = project.category ?? null;
+        if (prev === to) return project;
+        db.run('UPDATE project SET category = ? WHERE id = ?', to, projectId);
+        writeChange(db, 'project.category', ctx, {}, { project_id: projectId, from: prev, to });
+        return { ...project, category: to };
+      });
+    },
+
+    setProjectPinned(projectId: string, pinned: boolean, ctx: Ctx): ProjectRow {
+      return write(() => {
+        const project = db.get<ProjectRow>('SELECT * FROM project WHERE id = ?', projectId);
+        if (!project) throw new InputError(`项目不存在：${projectId}`);
+        const next = pinned ? 1 : 0;
+        if ((project.pinned ?? 0) === next) return project;
+        db.run('UPDATE project SET pinned = ? WHERE id = ?', next, projectId);
+        writeChange(db, 'project.pin', ctx, {}, { project_id: projectId, pinned });
+        return { ...project, pinned: next };
+      });
+    },
+
+    renameProjectCategory(from: string, to: string | null, ctx: Ctx): number {
+      return write(() => {
+        const source = projectCategoryOf(from);
+        if (source === null) throw new InputError('要修改的分类名不能为空');
+        const target = projectCategoryOf(to);
+        if (source === target) return 0;
+        const matched = db.all<{ id: string }>('SELECT id FROM project WHERE category = ?', source);
+        if (matched.length === 0) return 0;
+        db.run('UPDATE project SET category = ? WHERE category = ?', target, source);
+        writeChange(db, 'project.category_rename', ctx, {}, { from: source, to: target, count: matched.length });
+        return matched.length;
       });
     },
 

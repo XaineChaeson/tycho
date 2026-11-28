@@ -3,7 +3,7 @@
 // under "高级". A new project runs on every login. Made, it is opened: its conversation is
 // where the owner goes next.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Details, Field, Mono, Problem } from '@/components/bits';
 import { CODE_SOURCE_HINT, SourceEditor } from '@/components/source-list';
@@ -14,15 +14,18 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { messageOf, post } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
-import { newProjectBody, withName, withoutName, type NewProjectDraft } from '@/lib/projects';
+import { newProjectBody, projectCategories, withName, withoutName, type NewProjectDraft } from '@/lib/projects';
 import { accountsQuery, projectsQuery } from '@/lib/queries';
 import type { Project } from '@/lib/types';
 
-const BLANK: NewProjectDraft = { name: '', sources: [], machines: [], spawnMachines: false };
+const BLANK: NewProjectDraft = { name: '', category: '', sources: [], machines: [], spawnMachines: false };
 
 function NewProjectForm({ onMade }: { onMade: (project: Project) => void }) {
   const { t } = useI18n();
+  const categoryListId = useId();
   const { data: options } = useQuery(accountsQuery);
+  const { data: allProjects } = useQuery(projectsQuery);
+  const categories = projectCategories(allProjects ?? []);
   const [draft, setDraft] = useState<NewProjectDraft>(BLANK);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -44,6 +47,23 @@ function NewProjectForm({ onMade }: { onMade: (project: Project) => void }) {
     <form className="grid gap-4" onSubmit={(event) => { event.preventDefault(); void create(); }}>
       <Field label={t('proj.form.nameLabel')} htmlFor="new-project-name">
         <Input id="new-project-name" aria-label={t('proj.form.nameLabel')} autoFocus value={draft.name} disabled={saving} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+      </Field>
+      <Field label={t('proj.form.categoryLabel')} htmlFor="new-project-category" hint={t('proj.form.categoryHint')}>
+        <Input
+          id="new-project-category"
+          aria-label={t('proj.form.categoryLabel')}
+          list={categories.length > 0 ? categoryListId : undefined}
+          placeholder={t('proj.form.categoryPlaceholder')}
+          maxLength={40}
+          value={draft.category}
+          disabled={saving}
+          onChange={(event) => setDraft({ ...draft, category: event.target.value })}
+        />
+        {categories.length > 0 ? (
+          <datalist id={categoryListId}>
+            {categories.map((cat) => <option key={cat} value={cat} />)}
+          </datalist>
+        ) : null}
       </Field>
       <Field label={t('proj.new.codeLabel')} hint={t('proj.new.codeHint', { hint: CODE_SOURCE_HINT })}>
         <SourceEditor items={draft.sources} machines={machines} disabled={saving} onChange={(sources) => setDraft({ ...draft, sources })} />
