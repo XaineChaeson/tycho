@@ -96,7 +96,7 @@ test('confirmed subscription surfaces freshest quota directly on the centralized
     read: () => ({ ...accountsPage(RESTING, CX), login_groups: [['gpu', login.id]] }) });
   const accountCard = screen.getByRole('region', { name: 'gpu' });
   expect(accountCard).toHaveAttribute('id', 'gpu');
-  expect(within(accountCard).getByText(/5 小时窗口 75%/)).toBeVisible();
+  expect(within(accountCard).getByText(/5 小时窗口 剩 25%/)).toBeVisible();
   expect(within(accountCard).getByRole('button', { name: '修改' })).toBeEnabled();
   // Same-identity machine login is NOT duplicated as an independent entry in the left rail
   expect(screen.queryByRole('button', { name: /选择单机登录 b1 · claude/ })).toBeNull();
@@ -838,8 +838,8 @@ test('each account says whether it can take work now: usable, resting until a ti
   const state = (name: string) => within(p.target(name)!).queryByRole('status');
   expect(state('gpu')).toHaveTextContent(/^歇着：额度用完，约 \d\d-\d\d 06:40 再试$/);
   expect(p.target('gpu')).toHaveTextContent("执行器的原话：You've hit your session limit · resets 6:40am");
-  expect(p.target('gpu')).toHaveTextContent(/5 小时窗口 99%，\d\d-\d\d 06:40 重置/);
-  expect(p.target('gpu')).toHaveTextContent(/7 天窗口 51%，\d\d-\d\d 08:00 重置/);
+  expect(p.target('gpu')).toHaveTextContent(/5 小时窗口 剩 1%，\d\d-\d\d 06:40 重置/);
+  expect(p.target('gpu')).toHaveTextContent(/7 天窗口 剩 49%，\d\d-\d\d 08:00 重置/);
   expect(p.target('gpu')).toHaveTextContent(/读于 [^·]+ · 在用量页刷新/);
   expect(within(p.target('gpu')!).getByRole('link', { name: '在用量页刷新' })).toHaveAttribute('href', '#/usage');
   expect(p.button('gpu', '现在就试')).not.toBeNull();
@@ -1073,7 +1073,7 @@ test('机器登录在左侧按提供商分组显示额度和可用操作，清�
   expect(within(codexList).getByRole('button', { name: '选择单机登录 b1 · codex' })).toBeInTheDocument();
   selectOwn('b1', 'codex');
   const card = screen.getByRole('region', { name: '机器 b1 上的 codex 登录' });
-  expect(card).toHaveTextContent(/5 小时窗口 99%/);
+  expect(card).toHaveTextContent(/5 小时窗口 剩 1%/);
   expect(within(card).getByRole('button', { name: '现在就试' })).toBeEnabled();
   expect(within(card).getByRole('link', { name: '在用量页刷新' })).toHaveAttribute('href', '#/usage');
 });

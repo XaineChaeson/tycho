@@ -69,7 +69,7 @@ const row = (name: string) => screen.findByRole('region', { name });
 test('each login says what is left and when it was read; only an account the host can ask has a refresh', async () => {
   const page = open('#/usage', service());
   const main = await row('主账号');
-  expect(main).toHaveTextContent('5 小时窗口 42%');
+  expect(main).toHaveTextContent('5 小时窗口 剩 58%');
   expect(main).toHaveTextContent(/读于 \d\d:\d\d/);
   expect(within(main).getByRole('button', { name: '刷新' })).toBeEnabled();
   expect(await row('codex 账号')).toHaveTextContent('这个执行器不报额度');
@@ -92,8 +92,8 @@ test('model windows name the model, and unfamiliar windows keep their identifier
   ] } }] };
   open('#/usage', service(REPORT, () => quota, quota));
   const main = await row('主账号');
-  expect(main).toHaveTextContent('7 天窗口（Fable） 45%');
-  expect(main).toHaveTextContent('other_60m 20%');
+  expect(main).toHaveTextContent('7 天窗口（Fable） 剩 55%');
+  expect(main).toHaveTextContent('other_60m 剩 80%');
 });
 
 test('reading keeps the last figures and time visible, then polls until reading ends', async () => {
@@ -104,7 +104,7 @@ test('reading keeps the last figures and time visible, then polls until reading 
     return service(REPORT, () => reading)(call);
   });
   const main = await row('主账号');
-  expect(main).toHaveTextContent('5 小时窗口 42%');
+  expect(main).toHaveTextContent('5 小时窗口 剩 58%');
   expect(main).toHaveTextContent(/读于 \d\d:\d\d/);
   expect(main).toHaveTextContent('正在刷新');
   expect(main).not.toHaveTextContent('问执行器');
@@ -131,7 +131,7 @@ test('a read that learned nothing says why beside the figures it kept', async ()
   const failed: QuotaPage = { ...QUOTA, logins: [{ ...QUOTA.logins[0]!, read: { available: true, reading: false, tried_at: new Date().toISOString(), failure: '60 秒内没有答复' } }] };
   open('#/usage', service(REPORT, () => failed, failed));
   await waitFor(async () => expect(await row('主账号')).toHaveTextContent('没读到：60 秒内没有答复'));
-  expect(await row('主账号')).toHaveTextContent('5 小时窗口 42%');
+  expect(await row('主账号')).toHaveTextContent('5 小时窗口 剩 58%');
 });
 
 test('a refresh the service refuses says so', async () => {
@@ -253,8 +253,8 @@ test('usage page unifies multi-machine Gemini logins, formats DSH gateway balanc
 
   const geminiRow = await row('Gemini（2 台机器）');
   expect(geminiRow).toHaveTextContent('DEV-WORKSTATION · kr');
-  expect(geminiRow).toHaveTextContent('5 小时窗口 3%');
-  expect(geminiRow).toHaveTextContent('7 天窗口 13%');
+  expect(geminiRow).toHaveTextContent('5 小时窗口 剩 97%');
+  expect(geminiRow).toHaveTextContent('7 天窗口 剩 87%');
   expect(geminiRow).toHaveTextContent('近 5h 14.50M');
 
   await page.user.click(screen.getByRole('radio', { name: '账号' }));

@@ -266,18 +266,18 @@ test('a task whose machine is out of contact, past its time, says exactly what i
 });
 
 // Also guards model windows losing their model and unknown windows losing their identifier.
-test('usage reads as the window, the share used and when it starts over', () => {
+test('usage reads as the window, the remaining share and when it starts over', () => {
   const now = new Date(2026, 10, 6, 5, 0).getTime();
   const at = new Date(2026, 10, 6, 4, 0).toISOString();
   const resets = new Date(2026, 10, 6, 6, 40).toISOString();
-  assert.equal(usageLine({ window: 'five_hour', used: 0.82, resets_at: resets, at }, now), '5 小时窗口 82%，06:40 重置');
-  assert.equal(usageLine({ window: 'seven_day', used: 0.515, resets_at: new Date(2026, 10, 9, 8, 0).toISOString(), at }, now), '7 天窗口 52%，11-09 08:00 重置');
-  assert.equal(usageLine({ window: 'seven_day_fable', used: 0.45, resets_at: null, at }, now), '7 天窗口（Fable） 45%');
+  assert.equal(usageLine({ window: 'five_hour', used: 0.82, resets_at: resets, at }, now), '5 小时窗口 剩 18%，06:40 重置');
+  assert.equal(usageLine({ window: 'seven_day', used: 0.515, resets_at: new Date(2026, 10, 9, 8, 0).toISOString(), at }, now), '7 天窗口 剩 49%，11-09 08:00 重置');
+  assert.equal(usageLine({ window: 'seven_day_fable', used: 0.45, resets_at: null, at }, now), '7 天窗口（Fable） 剩 55%');
   for (const model of ['opus', 'sonnet']) {
-    assert.equal(usageLine({ window: `seven_day_${model}`, used: 0.45, resets_at: null, at }, now), `7 天窗口（${model}） 45%`);
+    assert.equal(usageLine({ window: `seven_day_${model}`, used: 0.45, resets_at: null, at }, now), `7 天窗口（${model}） 剩 55%`);
   }
-  assert.equal(usageLine({ window: 'opus_weekly', used: 1, resets_at: null, at }, now), 'opus_weekly 100%');
-  assert.equal(usageLine({ window: 'constructor', used: 1, resets_at: null, at }, now), 'constructor 100%');
+  assert.equal(usageLine({ window: 'opus_weekly', used: 1, resets_at: null, at }, now), 'opus_weekly 剩 0%');
+  assert.equal(usageLine({ window: 'constructor', used: 1, resets_at: null, at }, now), 'constructor 剩 0%');
 });
 
 // Guards an old figure shown as this moment's: the page says when the figures were read,

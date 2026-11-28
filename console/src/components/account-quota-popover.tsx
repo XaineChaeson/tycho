@@ -5,7 +5,7 @@ import { ChevronUp, RefreshCw } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { t as translate } from '@shared/i18n.ts';
-import { quotaUsedUp, type LoginStatus } from '@shared/labels.ts';
+import { quotaUsedUp, remainingPercent, type LoginStatus } from '@shared/labels.ts';
 import { loginName } from '@shared/logins.ts';
 import { formatTime } from '@shared/time.ts';
 import { latestQuota } from '@shared/usage.ts';
@@ -103,10 +103,7 @@ export function formatProviderName(executor: string): string {
   return executor.length > 0 ? `${executor[0]!.toUpperCase()}${executor.slice(1)}` : executor;
 }
 
-export function remainingPct(used: number): number {
-  if (!Number.isFinite(used)) return 0;
-  return Math.max(0, Math.min(100, Math.round((1 - used) * 100)));
-}
+export const remainingPct = remainingPercent;
 
 export function formatResetCountdown(iso: string | null | undefined, now: number = Date.now()): string | null {
   if (!iso) return null;

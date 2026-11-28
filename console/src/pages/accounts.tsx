@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Ellipsis, KeyRound, Layers, Pencil, Plus, RefreshCw, Search, ShieldCheck, SlidersHorizontal, UserCheck, X } from 'lucide-react';
 import { t as translate } from '@shared/i18n.ts';
-import { NEEDS_LOGIN_TEXT, credentialText, loginFull, loginStatusLine, machineLoginRefusedText, modelText, tierDisplayLabel, tierText, usageReadLine } from '@shared/labels.ts';
+import { NEEDS_LOGIN_TEXT, credentialText, loginFull, loginStatusLine, machineLoginRefusedText, modelText, remainingPercent, tierDisplayLabel, tierText, usageReadLine } from '@shared/labels.ts';
 import { loginName, RETIRED_TIER_STANDING, takesTypedLogin } from '@shared/logins.ts';
 import { isTierId, TIERS, type TierId } from '@shared/tiers.ts';
 import { effectiveRouteOfLogin, executionPermissionSummary, logicalAccountKey, normalizeRouteKey, type DispatchSlotsConfig, type TierDispatchSlots } from '@shared/dispatch-slots.ts';
@@ -88,10 +88,10 @@ function railQuotaHint(usage: NonNullable<Account['status']>['usage']): string |
   for (const item of usage) {
     if (item.used > peak.used) peak = item;
   }
-  const pct = `${Math.round(peak.used * 100)}%`;
-  if (peak.window === 'five_hour') return `5h ${pct}`;
-  if (peak.window === 'seven_day') return `7d ${pct}`;
-  return pct;
+  const remainText = translate('acct.quota.remainingPct', { pct: remainingPercent(peak.used) });
+  if (peak.window === 'five_hour') return `5h ${remainText}`;
+  if (peak.window === 'seven_day') return `7d ${remainText}`;
+  return remainText;
 }
 
 const ownKey = (machine: Machine, login: MachineLogin): string => `/own/${machine.id}/${login.executor}`;

@@ -153,7 +153,7 @@ test('@ trigger filters files and tasks, and /usage inserts live account quota s
   await screen.findByRole('listbox', { name: '快捷命令' });
   await user.keyboard('{Enter}');
   expect((box as HTMLTextAreaElement).value).toContain('claude-main');
-  expect((box as HTMLTextAreaElement).value).toContain('25%');
+  expect((box as HTMLTextAreaElement).value).toContain('剩 75%');
 
   // Escape dismisses open trigger menu without submitting; normal Enter sends when closed.
   await user.clear(box);

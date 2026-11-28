@@ -558,6 +558,12 @@ const WINDOW_TEXT: Readonly<Record<string, string>> = localeMap({
   overage: 'sh.labels.window.overage',
 });
 
+// Remaining quota percentage [0..100] from a reported used fraction [0..1].
+export function remainingPercent(used: number): number {
+  if (!Number.isFinite(used)) return 0;
+  return Math.max(0, Math.min(100, Math.round((1 - used) * 100)));
+}
+
 // Format special balance/budget quota windows emitted by DeepSeek / New-API / One-API gateways.
 export function formatSpecialQuotaWindow(window: string, used: number): string | null {
   for (const [prefix, titleKey] of [
@@ -590,7 +596,7 @@ export function formatSpecialQuotaWindow(window: string, used: number): string |
   if (window.startsWith('gateway_budget:')) {
     const rest = window.slice('gateway_budget:'.length);
     const sep = rest.indexOf(':');
-    const pct = `${Math.round(used * 100)}%`;
+    const pct = `${remainingPercent(used)}%`;
     if (sep > 0 && !rest.startsWith('$')) {
       const route = rest.slice(0, sep);
       const budget = rest.slice(sep + 1);
@@ -609,7 +615,7 @@ export function usageLine({ window, used, resets_at: resets }: UsageFigure, now:
     : window.startsWith('seven_day_') && window.length > 'seven_day_'.length
       ? t('sh.labels.quota.sevenDayNamed', { name: window.slice('seven_day_'.length) })
       : window;
-  const pct = Math.round(used * 100);
+  const pct = remainingPercent(used);
   return resets
     ? t('sh.labels.quota.usageWithReset', { label, pct, resets: formatTime(resets, new Date(now)) })
     : t('sh.labels.quota.usagePlain', { label, pct });
