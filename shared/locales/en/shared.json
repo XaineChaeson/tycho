@@ -829,5 +829,24 @@
   "sh.themes.err.builtinCollision": "Theme id \"{id}\" conflicts with a built-in theme; please choose a different id.",
   "sh.themes.err.missingName": "Missing theme \"name\" field.",
   "sh.themes.err.noValidTokens": "No valid safe CSS variables found in \"tokens\" (e.g., --primary, --background).",
-  "sh.themes.defaultDescription": "Host directory theme plugin"
+  "sh.themes.defaultDescription": "Host directory theme plugin",
+
+  "sh.wiki.status.draft": "Draft",
+  "sh.wiki.status.active": "Active",
+  "sh.wiki.status.disputed": "Disputed",
+  "sh.wiki.status.deprecated": "Deprecated",
+  "sh.wiki.proposalStatus.pending": "Pending",
+  "sh.wiki.proposalStatus.applied": "Applied",
+  "sh.wiki.proposalStatus.rejected": "Rejected",
+  "sh.wiki.proposalStatus.stale": "Stale snapshot",
+
+  "sh.collab.refKind.project_file": "Project file",
+  "sh.collab.refKind.knowledge": "Knowledge entry",
+  "sh.collab.refKind.wiki_page": "Wiki page",
+  "sh.collab.refKind.artifact": "Task artifact",
+  "sh.collab.contractStatus.pending": "Pending",
+  "sh.collab.contractStatus.delivered": "Delivered",
+  "sh.collab.contractStatus.blocked": "Blocked",
+  "sh.collab.contractStatus.clarified": "Clarified",
+  "sh.collab.contractStatus.superseded": "Superseded"
 }

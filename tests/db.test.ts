@@ -15,10 +15,10 @@ import type { Fixture } from './helpers.ts';
 import { fixture, USER } from './helpers.ts';
 
 const TABLES = [
-  'account', 'approval', 'change', 'front_desk', 'im_group_binding', 'im_group_context', 'inbound_key', 'inbound_receipt_reply', 'inbound_source', 'input', 'knowledge', 'knowledge_client', 'knowledge_evidence', 'knowledge_proposal',
+  'account', 'approval', 'change', 'cross_project_ref', 'front_desk', 'im_group_binding', 'im_group_context', 'inbound_key', 'inbound_receipt_reply', 'inbound_source', 'input', 'knowledge', 'knowledge_client', 'knowledge_evidence', 'knowledge_proposal',
   'knowledge_revision', 'login_state', 'machine', 'machine_invite', 'machine_login', 'machine_login_refusal', 'machine_material', 'message', 'outbox',
-  'project', 'project_file', 'project_files_cleanup', 'push', 'role', 'router_call', 'router_context', 'router_exchange', 'router_segment', 'router_template', 'run', 'setting', 'task', 'trigger_cursor', 'trigger_fire',
-  'trigger_rule', 'usage', 'work_cleanup',
+  'project', 'project_file', 'project_files_cleanup', 'push', 'role', 'router_call', 'router_context', 'router_exchange', 'router_segment', 'router_template', 'run', 'setting', 'task', 'task_contract', 'trigger_cursor', 'trigger_fire',
+  'trigger_rule', 'usage', 'wiki_grant', 'wiki_page', 'wiki_proposal', 'wiki_vault', 'work_cleanup',
 ];
 
 test('schema has the tables it declares and records its version', (t) => {

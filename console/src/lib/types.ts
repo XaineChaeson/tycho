@@ -20,6 +20,8 @@ import type { TierId } from '@shared/tiers.ts';
 import type { DiagnosticLevel, FileChange, ModelInfo, NormalizedEvent, ToolCall, ToolCategory, ToolOutput } from '../../../adapters/types.ts';
 import type { RetiredTier } from '@shared/logins.ts';
 import type { SourceView, SnapshotSource, TaskSourceView } from '@shared/sources.ts';
+import type { WikiGrant, WikiPage, WikiPageStatus, WikiProposal, WikiVault } from '@shared/wiki.ts';
+import type { CrossProjectRef, TaskContract } from '@shared/collaboration.ts';
 
 export type { DiagnosticLevel, FileChange, Lost, ModelInfo, NormalizedEvent, ReviewGateInfo, RouterState, ToolCall, ToolCategory, ToolOutput };
 
@@ -928,6 +930,7 @@ export interface KnowledgeRevision {
   project_ids: string[] | null;
   loading: Loading;
   roles: string[];
+  search_phrases?: string[];
   proposal_id: string;
   published_by: string;
   published_at: string;
@@ -985,6 +988,7 @@ export interface ChangeOutput {
   project_ids: string[] | null;
   loading: Loading;
   roles: string[];
+  search_phrases?: string[];
   // The entry it became, once the change is published.
   knowledge_id?: string;
 }
@@ -1045,6 +1049,8 @@ export interface KnowledgeClient {
   executor: string;
   grants: Grant[];
   revoked_at: string | null;
+  last_used_at?: string | null;
+  request_count?: number;
 }
 
 // An old long-term ruling the upgrade to project sessions could not turn into a knowledge
@@ -1304,4 +1310,81 @@ export interface BroadcastGroupChoice {
   project_id?: string;
   enabled: boolean;
   notify_events: boolean;
+}
+
+export interface KnowledgeImportItemReport {
+  line: number;
+  source_id: string;
+  title: string;
+  action: 'create' | 'skip_duplicate' | 'invalid';
+  reason?: string;
+  created_id?: string;
+}
+
+export interface KnowledgeImportReport {
+  dry_run: boolean;
+  total: number;
+  created: number;
+  skipped: number;
+  invalid: number;
+  items: KnowledgeImportItemReport[];
+}
+
+export interface DotfilesBoundaryItem {
+  executor: string;
+  path: string;
+  ownership: 'external_dotfiles' | 'tycho_managed' | 'coexist_block' | 'collision_risk' | 'absent';
+  detail: string;
+  symlink_target?: string;
+}
+
+export interface DotfilesBoundaryReport {
+  home_dir: string;
+  chezmoi_detected: boolean;
+  items: DotfilesBoundaryItem[];
+}
+
+export interface WikiVaultSummary extends WikiVault {
+  page_count: number;
+  pending_proposals: number;
+  grants: WikiGrant[];
+}
+
+export interface WikiPageDetail extends WikiPage {
+  backlinks: string[];
+  vault_name: string;
+}
+
+export interface WikiSearchHit {
+  vault_id: string;
+  vault_name: string;
+  page_id: string;
+  path: string;
+  title: string;
+  summary: string;
+  owner: string;
+  scope: string;
+  status: WikiPageStatus;
+  commit_sha: string;
+  score: number;
+  coverage: number;
+}
+
+export interface WikiConsolePage {
+  vaults: WikiVaultSummary[];
+  proposals: WikiProposal[];
+  projects: { id: string; name: string }[];
+}
+
+export interface ProjectWikiVault extends WikiVault {
+  grant: WikiGrant;
+  effective_commit: string | null;
+  page_count: number;
+}
+
+export interface ProjectCollaborationPage {
+  incoming_refs: CrossProjectRef[];
+  outgoing_refs: CrossProjectRef[];
+  contracts: TaskContract[];
+  wiki_vaults: ProjectWikiVault[];
 }

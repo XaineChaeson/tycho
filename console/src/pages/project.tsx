@@ -14,6 +14,7 @@ import { DeleteProjectDialog } from '@/components/delete-project-dialog';
 import { HistoryEvidence } from '@/components/history-evidence';
 import { PageBar, PageBody, PageTabs } from '@/components/page';
 import { PageScroll } from '@/components/page-scroll';
+import { ProjectCollaboration } from '@/components/project-collaboration';
 import { ProjectDispatchGraph } from '@/components/project-dispatch-graph';
 import { formatFileSize, isProjectLibraryFile, ProjectFilesSheet } from '@/components/project-files';
 import { ProjectTriggers } from '@/components/project-triggers';
@@ -128,6 +129,7 @@ function ProjectBar({ id, project, actions }: { id: string; project: Pick<Projec
         tabs={[
           { to: projectPath(id), label: t('project.tabChat') },
           { to: projectPath(id, 'work'), label: t('project.tabWork'), count: waiting || undefined },
+          { to: projectPath(id, 'collaboration'), label: t('project.tabCollaboration') },
           { to: projectPath(id, 'triggers'), label: t('project.tabTriggers') },
           { to: projectPath(id, 'settings'), label: t('project.tabSettings') },
         ]}
@@ -1238,6 +1240,17 @@ function WorkTab({ id, project }: { id: string; project: Project | undefined }) 
   );
 }
 
+function CollaborationTab({ id, project }: { id: string; project: Project | undefined }) {
+  return (
+    <>
+      <ProjectBar id={id} project={project} />
+      <PageBody width="wide">
+        <ProjectCollaboration projectId={id} />
+      </PageBody>
+    </>
+  );
+}
+
 function TriggersTab({ id, project }: { id: string; project: Project | undefined }) {
   const { t } = useI18n();
   return (
@@ -1267,6 +1280,7 @@ export function ProjectPage({ id }: { id: string }) {
   const { data: projects, isPending, error } = useQuery(projectsQuery);
   const project = projects?.find((each) => each.id === id);
   if (tab === 'work') return <WorkTab id={id} project={project} />;
+  if (tab === 'collaboration') return <CollaborationTab id={id} project={project} />;
   if (tab === 'triggers') return <TriggersTab id={id} project={project} />;
   if (tab === 'settings') return <SettingsTab id={id} project={project} loading={isPending} failure={error?.message} />;
   return <ConversationTab id={id} project={project} />;

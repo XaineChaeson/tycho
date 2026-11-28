@@ -6,18 +6,22 @@ import { InputError } from './errors.ts';
 import type { Entry, Revision } from './knowledge.ts';
 import { routerTurnText } from './router-call-text.ts';
 import { parseInstant } from './schedule.ts';
+import { defaultMinCoverage, tokenCoverage, tokenizeForSearch } from './search-index.ts';
 import { described, object, problem } from './tool-schema.ts';
 
 const MAX_LIMIT = 50;
 const SCAN_LIMIT = 128;
 const COMMIT = /^[0-9a-f]{6,64}$/i;
+const RUNTIME_ERROR_EXIT_KINDS = new Set(['failed', 'lost', 'timeout', 'quota', 'auth', 'interrupted', 'abandoned']);
 
 export const historyEvidenceInputSchema = object({
-  query: described('在轮次标题、结果摘要、正式报告正文、结算理由和可读知识标题中按关键词找，多个词都应出现'),
+  query: described('在轮次标题、结果摘要、正式报告正文、结算理由和可读知识标题中按关键词找（支持中英文词法与模糊召回）'),
   role_id: described('轮次开始时的职能编号'),
   since: described('结束时间下限，含该时刻（带时区的 ISO 8601）'),
   as_of: described('截至这个时刻结束的轮次（带时区的 ISO 8601）'),
   commit: described('Git 提交号或至少 6 位的十六进制前缀'),
+  exclude_errors: { type: 'boolean', description: '排除纯运行报错/中断且无正式报告的轮次（可选，默认 false 保持全量审计）' },
+  exclude_run_id: described('排除指定 Run 编号，避免召回当前轮次自身回声'),
   after: described('上一页的 next_cursor，沿用原有检索条件'),
   limit: { type: 'integer', description: '每页条数，1 至 50，默认 20' },
 });
@@ -68,13 +72,15 @@ function parseInput(input: unknown) {
   if (!supplied) throw new InputError('历史证据检索条件应为对象');
   const args = Object.fromEntries(Object.entries(supplied).map(([key, value]) => [key, typeof value === 'string' ? value.trim() : value]));
   if (typeof args.limit === 'string' && /^\d+$/.test(args.limit)) args.limit = Number(args.limit);
+  if (args.exclude_errors === 'true') args.exclude_errors = true;
+  else if (args.exclude_errors === 'false') args.exclude_errors = false;
   const limit = args.limit ?? 20;
   if (!Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > MAX_LIMIT) {
     throw new InputError(`每页条数应为 1 至 ${MAX_LIMIT} 的整数`);
   }
   const issue = problem(historyEvidenceInputSchema, args, '检索条件');
   if (issue) throw new InputError(issue);
-  const fields = args as Partial<Record<'query' | 'role_id' | 'since' | 'as_of' | 'commit' | 'after', string>>;
+  const fields = args as Partial<Record<'query' | 'role_id' | 'since' | 'as_of' | 'commit' | 'after' | 'exclude_run_id', string>> & { exclude_errors?: boolean };
   const since = instant(fields.since || undefined);
   const asOf = instant(fields.as_of || undefined);
   if (since !== undefined && asOf !== undefined && since > asOf) throw new InputError('起始时间应早于或等于截止时间');
@@ -83,7 +89,20 @@ function parseInput(input: unknown) {
   const query = fields.query ?? '';
   if (query.length > 240) throw new InputError('关键词最多 240 个字符');
   const words = [...new Set(query.toLowerCase().split(/\s+/).filter(Boolean))].sort();
-  return { words, roleId: fields.role_id || undefined, since, asOf, commit, after: fields.after || undefined, limit: limit as number };
+  const queryTokens = tokenizeForSearch(query);
+  return {
+    query,
+    words,
+    queryTokens,
+    roleId: fields.role_id || undefined,
+    since,
+    asOf,
+    commit,
+    excludeErrors: fields.exclude_errors === true,
+    excludeRunId: fields.exclude_run_id || undefined,
+    after: fields.after || undefined,
+    limit: limit as number,
+  };
 }
 
 function cursorOf(fingerprint: string, row: RunEvidenceRow): string {
@@ -132,8 +151,8 @@ function evidenceExcerpt(text: string | null, words: string[], limit = 420): str
 
 export function createHistoryEvidence(db: Pick<Db, 'all'>, knowledge: Store, readReport?: (runId: string) => RunReport | undefined) {
   return (projectId: string, input: unknown): HistoryEvidencePage => {
-    const { words, roleId, since, asOf, commit, after, limit } = parseInput(input);
-    const fingerprint = createHash('sha256').update(JSON.stringify([projectId, words, roleId, since, asOf, commit])).digest('base64url');
+    const { query, words, queryTokens, roleId, since, asOf, commit, excludeErrors, excludeRunId, after, limit } = parseInput(input);
+    const fingerprint = createHash('sha256').update(JSON.stringify([projectId, words, roleId, since, asOf, commit, excludeErrors, excludeRunId])).digest('base64url');
     const cursor = cursorPosition(after, fingerprint);
     const rows = db.all<RunEvidenceRow>(`
       SELECT run.rowid AS position, run.id, run.task_id, run.task_revision, run.ended_at,
@@ -169,12 +188,17 @@ export function createHistoryEvidence(db: Pick<Db, 'all'>, knowledge: Store, rea
     for (const row of rows) {
       if (items.length === limit || considered === SCAN_LIMIT) break;
       considered += 1;
+      if (excludeRunId !== undefined && row.id === excludeRunId) continue;
       const snapshot = held(row.snapshot_json);
       const role = record(snapshot?.role);
       const recordedRole = typeof role?.id === 'string' ? role.id : null;
       if (roleId !== undefined && recordedRole !== roleId) continue;
       const receipt = held(row.receipt_json);
       const settlement = held(row.error_json);
+      const report = readReport?.(row.id);
+      if (excludeErrors && row.exit_kind !== null && RUNTIME_ERROR_EXIT_KINDS.has(row.exit_kind) && receipt === undefined && report === undefined) {
+        continue;
+      }
       const commits = recordedCommits(snapshot, receipt, settlement);
       if (commit !== undefined && !commits.some(({ value }) => value.startsWith(commit))) continue;
       // The rest of the brief contains instructions, resident knowledge, and prior messages.
@@ -182,14 +206,23 @@ export function createHistoryEvidence(db: Pick<Db, 'all'>, knowledge: Store, rea
       const title = safeText(typeof snapshot?.brief === 'string' ? /^# ([^\r\n]+)/.exec(snapshot.brief)?.[1] : null);
       const summary = safeText(receipt?.summary);
       const reason = safeText(settlement?.reason);
-      const report = readReport?.(row.id);
       const delivered = row.started_at !== null && Array.isArray(snapshot?.knowledge) ? snapshot.knowledge as unknown[] : null;
       const versions = delivered?.map(readKnowledge).filter((entry) => entry !== undefined) ?? null;
       const searchable = [title, summary, reason, report?.text, ...(versions?.map(({ title }) => title) ?? [])].join('\n').toLowerCase();
-      if (!words.every((word) => searchable.includes(word))) continue;
-      const excerpt = report && words.some(word => report.text.toLowerCase().includes(word))
-        && !words.every(word => [title, summary, reason].join('\n').toLowerCase().includes(word)) ? report.text : reason !== null && (summary === null || (words.some((word) => reason.toLowerCase().includes(word))
-        && !words.some((word) => summary.toLowerCase().includes(word)))) ? reason : summary;
+      if (words.length > 0) {
+        const exactAll = words.every((word) => searchable.includes(word));
+        if (!exactAll) {
+          // Hybrid lexical fallback for multi-term CJK/Latin phrasing (e.g. "ClickHouse 内存限制"
+          // matching "ClickHouse max_server_memory_usage 容器内存"), gated by coverage floor.
+          const docTokens = new Set(tokenizeForSearch(searchable));
+          const minCov = queryTokens.length >= 3 ? Math.max(0.5, defaultMinCoverage(queryTokens)) : 1.0;
+          if (queryTokens.length === 0 || tokenCoverage(queryTokens, docTokens) < minCov) continue;
+        }
+      }
+      const matchTerms = words.length > 0 ? words : query ? [query.toLowerCase()] : [];
+      const excerpt = report && matchTerms.some(word => report.text.toLowerCase().includes(word))
+        && !matchTerms.every(word => [title, summary, reason].join('\n').toLowerCase().includes(word)) ? report.text : reason !== null && (summary === null || (matchTerms.some((word) => reason.toLowerCase().includes(word))
+        && !matchTerms.some((word) => summary.toLowerCase().includes(word)))) ? reason : summary;
       items.push({
         project_id: projectId,
         task_id: row.task_id,

@@ -309,6 +309,36 @@ export function createDispatcher(options: DispatcherOptions) {
         }
       }
     }
+    const wikiVaults = task.project_id === null || independent
+      ? []
+      : ledger.wiki.listProjectVaults(task.project_id)
+          .filter((v) => v.effective_commit !== null)
+          .map((v) => ({ vault_id: v.id, name: v.name, commit: v.effective_commit! }));
+    const crossProjectRefs = task.project_id === null || independent
+      ? []
+      : ledger.collaboration.listCrossProjectRefs({ projectId: task.project_id, direction: 'incoming' })
+          .map((r) => ({
+            id: r.id,
+            source_project_id: r.source_project_id,
+            ref_kind: r.ref_kind,
+            pinned_version: r.pinned_version,
+            title: r.title,
+            content_sha256: r.content_sha256,
+          }));
+    const contracts = task.project_id === null || independent
+      ? []
+      : ledger.collaboration.listTaskContracts({ projectId: task.project_id, taskId: task.id })
+          .map((c) => ({
+            id: c.id,
+            producer_task_id: c.producer_task_id,
+            consumer_task_id: c.consumer_task_id,
+            contract_name: c.contract_name,
+            artifact_path: c.artifact_path,
+            registered_version: c.registered_version,
+            status: c.status,
+            delivered_sha256: c.delivered_sha256,
+            delivery_summary: c.delivery_summary,
+          }));
     return prepareSnapshot(task, login, executors, {
       history: runs.map(historyEntry),
       ...(sessionRef ? { sessionRef } : {}),
@@ -335,6 +365,9 @@ export function createDispatcher(options: DispatcherOptions) {
       // A gate or curation round is handed its material as files of its snapshot (§3, §5.3).
       ...(job === null ? {} : { knowledgeTask: knowledgeTaskMaterial(ledger, job) }),
       ...(projectFiles.length > 0 ? { projectFiles } : {}),
+      ...(wikiVaults.length > 0 ? { wikiVaults } : {}),
+      ...(crossProjectRefs.length > 0 ? { crossProjectRefs } : {}),
+      ...(contracts.length > 0 ? { contracts } : {}),
     });
   }
 

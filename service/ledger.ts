@@ -33,6 +33,11 @@ import { createDegraded } from './degraded.ts';
 import { ConfirmationRequired, DegradedError, InputError } from './errors.ts';
 import { ulid } from './ids.ts';
 import { createKnowledge, DEFAULT_KNOWLEDGE_LIMITS, parseKnowledgeTask, type Change, type Entry, type KnowledgeLimits, type KnowledgeTask, type SweptKnowledgeTask } from './knowledge.ts';
+import { exportKnowledgeJsonl, importKnowledgeJsonl } from './knowledge-portable.ts';
+import { createWiki } from './wiki.ts';
+import { createCollaboration, type FrozenRefPayload } from './collaboration.ts';
+import { parseWikiCitation } from '../shared/wiki.ts';
+import { readProjectFileBytes } from './project-files.ts';
 import { ENTRY_MACHINES_SETTING_KEY, isDirectorySkillId, SKILL_REGISTRY_SETTING_KEY, TASK_TIMEOUTS_SETTING_KEY, type EffectiveContextReport, type EntryMachinesMap, type SkillDirectoryScan, type SkillRegistryBinding, type SkillRegistryMap } from '../shared/skill-catalog.ts';
 import { applicableDirectorySkills, buildEffectiveContext, isUnsafeSlug, parseEntryMachines, parseSkillRegistry, revisionForDirectorySkill, scanSkillDirectory, syncManagedSkills, validateMachineIds, validateSkillBinding } from './skill-catalog.ts';
 import { generatedSize, type HostVersionState } from './knowledge-brief.ts';
@@ -1305,6 +1310,76 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
     endTask: (taskId, reason, ctx) => endKnowledgeTask(taskId, reason, ctx),
     afterPublish: () => {
       onCommit(materializePublished);
+    },
+  });
+  const wiki = createWiki(db, write, {
+    listActiveKnowledge: () => knowledge.listEntries({ includeRetired: false }),
+  });
+  const collaboration = createCollaboration(db, write, {
+    resolveRefContent: (sourceProjectId, refKind, sourceRefId, pinnedVersion): FrozenRefPayload => {
+      const sha = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
+      if (refKind === 'knowledge') {
+        const revNum = pinnedVersion ? Number(pinnedVersion) : undefined;
+        const rev = knowledge.readRevision(sourceRefId, Number.isInteger(revNum) ? revNum : undefined);
+        if (!rev || (rev.project_ids !== null && !rev.project_ids.includes(sourceProjectId))) {
+          throw new InputError(`源项目中不存在可引用的知识修订：${sourceRefId}`);
+        }
+        const text = `# ${rev.title}\n\n${rev.body}`;
+        return {
+          title: rev.title,
+          summary: rev.when_to_use.slice(0, 240),
+          pinned_version: String(rev.revision),
+          content_sha256: sha(text),
+          frozen_bytes: Buffer.byteLength(text, 'utf8'),
+          text,
+        };
+      }
+      if (refKind === 'wiki_page') {
+        const parsed = parseWikiCitation(sourceRefId);
+        if (!parsed) throw new InputError(`Wiki 页面引用须形如 wiki:<vault_id>/<page_id>：${sourceRefId}`);
+        const page = wiki.readPage(parsed.vaultId, parsed.pageId, { projectId: sourceProjectId, commit: pinnedVersion ?? parsed.commit });
+        const text = `# ${page.title}\n\n${page.body}`;
+        return {
+          title: page.title,
+          summary: page.summary,
+          pinned_version: page.commit_sha,
+          content_sha256: page.content_sha256,
+          frozen_bytes: Buffer.byteLength(text, 'utf8'),
+          text,
+        };
+      }
+      if (refKind === 'project_file') {
+        const file = db.get<ProjectFileRow>('SELECT * FROM project_file WHERE id = ? AND project_id = ?', sourceRefId, sourceProjectId);
+        if (!file) throw new InputError(`源项目中不存在项目文件：${sourceRefId}`);
+        const baseDir = dirname(path);
+        const raw = readProjectFileBytes(baseDir, sourceProjectId, file.id);
+        const text = raw ? raw.toString('utf8') : file.summary ?? '';
+        return {
+          title: file.name,
+          summary: file.summary ?? `${file.mime} (${file.size} bytes)`,
+          pinned_version: pinnedVersion ?? file.sha256.slice(0, 12),
+          content_sha256: file.sha256,
+          frozen_bytes: file.size,
+          text,
+        };
+      }
+      // `artifact`: recorded run report or receipt summary from a settled run of the source project
+      const run = db.get<RunRow>(
+        `SELECT run.* FROM run JOIN task ON task.id = run.task_id WHERE run.id = ? AND task.project_id = ?`,
+        sourceRefId, sourceProjectId,
+      );
+      if (!run) throw new InputError(`源项目中不存在可引用的 Run 产物：${sourceRefId}`);
+      const report = runReport(run.id);
+      const receipt = run.receipt_json ? (JSON.parse(run.receipt_json) as { summary?: string }) : null;
+      const text = report?.text ?? receipt?.summary ?? '';
+      return {
+        title: `Run ${run.id} 交付产物`,
+        summary: (receipt?.summary ?? text).slice(0, 240),
+        pinned_version: pinnedVersion ?? `rev-${run.task_revision}`,
+        content_sha256: report?.sha256 ?? sha(text),
+        frozen_bytes: Buffer.byteLength(text, 'utf8'),
+        text,
+      };
     },
   });
   materializePublished();
@@ -3340,6 +3415,10 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
       if (orphanOutboxIds.length > 0) db.run(`DELETE FROM outbox WHERE id IN (${marks(orphanOutboxIds)})`, ...orphanOutboxIds);
       db.run('DELETE FROM front_desk WHERE project_id = ?', projectId);
       db.run('DELETE FROM im_group_binding WHERE project_id = ?', projectId);
+      db.run('DELETE FROM wiki_grant WHERE project_id = ?', projectId);
+      db.run('UPDATE wiki_proposal SET project_id = NULL WHERE project_id = ?', projectId);
+      db.run('DELETE FROM cross_project_ref WHERE source_project_id = ? OR target_project_id = ?', projectId, projectId);
+      db.run('DELETE FROM task_contract WHERE project_id = ?', projectId);
       if (taskIds.length > 0) db.run(`DELETE FROM task WHERE id IN (${marks(taskIds)})`, ...taskIds);
       db.run('DELETE FROM project WHERE id = ?', projectId);
       const registry = readSkillRegistry();
@@ -3472,6 +3551,11 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
     },
     ...messages,
     ...knowledge,
+    wiki,
+    collaboration,
+    exportKnowledgeJsonl: (opts?: { includeRetired?: boolean }) => exportKnowledgeJsonl(knowledge, opts),
+    importKnowledgeJsonl: (jsonl: string, opts: { dryRun?: boolean; targetProjectIds?: string[] | null; ctx: Ctx }) =>
+      importKnowledgeJsonl(knowledge, jsonl, opts),
     applicable: (projectId: string | null, roleId: string | null, from?: readonly Entry[], machineId: string | null = null): Entry[] =>
       from !== undefined ? knowledge.applicable(projectId, roleId, from) : applicableAll(projectId, roleId, machineId),
     getDirectorySkillEntry: directorySkillEntry,
@@ -3692,7 +3776,11 @@ export function openLedger(path: string, options: LedgerOptions = {}) {
       channels = next;
     },
     recover: degraded.recover,
-    close: () => db.close(),
+    close: () => {
+      knowledge.closeSearchIndex();
+      wiki.closeSearchIndex();
+      db.close();
+    },
     // That something the ledger keeps has changed: what a page shows may be out of date.
     onChange: (listener: () => void): (() => void) => db.onCommit(listener),
     // Lets one tool call commit several operations as a whole.

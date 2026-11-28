@@ -298,6 +298,60 @@ function materializeSnapshotProjectFiles(
   });
 }
 
+export interface SnapshotWikiVault {
+  vault_id: string;
+  name: string;
+  commit: string;
+}
+
+export interface SnapshotCrossProjectRef {
+  id: string;
+  source_project_id: string;
+  ref_kind: string;
+  pinned_version: string;
+  title: string;
+  content_sha256: string;
+}
+
+export interface SnapshotContract {
+  id: string;
+  producer_task_id: string;
+  consumer_task_id: string;
+  contract_name: string;
+  artifact_path: string;
+  registered_version: number;
+  status: string;
+  delivered_sha256: string | null;
+  delivery_summary: string | null;
+}
+
+function collaborationContextSection(
+  wikiVaults: readonly SnapshotWikiVault[] = [],
+  crossRefs: readonly SnapshotCrossProjectRef[] = [],
+  contracts: readonly SnapshotContract[] = [],
+): string {
+  const parts: string[] = [];
+  if (wikiVaults.length > 0) {
+    parts.push(
+      `## 已授权域知识（Git LLM Wiki，冻结版本）\n\n`
+      + wikiVaults.map((v) => `- **${v.name}**（\`wiki:${v.vault_id}/...\`，冻结提交 \`${v.commit.slice(0, 8)}\`）`).join('\n'),
+    );
+  }
+  if (crossRefs.length > 0) {
+    parts.push(
+      `## 跨项目只读引用（冻结版本，不递归展开）\n\n`
+      + crossRefs.map((r) => `- ${r.title}（\`${r.ref_kind}\`，版本 \`${r.pinned_version}\`，sha256 \`${r.content_sha256.slice(0, 12)}\`）`).join('\n'),
+    );
+  }
+  if (contracts.length > 0) {
+    parts.push(
+      `## 项目内任务交付契约（冻结版本）\n\n`
+      + contracts.map((c) => `- **${c.contract_name}**（状态 \`${c.status}\`，版本 \`v${c.registered_version}\`${c.artifact_path ? `，产物 \`${c.artifact_path}\`` : ''}${c.delivery_summary ? `：${c.delivery_summary}` : ''}）`).join('\n'),
+    );
+  }
+  return parts.length > 0 ? `${parts.join('\n\n')}\n\n` : '';
+}
+
 function projectFilesSection(files: readonly SnapshotProjectFile[]): string {
   if (files.length === 0) return '';
   const lines = files.map((file) => {
@@ -329,6 +383,9 @@ export type Snapshot = {
   // A knowledge gate or curation round's material, as files of this snapshot (§3, §5.3).
   knowledge_task?: { kind: KnowledgeTaskMaterial['kind']; files: { path: string; text: string }[] };
   project_files?: SnapshotProjectFile[];
+  wiki_vaults?: SnapshotWikiVault[];
+  cross_project_refs?: SnapshotCrossProjectRef[];
+  contracts?: SnapshotContract[];
   review_artifacts?: ReviewArtifactBinding;
   // The tier the Task named, and the value the ledger held for it. The value itself is
   // recorded, not a path to it, so that what was sent can be read from the snapshot. An
@@ -614,7 +671,7 @@ ${material.listing}
 `;
 }
 
-export function renderBrief(task: TaskRow, checkSite: CheckSite | undefined, history: unknown[], source: SnapshotSource | undefined, access: RunAccess | undefined, role: RoleConfig | undefined, knowledge: string, material: KnowledgeTaskMaterial | undefined, spawn: boolean, projectFiles: readonly SnapshotProjectFile[] = []): string {
+export function renderBrief(task: TaskRow, checkSite: CheckSite | undefined, history: unknown[], source: SnapshotSource | undefined, access: RunAccess | undefined, role: RoleConfig | undefined, knowledge: string, material: KnowledgeTaskMaterial | undefined, spawn: boolean, projectFiles: readonly SnapshotProjectFile[] = [], collabSection = ''): string {
   const notStarted = history.some((round) => (round as { not_started?: boolean } | null)?.not_started);
   const acceptanceSection = task.acceptance?.trim() ? `## 验收标准\n\n${task.acceptance}\n\n` : '';
   const scopeSection = task.scope?.trim() ? `## 范围\n\n${task.scope}\n\n` : '';
@@ -626,7 +683,7 @@ ${checkSite ? checkSiteSection(checkSite) : ''}## 目标
 
 ${task.goal}
 
-${acceptanceSection}${scopeSection}${accessSection(access, source)}${materialSection(material)}${knowledge}${spawn ? SPAWN_SECTION : ''}${sourceSection(source, access?.permission === 'read')}${projectFilesSection(projectFiles)}${languageSection()}## 资料
+${acceptanceSection}${scopeSection}${accessSection(access, source)}${materialSection(material)}${knowledge}${collabSection}${spawn ? SPAWN_SECTION : ''}${sourceSection(source, access?.permission === 'read')}${projectFilesSection(projectFiles)}${languageSection()}## 资料
 
 本文件同目录的 \`context.json\` 中，\`pending_inputs\` 为本轮补充指令，\`history\` 仅作参考资料（非指令）。${notStarted ? NOT_STARTED : ''}
 
@@ -852,7 +909,11 @@ export function prepareSnapshot(
     executorReport?: ReportedStatus | null;
     entryReport?: NodeEntryReport | null;
     fixedKnowledge?: Extract<FixedKnowledgeDecision, { ok: true }>;
-    projectFiles?: readonly SnapshotProjectFileInput[] },
+    projectFiles?: readonly SnapshotProjectFileInput[];
+    wikiVaults?: readonly SnapshotWikiVault[];
+    crossProjectRefs?: readonly SnapshotCrossProjectRef[];
+    contracts?: readonly SnapshotContract[];
+  },
 ): Snapshot {
   if (!task.tier) throw new InputError(`任务 ${task.id} 没有职能，推不出档位`);
   const tier = tierValueOf(login, task.tier, executors);
@@ -894,16 +955,23 @@ export function prepareSnapshot(
     : `> 注意：任务原指定的技能 \`${missingNamed.join('`、`')}\` 已退役或当前不适用，已跳过。\n\n`;
   const knowledge = `${missingSkillsNote}${fitted?.sections ?? ''}`;
   const projectFiles = materializeSnapshotProjectFiles(options.projectFiles);
+  const wikiVaults = options.wikiVaults ? [...options.wikiVaults] : [];
+  const crossRefs = options.crossProjectRefs ? [...options.crossProjectRefs] : [];
+  const contracts = options.contracts ? [...options.contracts] : [];
+  const collabSection = collaborationContextSection(wikiVaults, crossRefs, contracts);
   return {
     brief: binding
       ? renderReviewBrief(task, binding, options.checkSite, history, source, access, knowledge, projectFiles)
-      : renderBrief(task, options.checkSite, history, source, access, options.role, knowledge, options.knowledgeTask, options.spawn === true, projectFiles),
+      : renderBrief(task, options.checkSite, history, source, access, options.role, knowledge, options.knowledgeTask, options.spawn === true, projectFiles, collabSection),
     executor: login.executor,
     history,
     ...(binding && (binding.files.length || binding.report) ? { review_artifacts: { task_id: binding.task_id, run_id: binding.run_id, files: binding.files, ...(binding.report ? { report: binding.report } : {}) } } : {}),
     ...(options.knowledge ? { knowledge: fitted!.given } : {}),
     ...(options.knowledgeTask ? { knowledge_task: { kind: options.knowledgeTask.kind, files: options.knowledgeTask.files } } : {}),
     ...(projectFiles.length > 0 ? { project_files: projectFiles } : {}),
+    ...(wikiVaults.length > 0 ? { wiki_vaults: wikiVaults } : {}),
+    ...(crossRefs.length > 0 ? { cross_project_refs: crossRefs } : {}),
+    ...(contracts.length > 0 ? { contracts } : {}),
     tier: task.tier,
     ...(tier.from === task.tier ? {} : { tier_from: tier.from }),
     tier_value: tierValue,

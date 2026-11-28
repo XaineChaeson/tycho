@@ -5,7 +5,7 @@
 // the self-check, the service's own state, what a Run is doing now) is also read on a clock.
 import { api } from './api.ts';
 import type { ExecutorFleetStatus } from '@shared/executor-updates.ts';
-import type { AccountsAndMachines, Approval, DoctorCheck, ImGroupsPage, InboundPage, KnowledgeEntryPage, KnowledgePage, KnowledgeProposalPage, Overview, PendingJoin, Project, ProjectFileSummary, ProjectGroupsPage, Role, ServiceState, SettingsPage, Task, TaskPage, TriggersPage } from './types.ts';
+import type { AccountsAndMachines, Approval, DoctorCheck, DotfilesBoundaryReport, ImGroupsPage, InboundPage, KnowledgeEntryPage, KnowledgePage, KnowledgeProposalPage, Overview, PendingJoin, Project, ProjectCollaborationPage, ProjectFileSummary, ProjectGroupsPage, Role, ServiceState, SettingsPage, Task, TaskPage, TriggersPage, WikiConsolePage } from './types.ts';
 
 // How often a read of what no event tells of is made again.
 export const POLL_MS = 15_000;
@@ -151,4 +151,21 @@ export const projectGroupsQuery = (projectId: string) => ({
   queryKey: [PAGE, 'project-groups', projectId],
   queryFn: () => api<ProjectGroupsPage>(`/api/projects/${encodeURIComponent(projectId)}/groups`),
   refetchInterval: POLL_MS,
+});
+
+export const WIKI = [PAGE, 'wiki'];
+
+export const wikiQuery = {
+  queryKey: WIKI,
+  queryFn: () => api<WikiConsolePage>('/api/wiki'),
+};
+
+export const dotfilesBoundaryQuery = {
+  queryKey: [PAGE, 'dotfiles-boundary'],
+  queryFn: () => api<DotfilesBoundaryReport>('/api/knowledge/dotfiles-boundary'),
+};
+
+export const projectCollaborationQuery = (projectId: string) => ({
+  queryKey: [PAGE, 'project-collaboration', projectId],
+  queryFn: () => api<ProjectCollaborationPage>(`/api/projects/${encodeURIComponent(projectId)}/collaboration`),
 });

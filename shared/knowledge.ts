@@ -12,6 +12,9 @@ import { localeMap, onLocaleChange, t } from './i18n.ts';
 
 export const KNOWLEDGE_MCP = 'tycho-knowledge';
 
+export const MAX_SEARCH_PHRASES = 3;
+export const MAX_SEARCH_PHRASE_CHARS = 80;
+
 export const KNOWLEDGE_KINDS = ['knowledge', 'skill'] as const;
 export type KnowledgeKind = (typeof KNOWLEDGE_KINDS)[number];
 export const KIND_LABELS: Readonly<Record<KnowledgeKind, string>> = localeMap({

@@ -43,6 +43,7 @@ import type { Nodes } from './nodes.ts';
 import { candidateLogins } from './pick.ts';
 import type { Reported } from './readonly.ts';
 import { KNOWLEDGE_KINDS } from '../shared/knowledge.ts';
+import { parseWikiCitation } from '../shared/wiki.ts';
 import { parseTaskPrefer } from '../shared/tasks.ts';
 import { createLibrary, PROPOSE_DESCRIPTION } from './library.ts';
 import { historyEvidenceInputSchema } from './history-evidence.ts';
@@ -1218,11 +1219,11 @@ export function createTools({ ledger, dataDir, github, runner, readReport, login
     },
     {
       name: 'read_library',
-      description: '读一条全局或这个项目的知识或技能的一个修订：不填 revision 读现在的修订。返回正文、作用域、它是谁提议谁批准的，以及支撑这一修订的证据。',
+      description: '读一条全局或这个项目的知识或技能的一个修订，或读已授权 Git LLM Wiki 页面（id 填 wiki:<vault_id>/<page_id>[@commit]）：不填 revision 读现在的修订。返回正文、作用域、来源和证据。',
       inputSchema: libraryTool('read_library').inputSchema,
       run(args, ctx, here) {
-        ownEntry(here, args.id, true);
-        return libraryTool('read_library').run(args, caller(ctx, here));
+        if (!parseWikiCitation(args.id)) ownEntry(here, args.id, true);
+        return libraryTool('read_library').run({ ...args, project_id: here.projectId }, caller(ctx, here));
       },
     },
     {
@@ -1238,6 +1239,124 @@ export function createTools({ ledger, dataDir, github, runner, readReport, login
         }
         for (const input of (args.inputs ?? []) as { knowledge_id?: unknown }[]) if (typeof input.knowledge_id === 'string') ownEntry(here, input.knowledge_id);
         return libraryTool('propose_learning').run(args, caller(ctx, here));
+      },
+    },
+    {
+      name: 'list_wiki_vaults',
+      description: '列出本项目已获授权的 Git LLM Wiki 知识库（名称、固定发布提交号、页数及是否允许提交修订提议）。',
+      inputSchema: object({}),
+      run(_args, _ctx, here) {
+        const vaults = ledger.wiki.listProjectVaults(here.projectId);
+        return json({
+          vaults: vaults.map((v) => ({
+            id: v.id,
+            name: v.name,
+            description: v.description,
+            commit: v.effective_commit,
+            page_count: v.page_count,
+            can_propose: v.grant.can_propose,
+          })),
+        });
+      },
+    },
+    {
+      name: 'propose_wiki_update',
+      description: '向本项目有提议权限的 Git LLM Wiki 提交页面修订提议（CAS 防覆盖，且硬性保护人类锁定区块）。',
+      inputSchema: object({
+        vault_id: described('Wiki 知识库编号'),
+        path: described('仓库内相对 Markdown 路径，例如 topics/dmob-10.md'),
+        new_content: described('完整的修订后 Markdown 正文'),
+        rationale: described('修订理由与依据'),
+        base_commit: described('可选：读取页面时的提交号'),
+        base_mutation_version: { type: 'integer', description: '可选：读取页面时的 mutation_version' },
+      }, ['vault_id', 'path', 'new_content']),
+      run(args, ctx, here) {
+        return libraryTool('propose_wiki_update').run({ ...args, project_id: here.projectId }, caller(ctx, here));
+      },
+    },
+    {
+      name: 'list_project_refs',
+      description: '列出其他项目显式授权给本项目的固定版本跨项目只读引用（不含未授权项目的对话与仓库）。',
+      inputSchema: object({}),
+      run(_args, _ctx, here) {
+        const refs = ledger.collaboration.listCrossProjectRefs({ projectId: here.projectId, direction: 'incoming' });
+        return json({ refs });
+      },
+    },
+    {
+      name: 'read_project_ref',
+      description: '读取一条显式授权给本项目的跨项目只读引用（冻结版本，不递归展开）。',
+      inputSchema: object({ ref_id: described('跨项目引用编号') }, ['ref_id']),
+      run({ ref_id }, _ctx, here) {
+        return json(ledger.collaboration.readCrossProjectRef(here.projectId, ref_id));
+      },
+    },
+    {
+      name: 'create_task_contract',
+      description: '在本项目内两个任务之间登记一条交付契约（生产方 → 消费方 + 产物路径），用于结构化交接与阻塞澄清（不允许跨项目）。',
+      inputSchema: object({
+        producer_task_id: described('生产方任务编号'),
+        consumer_task_id: described('消费方任务编号'),
+        contract_name: described('契约名称，例如 api-schema-v2'),
+        artifact_path: described('可选：契约产物路径或引用'),
+      }, ['producer_task_id', 'consumer_task_id', 'contract_name']),
+      run(args, ctx, here) {
+        return json(ledger.collaboration.createTaskContract({
+          project_id: here.projectId,
+          producer_task_id: args.producer_task_id,
+          consumer_task_id: args.consumer_task_id,
+          contract_name: args.contract_name,
+          artifact_path: args.artifact_path,
+        }, ctx));
+      },
+    },
+    {
+      name: 'list_task_contracts',
+      description: '列出本项目内（或指定任务相关的）交付契约、已登记版本号及阻塞澄清记录。',
+      inputSchema: object({ task_id: described('可选：只看涉及该任务的契约') }),
+      run({ task_id }, _ctx, here) {
+        return json({ contracts: ledger.collaboration.listTaskContracts({ projectId: here.projectId, ...(task_id ? { taskId: task_id } : {}) }) });
+      },
+    },
+    {
+      name: 'deliver_task_contract',
+      description: '登记某条任务交付契约的新版本产物（账本自动合并状态变更，避免唤醒扇出雪崩）。',
+      inputSchema: object({
+        contract_id: described('契约编号'),
+        artifact_path: described('可选：更新后的产物路径'),
+        delivery_summary: described('本版交付摘要与变更说明'),
+        run_id: described('可选：产出该版本的 Run 编号'),
+      }, ['contract_id']),
+      run({ contract_id, artifact_path, delivery_summary, run_id }, ctx, here) {
+        return json(ledger.collaboration.deliverTaskContract(contract_id, {
+          artifact_path,
+          delivery_summary,
+          run_id: run_id ?? null,
+          expected_project_id: here.projectId,
+        }, ctx));
+      },
+    },
+    {
+      name: 'block_task_contract',
+      description: '消费方标记契约阻塞并提交一条有界澄清问题（绑定生产方任务修订号与契约版本）。',
+      inputSchema: object({
+        contract_id: described('契约编号'),
+        question: described('结构化阻塞澄清问题'),
+      }, ['contract_id', 'question']),
+      run({ contract_id, question }, ctx, here) {
+        return json(ledger.collaboration.blockTaskContract(contract_id, { question, expected_project_id: here.projectId }, ctx));
+      },
+    },
+    {
+      name: 'clarify_task_contract',
+      description: '答复交付契约中的阻塞澄清项并推进契约状态。',
+      inputSchema: object({
+        contract_id: described('契约编号'),
+        clarification_id: described('可选：指定某条澄清编号，不填默认回复最新未答复项'),
+        answer: described('澄清结论'),
+      }, ['contract_id', 'answer']),
+      run({ contract_id, clarification_id, answer }, ctx, here) {
+        return json(ledger.collaboration.clarifyTaskContract(contract_id, { clarification_id, answer, expected_project_id: here.projectId }, ctx));
       },
     },
     {

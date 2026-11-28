@@ -3,7 +3,8 @@
 // its own, so the console and a command line ask the same questions. A fact that only a
 // running service has (the Router process, what the Runner has learned about machines,
 // the WeCom connection) may be absent, and its check then says so instead of guessing.
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, existsSync, lstatSync, readFileSync, readlinkSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { missingLoginText } from '../shared/labels.ts';
 import { expiryDay } from '../shared/credential.ts';
 import { HOST_MACHINE_UNKNOWN_TEXT, loginName as loginLabel, loginPage, type LoginDisplay, type RetiredTier } from '../shared/logins.ts';
@@ -457,6 +458,100 @@ export function deploymentFacts(facts: Pick<DoctorInput, 'dataDir' | 'claude'> &
     ...(pending.length > 0 ? [{ title: '已保存，重启负责人后生效', value: pending.join('；') }] : []),
     { title: `负责人的 ${loginLabelOf(exec)} 登录`, value: login },
   ];
+}
+
+export interface DotfilesBoundaryItem {
+  executor: string;
+  path: string;
+  ownership: 'tycho_managed' | 'coexist_block' | 'external_dotfiles' | 'collision_risk' | 'absent';
+  detail: string;
+  symlink_target?: string;
+}
+
+export interface DotfilesBoundaryReport {
+  home_dir: string;
+  chezmoi_detected: boolean;
+  items: DotfilesBoundaryItem[];
+}
+
+const TYCHO_MANAGED_MARKER = /tycho:global-entry|由 tycho 生成/;
+
+// Read-only audit of external dotfiles (e.g. chezmoi / symlinks) vs Tycho's managed global
+// instruction blocks so each path has a clear single write owner.
+export function inspectDotfilesBoundary(home = homedir()): DotfilesBoundaryReport {
+  const chezmoiDetected = existsSync(join(home, '.local', 'share', 'chezmoi'))
+    || existsSync(join(home, '.config', 'chezmoi'))
+    || existsSync(join(home, '.chezmoi.toml'))
+    || existsSync(join(home, '.chezmoi.yaml'));
+  const targets: { executor: string; path: string }[] = [
+    { executor: 'claude', path: join(home, '.claude', 'CLAUDE.md') },
+    { executor: 'codex', path: join(home, '.codex', 'AGENTS.md') },
+    { executor: 'gemini', path: join(home, '.gemini', 'GEMINI.md') },
+    { executor: 'dsh', path: join(home, '.dsh', 'AGENTS.md') },
+  ];
+  const items: DotfilesBoundaryItem[] = targets.map(({ executor, path }) => {
+    try {
+      const st = lstatSync(path);
+      const isSymlink = st.isSymbolicLink();
+      const target = isSymlink ? readlinkSync(path) : undefined;
+      let content = '';
+      try {
+        content = readFileSync(path, 'utf8');
+      } catch {
+        content = '';
+      }
+      const hasTychoMarker = TYCHO_MANAGED_MARKER.test(content);
+      const hasManagedBlock = /<!--\s*tycho:global-entry:start/.test(content);
+      if (isSymlink && hasTychoMarker) {
+        return {
+          executor,
+          path,
+          ownership: 'collision_risk',
+          detail: '该入口既是符号链接（外部 dotfiles 管理）又含 Tycho 标记，存在双写冲突风险；建议改用 coexist 托管块或把原生 dotfiles 与 Tycho 路径分离',
+          ...(target ? { symlink_target: target } : {}),
+        };
+      }
+      if (isSymlink) {
+        return {
+          executor,
+          path,
+          ownership: 'external_dotfiles',
+          detail: '由外部 dotfiles / 符号链接管理（单一写主，Tycho 不覆盖）',
+          ...(target ? { symlink_target: target } : {}),
+        };
+      }
+      if (hasManagedBlock) {
+        return {
+          executor,
+          path,
+          ownership: 'coexist_block',
+          detail: '和平共存模式：外部 dotfiles 与 Tycho 托管块分段隔离',
+        };
+      }
+      if (hasTychoMarker) {
+        return {
+          executor,
+          path,
+          ownership: 'tycho_managed',
+          detail: '由 Tycho 独占管理（请勿在 chezmoi / dotfiles 仓库中追踪此文件）',
+        };
+      }
+      return {
+        executor,
+        path,
+        ownership: 'external_dotfiles',
+        detail: chezmoiDetected ? '本地个人配置（如由 chezmoi 管理，请保持独立，勿塞进 Tycho Skill）' : '本地个人配置文件（非 Tycho 写入）',
+      };
+    } catch {
+      return {
+        executor,
+        path,
+        ownership: 'absent',
+        detail: '文件不存在（可由外部 dotfiles 或 Tycho 择一管理）',
+      };
+    }
+  });
+  return { home_dir: home, chezmoi_detected: chezmoiDetected, items };
 }
 
 export function doctor(input: DoctorInput): DoctorCheck[] {

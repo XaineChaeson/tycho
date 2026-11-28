@@ -28,7 +28,9 @@ import type { OrphanReport, Runner } from '../runner/runner.ts';
 import type { Auth } from './auth.ts';
 import type { Backups } from './backup.ts';
 import { deadLinkPage, deviceLoginFullPage, endedDeviceLoginPage, enterPage, notBuiltPage, tooManyPage, waitDeviceLoginPage } from './auth.ts';
-import type { DoctorCheck } from './doctor.ts';
+import { inspectDotfilesBoundary, type DoctorCheck } from './doctor.ts';
+import { toJsonSchemaToolsList } from './tool-schema.ts';
+import { KNOWLEDGE_MCP } from '../shared/knowledge.ts';
 import { assertSteady } from './degraded.ts';
 import { ConfirmationRequired, DegradedError, InputError } from './errors.ts';
 import { hostZone } from './schedule.ts';
@@ -4463,10 +4465,248 @@ export function createHttp(options: HttpOptions) {
     { method: 'POST', path: '/api/knowledge/entry/repair', outside: true, handle: ({ request, response }) => repairKnowledgeEntry(request, response) },
     { method: 'POST', path: '/api/knowledge/clients', outside: true, handle: addKnowledgeClient },
     { method: 'GET', path: '/api/knowledge/clients/:id/token', outside: true, handle: knowledgeClientToken },
+    { method: 'POST', path: '/api/knowledge/clients/:id/rotate', outside: true, handle: rotateKnowledgeClient },
     { method: 'POST', path: '/api/knowledge/clients/:id/revoke', outside: true, handle: revokeKnowledgeClient },
-    // The knowledge MCP: on this machine by its own token, from a machine elsewhere by that
-    // machine's node token plus the MCP token in a header of its own.
+    {
+      method: 'GET', path: '/api/knowledge/export.jsonl', outside: true,
+      handle: ({ url, response }) => {
+        const includeRetired = url.searchParams.get('include_retired') === '1';
+        const content = ledger.exportKnowledgeJsonl({ includeRetired });
+        response.writeHead(200, {
+          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Content-Disposition': 'attachment; filename="tycho-knowledge.jsonl"',
+        });
+        response.end(content);
+      },
+    },
+    {
+      method: 'POST', path: '/api/knowledge/import.jsonl', outside: true,
+      handle: async ({ request, response }) => {
+        const body = await readJson(request);
+        const jsonl = typeof body.jsonl === 'string' ? body.jsonl : '';
+        const targetProjectIds = body.target_project_ids === undefined
+          ? undefined
+          : (body.target_project_ids === null ? null : (Array.isArray(body.target_project_ids) ? body.target_project_ids as string[] : undefined));
+        sendJson(response, 200, ledger.importKnowledgeJsonl(jsonl, {
+          dryRun: body.dry_run === true,
+          ...(targetProjectIds !== undefined ? { targetProjectIds } : {}),
+          ctx: { actor: CONSOLE_ACTOR },
+        }));
+      },
+    },
+    {
+      method: 'GET', path: '/api/knowledge/dotfiles-boundary', outside: true,
+      handle: ({ response }) => sendJson(response, 200, inspectDotfilesBoundary()),
+    },
+    // Git-backed LLM Wiki endpoints
+    {
+      method: 'GET', path: '/api/wiki', outside: true,
+      handle: ({ response }) => sendJson(response, 200, {
+        vaults: ledger.wiki.listVaults(),
+        proposals: ledger.wiki.listProposals(),
+        projects: ledger.listProjects().map(({ id, name }) => ({ id, name })),
+      }),
+    },
+    {
+      method: 'POST', path: '/api/wiki/vaults', outside: true,
+      handle: async ({ request, response }) => {
+        const body = await readJson(request);
+        sendJson(response, 201, ledger.wiki.createVault({
+          name: body.name,
+          repo_path: body.repo_path,
+          branch: body.branch,
+          description: body.description,
+          autoSync: body.auto_sync !== false,
+        }, { actor: CONSOLE_ACTOR }));
+      },
+    },
+    {
+      method: 'DELETE', path: '/api/wiki/vaults/:id', outside: true,
+      handle: ({ response, params: [id] }) => {
+        ledger.wiki.deleteVault(id!, { actor: CONSOLE_ACTOR });
+        sendJson(response, 200, { ok: true });
+      },
+    },
+    {
+      method: 'POST', path: '/api/wiki/vaults/:id/sync', outside: true,
+      handle: async ({ request, response, params: [id] }) => {
+        const body = await readJson(request);
+        const commit = typeof body.commit === 'string' && body.commit.trim() !== '' ? body.commit.trim() : undefined;
+        sendJson(response, 200, ledger.wiki.syncVault(id!, { actor: CONSOLE_ACTOR }, commit));
+      },
+    },
+    {
+      method: 'GET', path: '/api/wiki/vaults/:id/lint', outside: true,
+      handle: ({ response, params: [id] }) => sendJson(response, 200, ledger.wiki.lintVault(id!)),
+    },
+    {
+      method: 'GET', path: '/api/wiki/vaults/:id/pages', outside: true,
+      handle: ({ response, params: [id] }) => sendJson(response, 200, { pages: ledger.wiki.listPages(id!) }),
+    },
+    {
+      method: 'GET', path: '/api/wiki/vaults/:id/page', outside: true,
+      handle: ({ url, response, params: [id] }) => {
+        const pageId = url.searchParams.get('page_id') ?? '';
+        const commit = url.searchParams.get('commit') ?? undefined;
+        sendJson(response, 200, ledger.wiki.readPage(id!, pageId, commit ? { commit } : undefined));
+      },
+    },
+    {
+      method: 'GET', path: '/api/wiki/search', outside: true,
+      handle: ({ url, response }) => {
+        const query = url.searchParams.get('q') ?? '';
+        const vaultId = url.searchParams.get('vault_id') ?? undefined;
+        const projectId = url.searchParams.get('project_id') ?? undefined;
+        sendJson(response, 200, { hits: ledger.wiki.searchPages({ query, ...(vaultId ? { vaultId } : {}), ...(projectId ? { projectId } : {}) }) });
+      },
+    },
+    {
+      method: 'POST', path: '/api/wiki/vaults/:id/grants', outside: true,
+      handle: async ({ request, response, params: [id] }) => {
+        const body = await readJson(request);
+        sendJson(response, 200, {
+          grant: ledger.wiki.grantProject(id!, {
+            project_id: body.project_id,
+            pinned_commit: body.pinned_commit,
+            can_propose: body.can_propose === true,
+          }, { actor: CONSOLE_ACTOR }),
+        });
+      },
+    },
+    {
+      method: 'DELETE', path: '/api/wiki/vaults/:id/grants/:projectId', outside: true,
+      handle: ({ response, params: [id, projectId] }) => {
+        ledger.wiki.revokeProject(id!, projectId!, { actor: CONSOLE_ACTOR });
+        sendJson(response, 200, { ok: true });
+      },
+    },
+    {
+      method: 'POST', path: '/api/wiki/proposals', outside: true,
+      handle: async ({ request, response }) => {
+        const body = await readJson(request);
+        sendJson(response, 201, {
+          proposal: ledger.wiki.proposeUpdate({
+            vault_id: body.vault_id,
+            project_id: typeof body.project_id === 'string' && body.project_id ? body.project_id : null,
+            path: body.path,
+            new_content: body.new_content,
+            rationale: body.rationale,
+            base_commit: body.base_commit,
+            base_mutation_version: body.base_mutation_version,
+            proposed_by: CONSOLE_ACTOR,
+            source: 'console',
+          }, { actor: CONSOLE_ACTOR }),
+        });
+      },
+    },
+    {
+      method: 'POST', path: '/api/wiki/proposals/:id/decide', outside: true,
+      handle: async ({ request, response, params: [id] }) => {
+        const body = await readJson(request);
+        const action = body.action === 'approve' || body.action === 'reject' ? body.action : null;
+        if (!action) throw new InputError('action 只能是 approve 或 reject');
+        sendJson(response, 200, ledger.wiki.decideProposal(id!, { action, ...(typeof body.reason === 'string' ? { reason: body.reason } : {}) }, { actor: CONSOLE_ACTOR }));
+      },
+    },
+    // Cross-project pinned refs & intra-project task artifact contracts
+    {
+      method: 'GET', path: '/api/projects/:id/collaboration', outside: true,
+      handle: ({ response, params: [id] }) => {
+        ledger.getProject(id!);
+        sendJson(response, 200, {
+          incoming_refs: ledger.collaboration.listCrossProjectRefs({ projectId: id!, direction: 'incoming', includeRevoked: true }),
+          outgoing_refs: ledger.collaboration.listCrossProjectRefs({ projectId: id!, direction: 'outgoing', includeRevoked: true }),
+          contracts: ledger.collaboration.listTaskContracts({ projectId: id! }),
+          wiki_vaults: ledger.wiki.listProjectVaults(id!),
+        });
+      },
+    },
+    {
+      method: 'POST', path: '/api/projects/:id/refs', outside: true,
+      handle: async ({ request, response, params: [id] }) => {
+        const body = await readJson(request);
+        sendJson(response, 201, {
+          ref: ledger.collaboration.grantCrossProjectRef({
+            source_project_id: id!,
+            target_project_id: body.target_project_id,
+            ref_kind: body.ref_kind,
+            source_ref_id: body.source_ref_id,
+            pinned_version: body.pinned_version,
+            title: body.title,
+            summary: body.summary,
+          }, { actor: CONSOLE_ACTOR }),
+        });
+      },
+    },
+    {
+      method: 'POST', path: '/api/collaboration/refs/:refId/revoke', outside: true,
+      handle: async ({ request, response, params: [refId] }) => {
+        const body = await readJson(request);
+        sendJson(response, 200, {
+          ref: ledger.collaboration.revokeCrossProjectRef(refId!, typeof body.reason === 'string' ? body.reason : undefined, { actor: CONSOLE_ACTOR }),
+        });
+      },
+    },
+    {
+      method: 'POST', path: '/api/projects/:id/contracts', outside: true,
+      handle: async ({ request, response, params: [id] }) => {
+        const body = await readJson(request);
+        sendJson(response, 201, {
+          contract: ledger.collaboration.createTaskContract({
+            project_id: id!,
+            producer_task_id: body.producer_task_id,
+            consumer_task_id: body.consumer_task_id,
+            contract_name: body.contract_name,
+            artifact_path: body.artifact_path,
+          }, { actor: CONSOLE_ACTOR }),
+        });
+      },
+    },
+    {
+      method: 'POST', path: '/api/projects/:id/contracts/:contractId/deliver', outside: true,
+      handle: async ({ request, response, params: [id, contractId] }) => {
+        const body = await readJson(request);
+        sendJson(response, 200, ledger.collaboration.deliverTaskContract(contractId!, {
+          artifact_path: body.artifact_path,
+          delivery_summary: body.delivery_summary,
+          run_id: typeof body.run_id === 'string' ? body.run_id : null,
+          expected_project_id: id!,
+        }, { actor: CONSOLE_ACTOR }));
+      },
+    },
+    {
+      method: 'POST', path: '/api/projects/:id/contracts/:contractId/block', outside: true,
+      handle: async ({ request, response, params: [id, contractId] }) => {
+        const body = await readJson(request);
+        sendJson(response, 200, {
+          contract: ledger.collaboration.blockTaskContract(contractId!, { question: body.question, expected_project_id: id! }, { actor: CONSOLE_ACTOR }),
+        });
+      },
+    },
+    {
+      method: 'POST', path: '/api/projects/:id/contracts/:contractId/clarify', outside: true,
+      handle: async ({ request, response, params: [id, contractId] }) => {
+        const body = await readJson(request);
+        sendJson(response, 200, {
+          contract: ledger.collaboration.clarifyTaskContract(contractId!, {
+            clarification_id: body.clarification_id,
+            answer: body.answer,
+            expected_project_id: id!,
+          }, { actor: CONSOLE_ACTOR }),
+        });
+      },
+    },
+    {
+      method: 'DELETE', path: '/api/projects/:id/contracts/:contractId', outside: true,
+      handle: ({ response, params: [id, contractId] }) => {
+        ledger.collaboration.deleteTaskContract(contractId!, id!, { actor: CONSOLE_ACTOR });
+        sendJson(response, 200, { ok: true });
+      },
+    },
+    // The knowledge MCP: on this machine by its own token (RPC + Streamable HTTP JSON-RPC 2.0),
+    // from a machine elsewhere by that machine's node token plus the MCP token in a header of its own.
     { method: 'POST', path: '/api/knowledge/mcp', knowledge: true, handle: ({ request, response, client }) => knowledgeCall(request, response, client, '') },
+    { method: 'POST', path: '/api/knowledge/mcp/stream', knowledge: true, handle: ({ request, response, client }) => knowledgeStreamMcp(request, response, client, '') },
     {
       method: 'POST', path: '/api/node/knowledge/mcp', node: true, outside: true,
       handle: ({ request, response, node }) => {
@@ -4474,6 +4714,15 @@ export function createHttp(options: HttpOptions) {
         const client = typeof header === 'string' ? ledger.clientByToken(header) : undefined;
         if (!client) throw new HttpError(401, '知识令牌无效：它被吊销了，或者填错了。到控制台的知识页重新签发');
         return knowledgeCall(request, response, client, '（机器 ' + node.id + '）');
+      },
+    },
+    {
+      method: 'POST', path: '/api/node/knowledge/mcp/stream', node: true, outside: true,
+      handle: ({ request, response, node }) => {
+        const header = request.headers['x-tycho-knowledge-token'];
+        const client = typeof header === 'string' ? ledger.clientByToken(header) : undefined;
+        if (!client) throw new HttpError(401, '知识令牌无效：它被吊销了，或者填错了。到控制台的知识页重新签发');
+        return knowledgeStreamMcp(request, response, client, '（机器 ' + node.id + '）');
       },
     },
     { method: 'PUT', path: '/api/tasks/:id/role', outside: true, handle: ({ request, response, params }) => putTaskRole(request, response, params[0]!) },
@@ -5035,6 +5284,16 @@ export function createHttp(options: HttpOptions) {
     sendJson(response, 200, { token });
   }
 
+  function rotateKnowledgeClient({ response, params: [id] }: Asked & { visitor: Visitor }): void {
+    const { token } = ledger.rotateClient(id!, { actor: CONSOLE_ACTOR });
+    try {
+      options.knowledgeTokens.save(id!, token);
+    } catch (err) {
+      log('轮换后保存知识令牌失败：' + String(err));
+    }
+    sendJson(response, 200, { client: ledger.listClients().find((client) => client.id === id), token });
+  }
+
   function revokeKnowledgeClient({ response, params: [id] }: Asked & { visitor: Visitor }): void {
     ledger.revokeClient(id!, { actor: CONSOLE_ACTOR });
     try {
@@ -5046,9 +5305,10 @@ export function createHttp(options: HttpOptions) {
   }
 
   // The knowledge MCP's one call, by a client on this machine or through a machine's node
-  // channel: the four tools, by the client's grants, and nothing else.
+  // channel: knowledge/wiki tools, by the client's grants, and nothing else.
   async function knowledgeCall(request: IncomingMessage, response: ServerResponse, client: KnowledgeClient, via: string): Promise<void> {
     const body = await readJson(request);
+    ledger.touchClient(client.id);
     const grants: readonly Grant[] = client.grants.filter((grant) => (GRANTS as readonly string[]).includes(grant));
     if (body.method === 'tools/list') {
       sendJson(response, 200, { tools: library.filter(({ grant }) => grants.includes(grant)).map(({ name, description, inputSchema }) => ({ name, description, inputSchema })) });
@@ -5057,6 +5317,61 @@ export function createHttp(options: HttpOptions) {
     if (body.method !== 'tools/call') throw new InputError('只支持 tools/list 和 tools/call');
     const ctx: Ctx = { actor: 'mcp:' + client.name };
     sendJson(response, 200, callLibrary(library, body.name, body.arguments, { ctx, proposer: { source: 'mcp', by: client.name + via, client: 'mcp:' + client.id, writers: [client.executor] } }, grants));
+  }
+
+  // Standard Streamable HTTP JSON-RPC 2.0 MCP endpoint for Claude Code / Codex / Gemini / DSH
+  // (speaks MCP protocol directly over HTTP without requiring a local stdio wrapper process).
+  async function knowledgeStreamMcp(request: IncomingMessage, response: ServerResponse, client: KnowledgeClient, via: string): Promise<void> {
+    const body = await readJson(request);
+    ledger.touchClient(client.id);
+    const id = body.id;
+    const method = typeof body.method === 'string' ? body.method : '';
+    const params = (body.params && typeof body.params === 'object' ? body.params : {}) as { protocolVersion?: string; name?: string; arguments?: unknown };
+    if (id === undefined) {
+      response.writeHead(202);
+      response.end();
+      return;
+    }
+    const grants: readonly Grant[] = client.grants.filter((grant) => (GRANTS as readonly string[]).includes(grant));
+    const reply = (result: unknown) => sendJson(response, 200, { jsonrpc: '2.0', id, result });
+    const fail = (code: number, message: string) => sendJson(response, 200, { jsonrpc: '2.0', id, error: { code, message } });
+
+    switch (method) {
+      case 'initialize':
+        reply({
+          protocolVersion: params.protocolVersion ?? '2025-03-26',
+          capabilities: { tools: {} },
+          serverInfo: { name: KNOWLEDGE_MCP, version: '1.0' },
+          instructions: 'tycho 的知识与域 Wiki 服务：读取生效规则、按需检索 Git LLM Wiki 与提议更新。读取与提议分权；不会访问未授权项目的任务与对话。',
+        });
+        return;
+      case 'ping':
+        reply({});
+        return;
+      case 'tools/list': {
+        const list = {
+          tools: library
+            .filter(({ grant }) => grants.includes(grant))
+            .map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+        };
+        reply(toJsonSchemaToolsList(list));
+        return;
+      }
+      case 'tools/call': {
+        const ctx: Ctx = { actor: 'mcp:' + client.name };
+        const result = callLibrary(
+          library,
+          params.name,
+          params.arguments,
+          { ctx, proposer: { source: 'mcp', by: client.name + via, client: 'mcp:' + client.id, writers: [client.executor] } },
+          grants,
+        );
+        reply(result);
+        return;
+      }
+      default:
+        fail(-32601, `不支持的方法：${method}`);
+    }
   }
 
   function report(response: ServerResponse, err: unknown): void {

@@ -200,6 +200,9 @@ function legacyRows(rows: unknown[], names = new Map<string, string>()): object[
     if (row.router_account === null) delete row.router_account;
     if (row.router_tier === null) delete row.router_tier;
     if (row.dispatch_order_json === null) delete row.dispatch_order_json;
+    // v49 adds project single-group category and pin flag, both empty/off for older projects.
+    if (row.category === null) delete row.category;
+    if (row.pinned === 0) delete row.pinned;
     // v39 replaces a project's repo/code_dir with its sources list, and pins every unfinished
     // Task to the first source; an older ledger has neither column, and the step's own tests
     // assert what the migration made of them.

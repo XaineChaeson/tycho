@@ -829,5 +829,24 @@
   "sh.themes.err.builtinCollision": "id \"{id}\" 与内置主题重名，请换一个标识。",
   "sh.themes.err.missingName": "缺少主题名称 name 字段。",
   "sh.themes.err.noValidTokens": "tokens 里没有可识别的安全 CSS 变量（例如 --primary、--background）。",
-  "sh.themes.defaultDescription": "主机目录主题插件"
+  "sh.themes.defaultDescription": "主机目录主题插件",
+
+  "sh.wiki.status.draft": "草稿",
+  "sh.wiki.status.active": "生效中",
+  "sh.wiki.status.disputed": "存在分歧",
+  "sh.wiki.status.deprecated": "已弃用",
+  "sh.wiki.proposalStatus.pending": "待审批",
+  "sh.wiki.proposalStatus.applied": "已合并提交",
+  "sh.wiki.proposalStatus.rejected": "已驳回",
+  "sh.wiki.proposalStatus.stale": "基线已变更",
+
+  "sh.collab.refKind.project_file": "项目文件",
+  "sh.collab.refKind.knowledge": "知识条目",
+  "sh.collab.refKind.wiki_page": "Wiki 页面",
+  "sh.collab.refKind.artifact": "任务产物",
+  "sh.collab.contractStatus.pending": "待交付",
+  "sh.collab.contractStatus.delivered": "已交付",
+  "sh.collab.contractStatus.blocked": "阻塞待澄清",
+  "sh.collab.contractStatus.clarified": "已澄清",
+  "sh.collab.contractStatus.superseded": "已取代"
 }

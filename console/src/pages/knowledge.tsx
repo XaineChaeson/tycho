@@ -4,8 +4,8 @@
 // the effective-context budget preview, every proposal, and how knowledge MCP clients connect.
 // An entry of the owner's own is written from any of them.
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, CircleCheck, FolderSync, Plus, Search, Server, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, CircleCheck, Download, FileUp, FolderSync, KeyRound, Plus, RefreshCw, Search, Server, ShieldCheck, Upload, X } from 'lucide-react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import {
   GLOBAL_LABEL, GRANTS, GRANT_LABELS, OWNER_REASON_LABELS, PROPOSAL_STATE_LABELS, SOURCE_LABELS,
@@ -19,20 +19,21 @@ import {
 } from '@/components/knowledge-bits';
 import { KnowledgeCatalog } from '@/components/knowledge-catalog';
 import { KnowledgeEffectivePanel } from '@/components/knowledge-effective';
+import { KnowledgeWikiPanel } from '@/components/knowledge-wiki';
 import { PageBar, PageBody, PageLead, PageTabs } from '@/components/page';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox, Choice } from '@/components/ui/checkbox';
 import { Confirm, Sheet, SheetContent } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+import { Input, Textarea } from '@/components/ui/input';
 import { Option, Select } from '@/components/ui/select';
 import { api, messageOf, post } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
-import { accountsQuery, knowledgeQuery } from '@/lib/queries';
-import type { EntryReport, KnowledgeClient, KnowledgeEntry, KnowledgePage as Page, KnowledgeProposalRow, LegacyDecision } from '@/lib/types';
+import { accountsQuery, dotfilesBoundaryQuery, KNOWLEDGE, knowledgeQuery } from '@/lib/queries';
+import type { EntryReport, KnowledgeClient, KnowledgeEntry, KnowledgeImportReport, KnowledgePage as Page, KnowledgeProposalRow, LegacyDecision } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
-const VIEWS = ['pending', 'entries', 'effective', 'proposals', 'access'] as const;
+const VIEWS = ['pending', 'entries', 'effective', 'wiki', 'proposals', 'access'] as const;
 type View = (typeof VIEWS)[number];
 const isView = (value: string | null): value is View => value !== null && (VIEWS as readonly string[]).includes(value);
 
@@ -260,11 +261,12 @@ function SkillDirectoryCard({ dir }: { dir: string | undefined }) {
   );
 }
 
-function ClientRow({ client }: { client: KnowledgeClient }) {
+function ClientRow({ client, onRotated }: { client: KnowledgeClient; onRotated: (rotated: { name: string; token: string }) => void }) {
   const { t } = useI18n();
   const action = useKnowledgeAction();
   const [token, setToken] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState(false);
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const [confirmRotate, setConfirmRotate] = useState(false);
   const revoked = client.revoked_at !== null;
   const path = `/api/knowledge/clients/${encodeURIComponent(client.id)}`;
   return (
@@ -275,12 +277,24 @@ function ClientRow({ client }: { client: KnowledgeClient }) {
         {client.grants.map((grant) => <Badge key={grant} tone="plain">{GRANT_LABELS[grant] ?? grant}</Badge>)}
         {revoked ? <Badge tone="ended">{t('know.access.revokedPrefix')}<Time at={client.revoked_at} /></Badge> : null}
         <Time at={client.created_at} prefix={t('know.access.issuedPrefix')} className="text-xs text-faint" />
+        {typeof client.request_count === 'number' ? (
+          <span className="text-xs text-faint tabular-nums">{t('know.access.requestCount', { count: client.request_count })}</span>
+        ) : null}
+        {client.last_used_at ? (
+          <Time at={client.last_used_at} prefix={t('know.access.lastUsedPrefix')} className="text-xs text-faint" />
+        ) : typeof client.request_count === 'number' ? (
+          <span className="text-xs text-faint">{t('know.access.neverUsed')}</span>
+        ) : null}
         {revoked ? null : (
           <span className="ml-auto flex flex-none items-center gap-0.5">
             {token ? null : (
-              <Button size="sm" variant="ghost" disabled={action.busy} onClick={() => void action.run(() => api<{ token: string }>(`${path}/token`), (answer) => setToken(answer.token))}>{t('know.access.showToken')}</Button>
+              <Button type="button" size="sm" variant="ghost" disabled={action.busy} onClick={() => void action.run(() => api<{ token: string }>(`${path}/token`), (answer) => setToken(answer.token))}>{t('know.access.showToken')}</Button>
             )}
-            <Button size="sm" variant="danger" disabled={action.busy} onClick={() => { action.clear(); setConfirm(true); }}>{t('know.access.revoke')}</Button>
+            <Button type="button" size="sm" variant="ghost" disabled={action.busy} onClick={() => { action.clear(); setConfirmRotate(true); }}>
+              <KeyRound className="size-3.5" aria-hidden="true" />
+              {t('know.access.rotate')}
+            </Button>
+            <Button type="button" size="sm" variant="danger" disabled={action.busy} onClick={() => { action.clear(); setConfirmRevoke(true); }}>{t('know.access.revoke')}</Button>
           </span>
         )}
       </div>
@@ -288,19 +302,36 @@ function ClientRow({ client }: { client: KnowledgeClient }) {
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <Mono>{token}</Mono>
           <CopyButton value={token} />
-          <Button size="sm" variant="ghost" onClick={() => setToken(null)}>{t('know.access.hideToken')}</Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setToken(null)}>{t('know.access.hideToken')}</Button>
         </div>
       ) : null}
-      {action.error && !confirm ? <Problem role="alert" className="mt-2">{action.error}</Problem> : null}
+      {action.error && !confirmRevoke && !confirmRotate ? <Problem role="alert" className="mt-2">{action.error}</Problem> : null}
       <Confirm
-        open={confirm}
+        open={confirmRotate}
+        title={t('know.access.rotateConfirmTitle', { name: client.name })}
+        description={t('know.access.rotateConfirmDesc')}
+        confirm={t('know.access.rotateConfirmBtn')}
+        busy={action.busy}
+        error={confirmRotate ? action.error : null}
+        onConfirm={() => void action.run(
+          () => post<{ token: string }>(`${path}/rotate`),
+          (answer) => {
+            setToken(answer.token);
+            setConfirmRotate(false);
+            onRotated({ name: client.name, token: answer.token });
+          },
+        )}
+        onCancel={() => { setConfirmRotate(false); action.clear(); }}
+      />
+      <Confirm
+        open={confirmRevoke}
         title={t('know.access.revokeConfirmTitle', { name: client.name })}
         description={t('know.access.revokeConfirmDesc')}
         confirm={t('know.access.revokeConfirmBtn', { name: client.name })}
         busy={action.busy}
-        error={confirm ? action.error : null}
-        onConfirm={() => void action.run(() => post(`${path}/revoke`), () => { setToken(null); setConfirm(false); })}
-        onCancel={() => { setConfirm(false); action.clear(); }}
+        error={confirmRevoke ? action.error : null}
+        onConfirm={() => void action.run(() => post(`${path}/revoke`), () => { setToken(null); setConfirmRevoke(false); })}
+        onCancel={() => { setConfirmRevoke(false); action.clear(); }}
       />
     </li>
   );
@@ -360,52 +391,135 @@ function IssueSheet({ executors, onIssued, onClose }: { executors: readonly stri
   );
 }
 
-function Clients({ clients, executors }: { clients: readonly KnowledgeClient[]; executors: readonly string[] }) {
+type SnippetMode = 'stdio' | 'http' | 'cli';
+
+function Clients({ clients, executors, publicUrl }: { clients: readonly KnowledgeClient[]; executors: readonly string[]; publicUrl?: string | null }) {
   const { t } = useI18n();
   const [issuing, setIssuing] = useState(false);
-  // The token just issued: said once here, and after that only on asking for it by its row.
-  const [issued, setIssued] = useState<{ name: string; token: string } | null>(null);
-  const mcpSnippet = issued
-    ? JSON.stringify({
-        mcpServers: {
-          'tycho-knowledge': {
-            command: 'tycho',
-            args: ['knowledge-mcp'],
-            env: {
-              TYCHO_KNOWLEDGE_TOKEN: issued.token,
-            },
+  // The token just issued or rotated: shown once here, and after that only on asking for it by its row.
+  const [issued, setIssued] = useState<{ name: string; token: string; rotated?: boolean } | null>(null);
+  const [snippetMode, setSnippetMode] = useState<SnippetMode>('stdio');
+
+  const localStreamUrl = 'http://127.0.0.1:4100/api/knowledge/mcp/stream';
+  const nodeStreamUrl = publicUrl
+    ? `${publicUrl.replace(/\/+$/, '')}/api/node/knowledge/mcp/stream`
+    : '/api/node/knowledge/mcp/stream';
+
+  const snippets = useMemo(() => {
+    if (!issued) return null;
+    const stdio = JSON.stringify({
+      mcpServers: {
+        'tycho-knowledge': {
+          command: 'tycho',
+          args: ['knowledge-mcp'],
+          env: {
+            TYCHO_KNOWLEDGE_TOKEN: issued.token,
           },
         },
-      }, null, 2)
-    : null;
+      },
+    }, null, 2);
+    const http = JSON.stringify({
+      mcpServers: {
+        'tycho-knowledge': {
+          type: 'http',
+          url: localStreamUrl,
+          headers: {
+            Authorization: `Bearer ${issued.token}`,
+          },
+        },
+      },
+    }, null, 2);
+    const cli = [
+      `# Claude Code (local host)`,
+      `claude mcp add --transport http tycho-knowledge ${localStreamUrl} --header "Authorization: Bearer ${issued.token}"`,
+      ``,
+      `# Codex / Gemini / DSH (Streamable HTTP JSON-RPC 2.0)`,
+      `# URL: ${localStreamUrl}`,
+      `# Header: Authorization: Bearer ${issued.token}`,
+    ].join('\n');
+    return { stdio, http, cli };
+  }, [issued, localStreamUrl]);
+
+  const activeSnippet = snippets ? snippets[snippetMode] : null;
+
   return (
-    <section aria-label={t('know.access.mcpClientsAria')}>
-      <SectionTitle action={<Button size="sm" onClick={() => setIssuing(true)}><Plus />{t('know.access.issueBtn')}</Button>}>{t('know.access.mcpClientsTitle')}</SectionTitle>
-      <Note className="-mt-1 mb-3 text-xs">{t('know.access.mcpClientsNoteBefore')}<Mono>propose_learning</Mono>{t('know.access.mcpClientsNoteAfter')}</Note>
+    <section aria-label={t('know.access.mcpClientsAria')} className="grid gap-3">
+      <SectionTitle action={<Button type="button" size="sm" onClick={() => setIssuing(true)}><Plus />{t('know.access.issueBtn')}</Button>}>{t('know.access.mcpClientsTitle')}</SectionTitle>
+      <Note className="-mt-2 text-xs">{t('know.access.mcpClientsNoteBefore')}<Mono>propose_learning</Mono>{t('know.access.mcpClientsNoteAfter')}</Note>
+
+      <Card className="grid gap-2 px-4 py-3 text-xs">
+        <div className="font-semibold text-foreground">{t('know.access.streamTitle')}</div>
+        <p className="text-muted-foreground">{t('know.access.streamDesc')}</p>
+        <div className="flex flex-wrap gap-3 pt-0.5">
+          <div className="flex items-center gap-1.5">
+            <span className="text-muted-foreground">{`${t('know.access.streamLocalUrl')}:`}</span>
+            <Mono>{localStreamUrl}</Mono>
+            <CopyButton value={localStreamUrl} />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-muted-foreground">{`${t('know.access.streamNodeUrl')}:`}</span>
+            <Mono>{nodeStreamUrl}</Mono>
+            <CopyButton value={nodeStreamUrl} />
+          </div>
+        </div>
+      </Card>
+
       {issued ? (
-        <Callout tone="waiting" role="status" className="mb-3 grid gap-2">
-          <p className="wrap-anywhere">{t('know.access.tokenFor', { name: issued.name })}</p>
+        <Callout tone="waiting" role="status" className="grid gap-2">
+          <p className="wrap-anywhere">
+            {issued.rotated ? t('know.access.rotatedNotice', { name: issued.name }) : t('know.access.tokenFor', { name: issued.name })}
+          </p>
           <div className="flex flex-wrap items-center gap-2">
             <Mono>{issued.token}</Mono>
             <CopyButton value={issued.token} />
           </div>
-          {mcpSnippet ? (
+          {activeSnippet ? (
             <div className="grid gap-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <Note className="text-xs">{t('know.access.mcpSnippetLabel')}</Note>
-                <CopyButton value={mcpSnippet} />
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div role="tablist" aria-label={t('know.access.mcpSnippetLabel')} className="flex flex-nowrap items-center gap-1 overflow-x-auto rounded-lg border border-border bg-surface/60 p-0.5 text-xs">
+                  {([
+                    ['stdio', t('know.access.snippetTabStdio')],
+                    ['http', t('know.access.snippetTabHttp')],
+                    ['cli', t('know.access.snippetTabCli')],
+                  ] as const).map(([mode, label]) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      role="tab"
+                      aria-selected={snippetMode === mode}
+                      onClick={() => setSnippetMode(mode)}
+                      className={cn(
+                        'flex-none rounded-md px-2.5 py-1 font-medium transition-colors',
+                        snippetMode === mode ? 'bg-raised text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <CopyButton value={activeSnippet} />
               </div>
-              <pre className="overflow-x-auto rounded-md border border-border bg-card p-2.5 font-mono text-xs leading-relaxed text-foreground">{mcpSnippet}</pre>
-              <Note className="text-xs">{t('know.access.mcpNodeHintBefore')}<Mono>["knowledge-mcp", "--node"]</Mono>{t('know.access.mcpNodeHintAfter')}</Note>
+              <pre className="overflow-x-auto rounded-md border border-border bg-card p-2.5 font-mono text-xs leading-relaxed text-foreground">{activeSnippet}</pre>
+              {snippetMode === 'stdio' ? (
+                <Note className="text-xs">{t('know.access.mcpNodeHintBefore')}<Mono>["knowledge-mcp", "--node"]</Mono>{t('know.access.mcpNodeHintAfter')}</Note>
+              ) : null}
             </div>
           ) : null}
           <Note className="text-xs">{t('know.access.tokenOnceHint')}</Note>
-          <div><Button size="sm" onClick={() => setIssued(null)}>{t('common.collapse')}</Button></div>
+          <div><Button type="button" size="sm" onClick={() => setIssued(null)}>{t('common.collapse')}</Button></div>
         </Callout>
       ) : null}
       {clients.length ? (
         <Rows>
-          <ul className="divide-y divide-border">{clients.map((client) => <ClientRow key={client.id} client={client} />)}</ul>
+          <ul className="divide-y divide-border">
+            {clients.map((client) => (
+              <ClientRow
+                key={client.id}
+                client={client}
+                onRotated={(rotated) => setIssued({ ...rotated, rotated: true })}
+              />
+            ))}
+          </ul>
         </Rows>
       ) : <Note>{t('know.access.noClients')}</Note>}
       {issuing ? <IssueSheet executors={executors} onIssued={(made) => { setIssued(made); setIssuing(false); }} onClose={() => setIssuing(false)} /> : null}
@@ -1030,12 +1144,205 @@ function MachineKnowledgeSection() {
   );
 }
 
+const DOTFILES_TONE: Record<string, 'success' | 'waiting' | 'failed' | 'plain'> = {
+  coexist_block: 'success',
+  tycho_managed: 'plain',
+  external_dotfiles: 'plain',
+  collision_risk: 'failed',
+  absent: 'plain',
+};
+
+function DotfilesBoundaryCard() {
+  const { t } = useI18n();
+  const { data, isFetching, refetch } = useQuery({ ...dotfilesBoundaryQuery, retry: false });
+  if (!data) return null;
+  return (
+    <Card aria-label={t('know.dotfiles.sectionAria')} className="grid gap-3 px-4 py-3.5">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <ShieldCheck className="size-4 text-muted-foreground" aria-hidden="true" />
+            <h2 className="text-sm font-semibold">{t('know.dotfiles.title')}</h2>
+            <Badge tone={data.chezmoi_detected ? 'waiting' : 'plain'}>
+              {data.chezmoi_detected ? t('know.dotfiles.chezmoiYes') : t('know.dotfiles.chezmoiNo')}
+            </Badge>
+          </div>
+          <Note className="mt-0.5 text-xs">{t('know.dotfiles.desc')}</Note>
+        </div>
+        <Button type="button" size="sm" variant="ghost" disabled={isFetching} onClick={() => void refetch()}>
+          <RefreshCw className={cn('size-3.5', isFetching && 'animate-spin')} aria-hidden="true" />
+          {t('know.dotfiles.refresh')}
+        </Button>
+      </div>
+      <ul className="divide-y divide-border/70 rounded-lg border border-border bg-surface/40 text-xs">
+        {data.items.map((item) => (
+          <li key={`${item.executor}:${item.path}`} className="grid gap-1 px-3 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Mono className="w-16 flex-none font-semibold text-foreground">{item.executor}</Mono>
+              <Mono className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">{item.path}</Mono>
+              <Badge tone={DOTFILES_TONE[item.ownership] ?? 'plain'}>
+                {t(`know.dotfiles.owner.${item.ownership}`)}
+              </Badge>
+            </div>
+            <p className="text-muted-foreground wrap-anywhere">
+              {item.detail}
+              {item.symlink_target ? ` · ${t('know.dotfiles.symlinkTarget', { target: item.symlink_target })}` : ''}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+function PortableKnowledgeCard() {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const inputId = useId();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [includeRetired, setIncludeRetired] = useState(false);
+  const [jsonlText, setJsonlText] = useState('');
+  const [report, setReport] = useState<KnowledgeImportReport | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const exportUrl = includeRetired ? '/api/knowledge/export.jsonl?include_retired=1' : '/api/knowledge/export.jsonl';
+
+  async function onFilePicked(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const content = await file.text();
+      setJsonlText(content);
+      setReport(null);
+      setError(null);
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  async function runImport(dryRun: boolean): Promise<void> {
+    if (!jsonlText.trim()) {
+      setError(t('know.portable.emptyInput'));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const answer = await post<KnowledgeImportReport>('/api/knowledge/import.jsonl', {
+        jsonl: jsonlText,
+        dry_run: dryRun,
+      });
+      setReport(answer);
+      if (!dryRun) {
+        void queryClient.invalidateQueries({ queryKey: KNOWLEDGE });
+      }
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card aria-label={t('know.portable.sectionAria')} className="grid gap-3 px-4 py-3.5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold">{t('know.portable.title')}</h2>
+          <Note className="mt-0.5 text-xs">{t('know.portable.desc')}</Note>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <Choice>
+            <Checkbox checked={includeRetired} onChange={(e) => setIncludeRetired(e.target.checked)} />
+            {t('know.portable.includeRetired')}
+          </Choice>
+          <Button size="sm" asChild>
+            <a href={exportUrl} download="tycho-knowledge.jsonl" className="no-underline">
+              <Download className="size-3.5" aria-hidden="true" />
+              {t('know.portable.exportBtn')}
+            </a>
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-2 border-t border-border/70 pt-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <label htmlFor={inputId} className="text-xs font-medium text-foreground">{t('know.portable.importLabel')}</label>
+          <div>
+            <input ref={fileRef} type="file" accept=".jsonl,.ndjson,text/plain" className="sr-only" onChange={(e) => void onFilePicked(e)} />
+            <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => fileRef.current?.click()}>
+              <FileUp className="size-3.5" aria-hidden="true" />
+              {t('know.portable.uploadFile')}
+            </Button>
+          </div>
+        </div>
+        <Textarea
+          id={inputId}
+          rows={4}
+          placeholder={t('know.portable.importPlaceholder')}
+          value={jsonlText}
+          disabled={busy}
+          onChange={(e) => {
+            setJsonlText(e.target.value);
+            setReport(null);
+          }}
+          className="font-mono text-xs"
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" size="sm" disabled={busy} onClick={() => void runImport(true)}>
+            {busy ? t('know.portable.busy') : t('know.portable.dryRunBtn')}
+          </Button>
+          {report?.dry_run && report.created > 0 ? (
+            <Button type="button" size="sm" variant="primary" disabled={busy} onClick={() => void runImport(false)}>
+              <Upload className="size-3.5" aria-hidden="true" />
+              {t('know.portable.applyBtn', { count: report.created })}
+            </Button>
+          ) : null}
+        </div>
+        {error ? <Problem role="alert" className="text-xs">{error}</Problem> : null}
+        {report ? (
+          <div role="status" aria-live="polite" className="grid gap-2 rounded-lg border border-border bg-surface/60 p-3 text-xs">
+            <p className="font-medium text-foreground">
+              {t(report.dry_run ? 'know.portable.previewSummary' : 'know.portable.appliedSummary', {
+                total: report.total,
+                created: report.created,
+                skipped: report.skipped,
+                invalid: report.invalid,
+              })}
+            </p>
+            {report.items.length > 0 ? (
+              <ul className="max-h-48 divide-y divide-border/60 overflow-y-auto">
+                {report.items.map((item) => (
+                  <li key={`${item.line}:${item.source_id}`} className="flex flex-wrap items-center gap-2 py-1">
+                    <Badge tone={item.action === 'create' ? 'success' : item.action === 'skip_duplicate' ? 'plain' : 'failed'}>
+                      {item.action === 'create'
+                        ? t('know.portable.actionCreate')
+                        : item.action === 'skip_duplicate'
+                          ? t('know.portable.actionSkip')
+                          : t('know.portable.actionInvalid')}
+                    </Badge>
+                    <span className="font-medium text-foreground">{item.title || item.source_id}</span>
+                    {item.reason ? <span className="text-muted-foreground">{item.reason}</span> : null}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
+
 function Access({ page }: { page: Page }) {
   return (
     <div className="grid grid-cols-1 gap-7">
       <SkillDirectoryCard dir={page.skills_dir ?? page.skill_folder} />
+      <DotfilesBoundaryCard />
       <MachineKnowledgeSection />
-      <Clients clients={page.clients} executors={page.executors} />
+      <Clients clients={page.clients} executors={page.executors} publicUrl={page.public_url} />
+      <PortableKnowledgeCard />
     </div>
   );
 }
@@ -1071,12 +1378,13 @@ export function KnowledgePage() {
             { to: '/knowledge?view=pending', label: t('know.tabs.pending'), current: view === 'pending', count: data ? pendingCount : undefined },
             { to: '/knowledge?view=entries', label: t('know.tabs.entries'), current: view === 'entries' },
             { to: '/knowledge?view=effective', label: t('know.tabs.effective'), current: view === 'effective' },
+            { to: '/knowledge?view=wiki', label: t('know.tabs.wiki'), current: view === 'wiki' },
             { to: '/knowledge?view=proposals', label: t('know.tabs.proposals'), current: view === 'proposals' },
             { to: '/knowledge?view=access', label: t('know.tabs.access'), current: view === 'access' },
           ]}
         />
       </PageBar>
-      <PageBody width={view === 'entries' || view === 'access' ? 'wide' : 'default'} loading={isPending} failure={error?.message}>
+      <PageBody width={view === 'entries' || view === 'access' || view === 'wiki' ? 'wide' : 'default'} loading={isPending} failure={error?.message}>
         {createdNotice ? (
           <div
             role="status"
@@ -1114,6 +1422,8 @@ export function KnowledgePage() {
             />
           ) : view === 'effective' ? (
             <KnowledgeEffectivePanel projects={data.projects} roles={data.roles} machines={data.machines ?? []} />
+          ) : view === 'wiki' ? (
+            <KnowledgeWikiPanel />
           ) : view === 'proposals' ? (
             <Proposals page={data} />
           ) : view === 'access' ? (

@@ -137,7 +137,7 @@ test('27 → 28 keeps every account as it was, with no line; reopening holds', (
   db.exec(`INSERT INTO setting (id, created_at, key, value_json) VALUES ('version', 'now', 'schema_version', '27');
     INSERT INTO account (id, name, created_at, updated_at, executor, tiers_json, credential_ref) VALUES ('01A', 'claude', 'now', 'now', 'claude', '{"execute":{"kind":"content","text":"{}"}}', 'ref');`);
   db.close();
-  assert.equal(SCHEMA_VERSION, 49);
+  assert.equal(SCHEMA_VERSION, 50);
   for (const round of [1, 2]) {
     const ledger = openLedger(path, { copyBeforeUpgrade: false });
     try {

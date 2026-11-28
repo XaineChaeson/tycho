@@ -13,10 +13,12 @@ import { InputError } from './errors.ts';
 import { SETTINGS } from './settings.ts';
 import { ulid } from './ids.ts';
 import {
-  citation, DISPOSITIONS, EVIDENCE_SOURCES, GRANTS, KNOWLEDGE_KINDS, LOADINGS, PROPOSAL_STATE_LABELS,
+  citation, DISPOSITIONS, EVIDENCE_SOURCES, GRANTS, KNOWLEDGE_KINDS, LOADINGS,
+  MAX_SEARCH_PHRASE_CHARS, MAX_SEARCH_PHRASES, PROPOSAL_STATE_LABELS,
   type Disposition, type EntryState, type EvidenceSource, type Grant, type KnowledgeKind, type Loading,
   type OwnerReason, type ProposalSource, type ProposalState,
 } from '../shared/knowledge.ts';
+import { FtsIndex, jaccardSimilarity, tokenizeForSearch } from './search-index.ts';
 
 export interface KnowledgeLimits {
   // UTF-8 bytes, all four (§4.1).
@@ -89,6 +91,7 @@ interface ChangeOutputRaw {
   project_ids?: unknown;
   loading?: unknown;
   roles?: unknown;
+  search_phrases?: unknown;
 }
 
 interface ChangeRaw {
@@ -153,6 +156,8 @@ export interface ChangeOutput {
   project_ids: string[] | null;
   loading: Loading;
   roles: string[];
+  // Optional up to 3 alternate retrieval phrases indexed in FTS5 only (never overrides canonical body).
+  search_phrases?: string[];
   // Set once the change is published: the entry this output became.
   knowledge_id?: string;
 }
@@ -231,6 +236,7 @@ interface RevisionRow {
   projects_json: string | null;
   loading: Loading;
   roles_json: string;
+  search_phrases_json?: string | null;
   proposal_id: string;
   published_by: string;
   reviewed_at: string | null;
@@ -248,6 +254,7 @@ export interface Revision {
   project_ids: string[] | null;
   loading: Loading;
   roles: string[];
+  search_phrases?: string[];
   proposal_id: string;
   published_by: string;
   published_at: string;
@@ -318,6 +325,8 @@ export interface KnowledgeClient {
   executor: string;
   grants: Grant[];
   revoked_at: string | null;
+  last_used_at: string | null;
+  request_count: number;
 }
 
 // What a Task that gates or curates knowledge carries (§3, §5.3).
@@ -454,15 +463,18 @@ export function createKnowledge(db: Db, write: <T>(fn: () => T) => T, options: K
     FROM knowledge_revision JOIN knowledge_proposal ON knowledge_proposal.id = knowledge_revision.proposal_id`;
 
   function revisionOf(row: RevisionRow & { published_at: string | null }, kind: KnowledgeKind): Revision {
+    const phrases = row.search_phrases_json ? (JSON.parse(row.search_phrases_json) as string[]) : [];
     return {
       id: row.knowledge_id, revision: row.revision, kind, title: row.title, when_to_use: row.when_to_use, body: row.body,
-      project_ids: parseList(row.projects_json), loading: row.loading, roles: JSON.parse(row.roles_json) as string[], proposal_id: row.proposal_id,
+      project_ids: parseList(row.projects_json), loading: row.loading, roles: JSON.parse(row.roles_json) as string[],
+      ...(phrases.length > 0 ? { search_phrases: phrases } : {}),
+      proposal_id: row.proposal_id,
       published_by: row.published_by, published_at: row.published_at ?? row.created_at, reviewed_at: row.reviewed_at,
     };
   }
 
   const ENTRY_SELECT = `SELECT knowledge.*, knowledge_revision.title, knowledge_revision.when_to_use, knowledge_revision.body,
-      knowledge_revision.projects_json, knowledge_revision.loading, knowledge_revision.roles_json, knowledge_revision.proposal_id,
+      knowledge_revision.projects_json, knowledge_revision.loading, knowledge_revision.roles_json, knowledge_revision.search_phrases_json, knowledge_revision.proposal_id,
       knowledge_revision.published_by, knowledge_revision.created_at AS revision_at, knowledge_proposal.reviewed_at, knowledge_proposal.published_at
     FROM knowledge JOIN knowledge_revision ON knowledge_revision.knowledge_id = knowledge.id AND knowledge_revision.revision = knowledge.revision
     JOIN knowledge_proposal ON knowledge_proposal.id = knowledge_revision.proposal_id`;
@@ -688,9 +700,19 @@ export function createKnowledge(db: Db, write: <T>(fn: () => T) => T, options: K
       }
       const roles = each.roles === undefined || each.roles === null ? [] : each.roles;
       if (!Array.isArray(roles) || roles.some((one) => typeof one !== 'string')) throw new InputError('roles 要是职能编号的列表');
+      const rawPhrases = each.search_phrases === undefined || each.search_phrases === null ? [] : each.search_phrases;
+      if (!Array.isArray(rawPhrases) || rawPhrases.some((one) => typeof one !== 'string')) {
+        throw new InputError('search_phrases 要是检索短语字符串列表');
+      }
+      const searchPhrases = [...new Set(rawPhrases.map((p) => (p as string).trim()).filter(Boolean))].slice(0, MAX_SEARCH_PHRASES);
+      for (const phrase of searchPhrases) {
+        if (phrase.length > MAX_SEARCH_PHRASE_CHARS) {
+          throw new InputError(`检索短语太长：每条最多 ${MAX_SEARCH_PHRASE_CHARS} 个字`);
+        }
+      }
       const title = text(each.title, `${at}的标题`, MAX_TITLE_CHARS);
       const whenToUse = optionalText(each.when_to_use, `${at}的“什么时候用”`);
-      assertNoSecrets([title, whenToUse, body], at);
+      assertNoSecrets([title, whenToUse, body, ...searchPhrases], at);
       return {
         key: each.key === undefined || each.key === null || each.key === '' ? `o${index + 1}` : text(each.key, `${at}的 key`, 40),
         revises: each.revises === undefined || each.revises === null || each.revises === '' ? null : text(each.revises, `${at}的 revises`, 40),
@@ -700,6 +722,7 @@ export function createKnowledge(db: Db, write: <T>(fn: () => T) => T, options: K
         project_ids: projectIds,
         loading: requireLoading(each.loading, at, kind),
         roles: [...new Set(roles as string[])].sort(),
+        ...(searchPhrases.length > 0 ? { search_phrases: searchPhrases } : {}),
       };
     });
     const revisedIds = new Set(outputs.map(({ revises }) => revises).filter((id): id is string => id !== null));
@@ -943,10 +966,11 @@ export function createKnowledge(db: Db, write: <T>(fn: () => T) => T, options: K
       }
       ids[output.key] = id;
       db.run(
-        `INSERT INTO knowledge_revision (knowledge_id, revision, created_at, title, when_to_use, body, projects_json, loading, roles_json, proposal_id, published_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO knowledge_revision (knowledge_id, revision, created_at, title, when_to_use, body, projects_json, loading, roles_json, search_phrases_json, proposal_id, published_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         id, revision, at, output.title, output.when_to_use, output.body,
-        output.project_ids === null ? null : JSON.stringify(output.project_ids), output.loading, JSON.stringify(output.roles), row.id, ctx.actor,
+        output.project_ids === null ? null : JSON.stringify(output.project_ids), output.loading, JSON.stringify(output.roles),
+        JSON.stringify(output.search_phrases ?? []), row.id, ctx.actor,
       );
     }
     const retired: string[] = [];
@@ -1142,17 +1166,102 @@ export function createKnowledge(db: Db, write: <T>(fn: () => T) => T, options: K
     return { requestId, why, evidence, change: parseChange(input, defaultProjectIds), digest };
   }
 
+  const RUNTIME_ERROR_EXIT_KINDS = new Set(['failed', 'lost', 'timeout', 'quota', 'auth']);
+  const IDENTIFIER_NUM_RE = /[a-z0-9]+(?:[._-][a-z0-9]+)*/gi;
+
+  function numericSignature(text: string): string {
+    const nums = (text.match(/\d+/g) ?? []).join(',');
+    const ids = [...new Set((text.toLowerCase().match(IDENTIFIER_NUM_RE) ?? []).filter((t) => /\d/.test(t)))].sort().join(',');
+    return `${nums}|${ids}`;
+  }
+
+  // Rule-first zero-token pre-filter (adapted from Octop Memory ADR-004 & ADR-041):
+  // 1. Refuse Worker/Router proposals whose evidence is exclusively synthetic runtime/infra failures
+  //    (skipped for MCP callers so write-only tokens never get a Run-status oracle).
+  // 2. Detect exact/near-identical duplicates of active entries in identical `(kind, scope, roles)`
+  //    for pure-new outputs so `propose()` merges cleanly (attaching evidence without spawning
+  //    duplicate `knowledge` cards, while staying 100% zero-oracle for write-only MCP clients).
+  function findRuleFirstDuplicate(change: Change, proposer: Proposer): Entry | null {
+    if (proposer.source === 'console' || proposer.source === 'migration' || proposer.source === 'import' || proposer.source === 'curation') {
+      return null;
+    }
+    if (change.inputs.length !== 0 || change.outputs.length !== 1 || change.outputs[0]!.revises !== null) {
+      return null;
+    }
+    const output = change.outputs[0]!;
+    const outScope = JSON.stringify(output.project_ids);
+    const outRoles = JSON.stringify(output.roles);
+    const outNormTitle = output.title.trim().toLowerCase().replace(/\s+/g, ' ');
+    const outNormBody = output.body.trim().toLowerCase().replace(/\s+/g, ' ');
+    const outTitleSig = numericSignature(output.title);
+    const outTitleTokens = tokenizeForSearch(output.title);
+    const outBodyTokens = tokenizeForSearch(output.body);
+    const active = db.all<Joined>(`${ENTRY_SELECT} WHERE knowledge.state = 'active'`).map(joinedEntry);
+
+    for (const existing of active) {
+      if (existing.kind !== change.kind) continue;
+      if (JSON.stringify(existing.project_ids) !== outScope) continue;
+      if (JSON.stringify(existing.roles) !== outRoles) continue;
+      const exNormTitle = existing.title.trim().toLowerCase().replace(/\s+/g, ' ');
+      const exNormBody = existing.body.trim().toLowerCase().replace(/\s+/g, ' ');
+      if (exNormTitle === outNormTitle && exNormBody === outNormBody) return existing;
+      if (outNormBody.length >= 48 && exNormBody.length >= 48 && outTitleSig === numericSignature(existing.title)) {
+        const bodySim = jaccardSimilarity(outBodyTokens, tokenizeForSearch(existing.body));
+        const titleSim = jaccardSimilarity(outTitleTokens, tokenizeForSearch(existing.title));
+        if (bodySim >= 0.92 && titleSim >= 0.85) return existing;
+      }
+    }
+    return null;
+  }
+
+  function assertNoPureRuntimeErrorEvidence(evidence: readonly Evidence[], proposer: Proposer): void {
+    if (proposer.source !== 'worker' && proposer.source !== 'router') return;
+    if (evidence.length === 0 || !evidence.every((item) => item.source === 'run' && item.ref !== null)) return;
+    for (const item of evidence) {
+      const run = db.get<{ exit_kind: string | null; receipt_json: string | null }>(
+        'SELECT exit_kind, receipt_json FROM run WHERE id = ?',
+        item.ref!,
+      );
+      if (!run || !run.exit_kind || !RUNTIME_ERROR_EXIT_KINDS.has(run.exit_kind) || run.receipt_json !== null) {
+        return;
+      }
+    }
+    throw new InputError('纯运行报错/中断且无有效回执的轮次不能直接沉淀为长期知识；请基于已核实的根因和有效结论提交');
+  }
+
   // Direct publication without spawning gate tasks: console proposals publish as reviewed;
-  // non-console proposals publish immediately as unreviewed unless an output is global + resident
-  // (which waits for owner confirmation).
-  function propose(input: ProposalInput, proposer: Proposer, ctx: Ctx): { id: string; duplicate: boolean; state: ProposalState } {
+  // non-console proposals pass rule-first pre-filter (blocking pure runtime errors & merging
+  // exact/near-identical active duplicates instead of sprawling cards), then publish as
+  // unreviewed unless an output is global + resident (which waits for owner confirmation).
+  function propose(input: ProposalInput, proposer: Proposer, ctx: Ctx): { id: string; duplicate: boolean; state: ProposalState; merged_into?: string } {
     const admitted = admit(input, proposer);
     if (admitted.known) return { id: admitted.known.id, duplicate: true, state: admitted.known.state };
     const { requestId, why, evidence, change, digest } = admitted;
+    assertNoPureRuntimeErrorEvidence(evidence, proposer);
+    const dupTarget = findRuleFirstDuplicate(change, proposer);
     const row = insertProposal(change, why, evidence, proposer, requestId, ctx, { digest });
     if (proposer.source === 'console') {
       db.run(`UPDATE knowledge_proposal SET decided_at = ?, decided_by = ?, decided_via = 'console' WHERE id = ?`, nowIso(), ctx.actor, row.id);
       return { id: row.id, duplicate: false, state: publish(loadProposal(row.id), change, ctx, ctx.actor).state };
+    }
+    if (dupTarget !== null && ownerReasons(change).length === 0) {
+      const at = nowIso();
+      const mergedChange: Change = {
+        ...change,
+        outputs: change.outputs.map((output) => ({ ...output, knowledge_id: dupTarget.id })),
+      };
+      db.run(
+        `UPDATE knowledge_proposal SET state = 'published', state_reason = ?, final_json = ?, final_digest = ?, published_at = ? WHERE id = ?`,
+        `规则预筛合并至现有条目 ${citation(dupTarget.id, dupTarget.revision)}（保留新证据，避免重复建卡）`,
+        JSON.stringify(mergedChange),
+        sha256(canonical(mergedChange, why, evidence)),
+        at,
+        row.id,
+      );
+      writeChange(db, 'knowledge.merge_duplicate', ctx, {}, {
+        proposal_id: row.id, merged_into: dupTarget.id, revision: dupTarget.revision,
+      });
+      return { id: row.id, duplicate: false, state: 'published', merged_into: dupTarget.id };
     }
     const state = afterPass(loadProposal(row.id), change, ctx);
     return { id: row.id, duplicate: false, state };
@@ -1220,8 +1329,41 @@ export function createKnowledge(db: Db, write: <T>(fn: () => T) => T, options: K
     }
   }
 
+  // Ephemeral SQLite FTS5 index kept automatically synchronized with the canonical knowledge table
+  // using a fast ledger watermark (handles normal mutations and external/test SQL updates alike).
+  let ftsIndex: FtsIndex | null = null;
+  let ftsWatermark = '';
+  let ftsEntries = new Map<string, Entry>();
+
+  function syncFtsIndex(): { index: FtsIndex; entries: Map<string, Entry> } {
+    const stats = db.get<{ cnt: number; rev_sum: number; retired_cnt: number; max_rev_rowid: number }>(
+      `SELECT COUNT(*) AS cnt, COALESCE(SUM(revision), 0) AS rev_sum,
+              COALESCE(SUM(CASE WHEN state = 'retired' THEN 1 ELSE 0 END), 0) AS retired_cnt,
+              COALESCE((SELECT MAX(rowid) FROM knowledge_revision), 0) AS max_rev_rowid
+         FROM knowledge`,
+    );
+    const mark = `${stats?.cnt ?? 0}:${stats?.rev_sum ?? 0}:${stats?.retired_cnt ?? 0}:${stats?.max_rev_rowid ?? 0}`;
+    if (ftsIndex !== null && ftsWatermark === mark) {
+      return { index: ftsIndex, entries: ftsEntries };
+    }
+    const all = db.all<Joined>(`${ENTRY_SELECT} ORDER BY knowledge.rowid`).map(joinedEntry);
+    if (ftsIndex === null) ftsIndex = new FtsIndex();
+    ftsIndex.rebuild(
+      all.map((entry) => ({
+        id: entry.id,
+        title: entry.title,
+        subtitle: entry.when_to_use,
+        body: entry.body,
+        phrases: entry.search_phrases ?? [],
+      })),
+    );
+    ftsEntries = new Map(all.map((entry) => [entry.id, entry]));
+    ftsWatermark = mark;
+    return { index: ftsIndex, entries: ftsEntries };
+  }
+
   return {
-    propose(input: ProposalInput, proposer: Proposer, ctx: Ctx): { id: string; duplicate: boolean; state: ProposalState } {
+    propose(input: ProposalInput, proposer: Proposer, ctx: Ctx): { id: string; duplicate: boolean; state: ProposalState; merged_into?: string } {
       return write(() => propose(input, proposer, ctx));
     },
 
@@ -1488,20 +1630,34 @@ export function createKnowledge(db: Db, write: <T>(fn: () => T) => T, options: K
     },
 
     // A search in a range the caller names (§4.3): the global entries, or one project's — never
-    // "everything" by leaving it out. Plain text, case-insensitive; paged.
-    searchLibrary(fields: { query: string; scope: 'global' | { projectId: string }; roleId?: string | null; kind?: KnowledgeKind | null; includeRetired?: boolean; cursor?: string | null; limit?: number }): Page<Entry> {
-      const query = fields.query.trim().toLowerCase();
+    // "everything" by leaving it out. Native SQLite FTS5 + CJK/Latin hybrid tokenization +
+    // search_phrases + coverage floor + optional snapshot-bound deduplication (`excludeIds`).
+    searchLibrary(fields: { query: string; scope: 'global' | { projectId: string }; roleId?: string | null; kind?: KnowledgeKind | null; includeRetired?: boolean; cursor?: string | null; limit?: number; minCoverage?: number; excludeIds?: readonly string[] }): Page<Entry> {
+      const query = fields.query.trim();
       if (query === '') throw new InputError('要写查什么');
       const limit = Math.min(Math.max(fields.limit ?? PAGE_DEFAULT, 1), PAGE_MAX);
       const offset = fields.cursor === undefined || fields.cursor === null || fields.cursor === '' ? 0 : Number(fields.cursor);
       if (!Number.isInteger(offset) || offset < 0) throw new InputError(`翻页位置不对：${String(fields.cursor)}`);
       const scope = fields.scope;
       if (scope !== 'global' && !db.get('SELECT 1 FROM project WHERE id = ?', scope.projectId)) throw new InputError(`项目不存在：${scope.projectId}`);
-      const all = db.all<Joined>(`${ENTRY_SELECT}${fields.includeRetired ? '' : ` WHERE knowledge.state = 'active'`} ORDER BY knowledge.rowid`).map(joinedEntry)
-        .filter((entry) => (scope === 'global' ? entry.project_ids === null : entry.project_ids?.includes(scope.projectId) === true))
-        .filter((entry) => !fields.roleId || entry.roles.length === 0 || entry.roles.includes(fields.roleId))
-        .filter((entry) => !fields.kind || entry.kind === fields.kind)
-        .filter(({ title, when_to_use, body }) => [title, when_to_use, body].some((each) => each.toLowerCase().includes(query)));
+      const excluded = new Set(fields.excludeIds ?? []);
+      const { index, entries } = syncFtsIndex();
+      const allowedIds = new Set<string>();
+      for (const entry of entries.values()) {
+        if (!fields.includeRetired && entry.state !== 'active') continue;
+        if (excluded.has(entry.id)) continue;
+        if (scope === 'global' ? entry.project_ids !== null : entry.project_ids?.includes(scope.projectId) !== true) continue;
+        if (fields.roleId && entry.roles.length > 0 && !entry.roles.includes(fields.roleId)) continue;
+        if (fields.kind && entry.kind !== fields.kind) continue;
+        allowedIds.add(entry.id);
+      }
+      if (allowedIds.size === 0) return { items: [], next: null, total: 0 };
+      const ranked = index.search(query, {
+        limit: allowedIds.size,
+        allowedIds,
+        ...(fields.minCoverage === undefined ? {} : { minCoverage: fields.minCoverage }),
+      });
+      const all = ranked.map((hit) => entries.get(hit.id)!).filter(Boolean);
       const items = all.slice(offset, offset + limit);
       return { items, next: offset + limit < all.length ? String(offset + limit) : null, total: all.length };
     },
@@ -1570,17 +1726,43 @@ export function createKnowledge(db: Db, write: <T>(fn: () => T) => T, options: K
       });
     },
 
+    rotateClient(id: string, ctx: Ctx): { id: string; token: string } {
+      const token = randomBytes(32).toString('hex');
+      write(() => {
+        const row = db.get<{ revoked_at: string | null; name: string }>('SELECT revoked_at, name FROM knowledge_client WHERE id = ?', id);
+        if (!row) throw new InputError(`没有这个客户端：${id}`);
+        if (row.revoked_at !== null) throw new InputError(`客户端 ${row.name} 已吊销，无法轮换令牌`);
+        db.run('UPDATE knowledge_client SET token_hash = ? WHERE id = ?', sha256(token), id);
+        writeChange(db, 'knowledge.client_rotate', ctx, {}, { client_id: id, name: row.name });
+      });
+      return { id, token };
+    },
+
+    touchClient(id: string): void {
+      try {
+        db.run('UPDATE knowledge_client SET last_used_at = ?, request_count = request_count + 1 WHERE id = ? AND revoked_at IS NULL', nowIso(), id);
+      } catch {
+        // Telemetry write is best-effort and never blocks an MCP call.
+      }
+    },
+
     listClients(): KnowledgeClient[] {
-      return db.all<{ id: string; created_at: string; name: string; executor: string; grants_json: string; revoked_at: string | null }>('SELECT * FROM knowledge_client ORDER BY rowid')
+      return db.all<{ id: string; created_at: string; name: string; executor: string; grants_json: string; revoked_at: string | null; last_used_at: string | null; request_count: number }>('SELECT * FROM knowledge_client ORDER BY rowid')
         .map(({ grants_json, ...row }) => ({ ...row, grants: JSON.parse(grants_json) as Grant[] }));
     },
 
     // The client a token belongs to, while it is not revoked.
     clientByToken(token: string): KnowledgeClient | undefined {
       if (!/^[0-9a-f]{64}$/.test(token)) return undefined;
-      const row = db.get<{ id: string; created_at: string; name: string; executor: string; grants_json: string; revoked_at: string | null }>(
+      const row = db.get<{ id: string; created_at: string; name: string; executor: string; grants_json: string; revoked_at: string | null; last_used_at: string | null; request_count: number }>(
         'SELECT * FROM knowledge_client WHERE token_hash = ? AND revoked_at IS NULL', sha256(token));
-      return row && { id: row.id, created_at: row.created_at, name: row.name, executor: row.executor, grants: JSON.parse(row.grants_json) as Grant[], revoked_at: null };
+      return row && { id: row.id, created_at: row.created_at, name: row.name, executor: row.executor, grants: JSON.parse(row.grants_json) as Grant[], revoked_at: null, last_used_at: row.last_used_at, request_count: row.request_count };
+    },
+
+    closeSearchIndex(): void {
+      ftsIndex?.close();
+      ftsIndex = null;
+      ftsWatermark = '';
     },
   };
 }

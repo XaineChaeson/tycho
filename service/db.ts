@@ -14,7 +14,7 @@ import { ulid } from './ids.ts';
 import { bindProjectHomeGuard } from './project-home-guard.ts';
 import { PROJECT_HOME_KEY_PREFIX, type ProjectHome, type ProjectOwnership } from './project-home.ts';
 
-export const SCHEMA_VERSION = 49;
+export const SCHEMA_VERSION = 50;
 // 42 adds admitted Router calls and links their committed business changes.
 // 41 is code sources (docs/design/code-sources.md; shared/sources.ts SOURCES_LEDGER_VERSION):
 // a project's repo/code_dir columns become an ordered sources list, and a Task is pinned to the
@@ -633,6 +633,7 @@ CREATE TABLE IF NOT EXISTS knowledge_revision (
   roles_json TEXT NOT NULL,
   proposal_id TEXT NOT NULL REFERENCES knowledge_proposal(id),
   published_by TEXT NOT NULL,
+  search_phrases_json TEXT NOT NULL DEFAULT '[]',
   PRIMARY KEY (knowledge_id, revision)
 );
 
@@ -660,7 +661,9 @@ CREATE TABLE IF NOT EXISTS knowledge_client (
   executor TEXT NOT NULL,
   grants_json TEXT NOT NULL,
   token_hash TEXT NOT NULL UNIQUE,
-  revoked_at TEXT
+  revoked_at TEXT,
+  last_used_at TEXT,
+  request_count INTEGER NOT NULL DEFAULT 0
 );
 
 -- What an executor reported as used: one row per model of a Worker round, a Router turn or
@@ -793,6 +796,126 @@ CREATE TABLE IF NOT EXISTS im_group_context (
 );
 CREATE INDEX IF NOT EXISTS im_group_context_by_chat ON im_group_context(channel, chat_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS im_group_context_by_msg ON im_group_context(message_id);
+
+-- Structured domain knowledge: Git-backed LLM Wiki vaults, per-project pinned grants,
+-- indexed pages (with mutation_version CAS and protected human sections), and proposals.
+CREATE TABLE IF NOT EXISTS wiki_vault (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL DEFAULT '',
+  repo_path TEXT NOT NULL,
+  branch TEXT NOT NULL DEFAULT 'main',
+  published_commit TEXT,
+  last_synced_at TEXT,
+  sync_error TEXT
+);
+
+CREATE TABLE IF NOT EXISTS wiki_grant (
+  vault_id TEXT NOT NULL REFERENCES wiki_vault(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  pinned_commit TEXT,
+  can_propose INTEGER NOT NULL DEFAULT 0,
+  granted_by TEXT NOT NULL,
+  PRIMARY KEY (vault_id, project_id)
+);
+CREATE INDEX IF NOT EXISTS wiki_grant_by_project ON wiki_grant(project_id);
+
+CREATE TABLE IF NOT EXISTS wiki_page (
+  vault_id TEXT NOT NULL REFERENCES wiki_vault(id) ON DELETE CASCADE,
+  page_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL,
+  owner TEXT NOT NULL DEFAULT '',
+  scope TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('draft', 'active', 'disputed', 'deprecated')),
+  search_phrases_json TEXT NOT NULL DEFAULT '[]',
+  sources_json TEXT NOT NULL DEFAULT '[]',
+  links_json TEXT NOT NULL DEFAULT '[]',
+  locked_sections_json TEXT NOT NULL DEFAULT '[]',
+  content_sha256 TEXT NOT NULL,
+  commit_sha TEXT NOT NULL,
+  mutation_version INTEGER NOT NULL DEFAULT 1,
+  dirty INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (vault_id, page_id)
+);
+CREATE INDEX IF NOT EXISTS wiki_page_by_path ON wiki_page(vault_id, path);
+
+CREATE TABLE IF NOT EXISTS wiki_proposal (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  vault_id TEXT NOT NULL REFERENCES wiki_vault(id) ON DELETE CASCADE,
+  project_id TEXT REFERENCES project(id) ON DELETE SET NULL,
+  page_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  proposed_by TEXT NOT NULL,
+  source TEXT NOT NULL,
+  base_commit TEXT NOT NULL,
+  base_mutation_version INTEGER NOT NULL,
+  branch_name TEXT,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  new_content TEXT NOT NULL,
+  rationale TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'applied', 'rejected', 'stale')),
+  status_reason TEXT,
+  decided_at TEXT,
+  decided_by TEXT,
+  applied_commit TEXT
+);
+CREATE INDEX IF NOT EXISTS wiki_proposal_by_vault ON wiki_proposal(vault_id, status);
+
+-- Explicit cross-project pinned read-only references (freezes exact version + sha256;
+-- revoking blocks future dispatches while keeping historical snapshots auditable).
+CREATE TABLE IF NOT EXISTS cross_project_ref (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  source_project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  target_project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  ref_kind TEXT NOT NULL CHECK (ref_kind IN ('project_file', 'knowledge', 'wiki_page', 'artifact')),
+  source_ref_id TEXT NOT NULL,
+  pinned_version TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  content_sha256 TEXT NOT NULL,
+  frozen_bytes INTEGER NOT NULL DEFAULT 0,
+  granted_by TEXT NOT NULL,
+  revoked_at TEXT,
+  revoked_by TEXT,
+  revoke_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS cross_project_ref_by_target ON cross_project_ref(target_project_id, revoked_at);
+CREATE INDEX IF NOT EXISTS cross_project_ref_by_source ON cross_project_ref(source_project_id, revoked_at);
+
+-- Intra-project producer -> consumer artifact contract dependencies with structured
+-- clarifications and coalesced notification versions (prevents wakeup fan-out avalanches).
+CREATE TABLE IF NOT EXISTS task_contract (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  producer_task_id TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE,
+  consumer_task_id TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE,
+  contract_name TEXT NOT NULL,
+  artifact_path TEXT NOT NULL DEFAULT '',
+  registered_version INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'delivered', 'blocked', 'clarified', 'superseded')),
+  delivered_run_id TEXT REFERENCES run(id) ON DELETE SET NULL,
+  delivered_sha256 TEXT,
+  delivery_summary TEXT,
+  clarification_json TEXT NOT NULL DEFAULT '[]',
+  coalesced_revision INTEGER NOT NULL DEFAULT 0,
+  notified_version INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(project_id, producer_task_id, consumer_task_id, contract_name)
+);
+CREATE INDEX IF NOT EXISTS task_contract_by_project ON task_contract(project_id, status);
+CREATE INDEX IF NOT EXISTS task_contract_by_producer ON task_contract(producer_task_id);
+CREATE INDEX IF NOT EXISTS task_contract_by_consumer ON task_contract(consumer_task_id);
 `;
 
 // A Task as every reader gets it: its own columns, and the tier it runs on, derived here
@@ -2533,6 +2656,129 @@ DELETE FROM trigger_rule WHERE source = 'webhook';`);
       conn.exec('ALTER TABLE project ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
     }
   },
+  49: (conn) => {
+    const hasColumn = (table: string, name: string): boolean =>
+      (conn.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some((col) => col.name === name);
+    if (!hasColumn('knowledge_revision', 'search_phrases_json')) {
+      conn.exec(`ALTER TABLE knowledge_revision ADD COLUMN search_phrases_json TEXT NOT NULL DEFAULT '[]'`);
+    }
+    if (!hasColumn('knowledge_client', 'last_used_at')) {
+      conn.exec('ALTER TABLE knowledge_client ADD COLUMN last_used_at TEXT');
+    }
+    if (!hasColumn('knowledge_client', 'request_count')) {
+      conn.exec('ALTER TABLE knowledge_client ADD COLUMN request_count INTEGER NOT NULL DEFAULT 0');
+    }
+    conn.exec(`
+      CREATE TABLE IF NOT EXISTS wiki_vault (
+        id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT NOT NULL DEFAULT '',
+        repo_path TEXT NOT NULL,
+        branch TEXT NOT NULL DEFAULT 'main',
+        published_commit TEXT,
+        last_synced_at TEXT,
+        sync_error TEXT
+      );
+      CREATE TABLE IF NOT EXISTS wiki_grant (
+        vault_id TEXT NOT NULL REFERENCES wiki_vault(id) ON DELETE CASCADE,
+        project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        pinned_commit TEXT,
+        can_propose INTEGER NOT NULL DEFAULT 0,
+        granted_by TEXT NOT NULL,
+        PRIMARY KEY (vault_id, project_id)
+      );
+      CREATE INDEX IF NOT EXISTS wiki_grant_by_project ON wiki_grant(project_id);
+      CREATE TABLE IF NOT EXISTS wiki_page (
+        vault_id TEXT NOT NULL REFERENCES wiki_vault(id) ON DELETE CASCADE,
+        page_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL,
+        owner TEXT NOT NULL DEFAULT '',
+        scope TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('draft', 'active', 'disputed', 'deprecated')),
+        search_phrases_json TEXT NOT NULL DEFAULT '[]',
+        sources_json TEXT NOT NULL DEFAULT '[]',
+        links_json TEXT NOT NULL DEFAULT '[]',
+        locked_sections_json TEXT NOT NULL DEFAULT '[]',
+        content_sha256 TEXT NOT NULL,
+        commit_sha TEXT NOT NULL,
+        mutation_version INTEGER NOT NULL DEFAULT 1,
+        dirty INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (vault_id, page_id)
+      );
+      CREATE INDEX IF NOT EXISTS wiki_page_by_path ON wiki_page(vault_id, path);
+      CREATE TABLE IF NOT EXISTS wiki_proposal (
+        id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL,
+        vault_id TEXT NOT NULL REFERENCES wiki_vault(id) ON DELETE CASCADE,
+        project_id TEXT REFERENCES project(id) ON DELETE SET NULL,
+        page_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        proposed_by TEXT NOT NULL,
+        source TEXT NOT NULL,
+        base_commit TEXT NOT NULL,
+        base_mutation_version INTEGER NOT NULL,
+        branch_name TEXT,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL DEFAULT '',
+        new_content TEXT NOT NULL,
+        rationale TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'applied', 'rejected', 'stale')),
+        status_reason TEXT,
+        decided_at TEXT,
+        decided_by TEXT,
+        applied_commit TEXT
+      );
+      CREATE INDEX IF NOT EXISTS wiki_proposal_by_vault ON wiki_proposal(vault_id, status);
+      CREATE TABLE IF NOT EXISTS cross_project_ref (
+        id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL,
+        source_project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        target_project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        ref_kind TEXT NOT NULL CHECK (ref_kind IN ('project_file', 'knowledge', 'wiki_page', 'artifact')),
+        source_ref_id TEXT NOT NULL,
+        pinned_version TEXT NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL DEFAULT '',
+        content_sha256 TEXT NOT NULL,
+        frozen_bytes INTEGER NOT NULL DEFAULT 0,
+        granted_by TEXT NOT NULL,
+        revoked_at TEXT,
+        revoked_by TEXT,
+        revoke_reason TEXT
+      );
+      CREATE INDEX IF NOT EXISTS cross_project_ref_by_target ON cross_project_ref(target_project_id, revoked_at);
+      CREATE INDEX IF NOT EXISTS cross_project_ref_by_source ON cross_project_ref(source_project_id, revoked_at);
+      CREATE TABLE IF NOT EXISTS task_contract (
+        id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+        producer_task_id TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE,
+        consumer_task_id TEXT NOT NULL REFERENCES task(id) ON DELETE CASCADE,
+        contract_name TEXT NOT NULL,
+        artifact_path TEXT NOT NULL DEFAULT '',
+        registered_version INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'delivered', 'blocked', 'clarified', 'superseded')),
+        delivered_run_id TEXT REFERENCES run(id) ON DELETE SET NULL,
+        delivered_sha256 TEXT,
+        delivery_summary TEXT,
+        clarification_json TEXT NOT NULL DEFAULT '[]',
+        coalesced_revision INTEGER NOT NULL DEFAULT 0,
+        notified_version INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(project_id, producer_task_id, consumer_task_id, contract_name)
+      );
+      CREATE INDEX IF NOT EXISTS task_contract_by_project ON task_contract(project_id, status);
+      CREATE INDEX IF NOT EXISTS task_contract_by_producer ON task_contract(producer_task_id);
+      CREATE INDEX IF NOT EXISTS task_contract_by_consumer ON task_contract(consumer_task_id);
+    `);
+  },
 };
 
 // The tables a ledger of each version cannot be without: what tells one from a file that
@@ -2645,6 +2891,10 @@ const LEDGER_TABLES: Record<number, readonly string[]> = {
   49: [...V4_TABLES.filter((table) => table !== 'router_session' && table !== 'decision'), 'account', 'machine', 'machine_login', 'login_state', 'machine_invite', 'machine_material', 'role',
     'knowledge', 'knowledge_proposal', 'knowledge_revision', 'knowledge_evidence', 'knowledge_client', 'router_segment', 'router_context', 'front_desk', 'push',
     'trigger_rule', 'trigger_fire', 'trigger_cursor', 'inbound_source', 'inbound_key', 'usage', 'work_cleanup', 'machine_login_refusal', 'router_call', 'router_exchange', 'router_template', 'inbound_receipt_reply', 'project_file', 'project_files_cleanup', 'im_group_binding', 'im_group_context'],
+  50: [...V4_TABLES.filter((table) => table !== 'router_session' && table !== 'decision'), 'account', 'machine', 'machine_login', 'login_state', 'machine_invite', 'machine_material', 'role',
+    'knowledge', 'knowledge_proposal', 'knowledge_revision', 'knowledge_evidence', 'knowledge_client', 'router_segment', 'router_context', 'front_desk', 'push',
+    'trigger_rule', 'trigger_fire', 'trigger_cursor', 'inbound_source', 'inbound_key', 'usage', 'work_cleanup', 'machine_login_refusal', 'router_call', 'router_exchange', 'router_template', 'inbound_receipt_reply', 'project_file', 'project_files_cleanup', 'im_group_binding', 'im_group_context',
+    'wiki_vault', 'wiki_grant', 'wiki_page', 'wiki_proposal', 'cross_project_ref', 'task_contract'],
 };
 
 interface MigrationHooks {

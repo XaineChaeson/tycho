@@ -105,7 +105,7 @@ test('a knowledge token opens the four knowledge tools and nothing else, and onl
   const app = await consoleApp(t);
   const { token } = await issue(app, ['read', 'propose']);
   const listed = (await (await mcp(app, token, { method: 'tools/list' })).json()) as { tools: { name: string }[] };
-  assert.deepEqual(listed.tools.map(({ name }) => name).sort(), ['get_working_context', 'propose_learning', 'read_library', 'search_library']);
+  assert.deepEqual(listed.tools.map(({ name }) => name).sort(), ['get_working_context', 'propose_learning', 'propose_wiki_update', 'read_library', 'search_library']);
   // Not the Router's tools, not this machine's own routes, not the console.
   for (const [method, path] of [['POST', '/tools/list'], ['POST', '/tools/call'], ['POST', '/api/login-links'], ['POST', '/api/shutdown'], ['GET', '/api/instance'], ['GET', '/api/knowledge'], ['POST', '/api/knowledge/proposals']] as const) {
     const response = await fetch(`${app.url}${path}`, { method, headers: { Authorization: `Bearer ${token}` }, ...(method === 'POST' ? { body: '{}' } : {}) });

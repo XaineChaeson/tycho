@@ -141,13 +141,14 @@ export interface CandidateDraft {
   title: string;
   when_to_use: string;
   body: string;
+  search_phrases: string;
   scope: '' | 'global' | 'projects';
   projects: string[];
   loading: Loading | '';
   roles: string[];
 }
 
-export const BLANK_CANDIDATE: CandidateDraft = { kind: 'knowledge', title: '', when_to_use: '', body: '', scope: 'global', projects: [], loading: 'on_demand', roles: [] };
+export const BLANK_CANDIDATE: CandidateDraft = { kind: 'knowledge', title: '', when_to_use: '', body: '', search_phrases: '', scope: 'global', projects: [], loading: 'on_demand', roles: [] };
 
 // The same draft as another kind: a skill is always on demand; SKILL_TEMPLATE stays a placeholder.
 export function asKind(draft: CandidateDraft, kind: KnowledgeKind): CandidateDraft {
@@ -156,11 +157,12 @@ export function asKind(draft: CandidateDraft, kind: KnowledgeKind): CandidateDra
   return { ...draft, kind, loading: draft.loading || 'on_demand' };
 }
 
-export const draftOf = (output: Pick<ChangeOutput, 'title' | 'when_to_use' | 'body' | 'project_ids' | 'loading' | 'roles'>, kind: KnowledgeKind = 'knowledge'): CandidateDraft => ({
+export const draftOf = (output: Pick<ChangeOutput, 'title' | 'when_to_use' | 'body' | 'project_ids' | 'loading' | 'roles' | 'search_phrases'>, kind: KnowledgeKind = 'knowledge'): CandidateDraft => ({
   kind,
   title: output.title,
   when_to_use: output.when_to_use,
   body: output.body,
+  search_phrases: (output.search_phrases ?? []).join(', '),
   scope: output.project_ids === null ? 'global' : 'projects',
   projects: output.project_ids ?? [],
   loading: output.loading,
@@ -170,14 +172,26 @@ export const draftOf = (output: Pick<ChangeOutput, 'title' | 'when_to_use' | 'bo
 // What the service takes: null for 全局, else the projects ticked, as the service keeps them.
 const projectIdsOf = (draft: CandidateDraft): string[] | null => (draft.scope === 'global' ? null : [...draft.projects].sort());
 
-export const candidateBody = (draft: CandidateDraft) => ({
-  title: draft.title.trim(),
-  when_to_use: draft.when_to_use.trim(),
-  body: draft.body.trim(),
-  project_ids: projectIdsOf(draft),
-  ...(draft.kind === 'skill' ? {} : { loading: draft.loading }),
-  roles: draft.roles,
-});
+function parseSearchPhrases(raw: string): string[] {
+  return raw
+    .split(/[\n,，]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+export const candidateBody = (draft: CandidateDraft) => {
+  const searchPhrases = parseSearchPhrases(draft.search_phrases);
+  return {
+    title: draft.title.trim(),
+    when_to_use: draft.when_to_use.trim(),
+    body: draft.body.trim(),
+    ...(searchPhrases.length > 0 ? { search_phrases: searchPhrases } : {}),
+    project_ids: projectIdsOf(draft),
+    ...(draft.kind === 'skill' ? {} : { loading: draft.loading }),
+    roles: draft.roles,
+  };
+};
 
 export const sameCandidate = (a: CandidateDraft, b: CandidateDraft): boolean => JSON.stringify(candidateBody(a)) === JSON.stringify(candidateBody(b));
 
@@ -247,6 +261,9 @@ export function CandidateFields({ draft, names, disabled, onChange, chooseKind =
       </Field>
       <Field label={skill ? t('know.bits.skillBodyLabel', { template: SKILL_TEMPLATE_TEXT }) : t('know.bits.knowledgeBodyLabel')}>
         <Textarea aria-label={t('know.field.body')} rows={skill ? 12 : 6} className={cn(LONG, 'min-h-28!')} placeholder={skill ? SKILL_TEMPLATE : t('know.bits.knowledgeBodyPlaceholder')} value={draft.body} disabled={disabled} onChange={(event) => onChange({ ...draft, body: event.target.value })} />
+      </Field>
+      <Field label={t('know.bits.searchPhrasesLabel')} hint={t('know.bits.searchPhrasesHint')}>
+        <Input aria-label={t('know.bits.searchPhrasesLabel')} placeholder={t('know.bits.searchPhrasesPlaceholder')} value={draft.search_phrases} disabled={disabled} onChange={(event) => onChange({ ...draft, search_phrases: event.target.value })} />
       </Field>
       <Field label={t('know.field.scope')} hint={draft.scope === 'global' ? t('know.bits.globalScopeHint') : undefined}>
         <div>
